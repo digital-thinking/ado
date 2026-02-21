@@ -14,12 +14,12 @@ Status markers:
 - [ ] `P1-007` Fix CI failures for Phase 1 until all checks are green. Deps: `P1-006`.
 
 ## Phase 2: Git & Subprocess Orchestration
-- [ ] `P2-001` Implement async Process Manager using child processes in `src/process/`. Deps: `P1-007`.
-- [ ] `P2-002` Add Process Manager tests with mocked child process calls. Deps: `P2-001`.
-- [ ] `P2-003` Implement `GitManager` for local branch/worktree operations in `src/vcs/`. Deps: `P2-001`.
-- [ ] `P2-004` Add `GitManager` tests with mocked git commands. Deps: `P2-003`.
-- [ ] `P2-005` Implement `GitHubManager` for PR creation and CI polling via `gh` CLI. Deps: `P2-003`.
-- [ ] `P2-006` Add `GitHubManager` tests with mocked `gh` calls. Deps: `P2-005`.
+- [x] `P2-001` Implement async Process Manager using child processes in `src/process/`. Deps: `P1-007`.
+- [x] `P2-002` Add Process Manager tests with mocked child process calls. Deps: `P2-001`.
+- [x] `P2-003` Implement `GitManager` for local branch/worktree operations in `src/vcs/`. Deps: `P2-001`.
+- [x] `P2-004` Add `GitManager` tests with mocked git commands. Deps: `P2-003`.
+- [x] `P2-005` Implement `GitHubManager` for PR creation and CI polling via `gh` CLI. Deps: `P2-003`.
+- [x] `P2-006` Add `GitHubManager` tests with mocked `gh` calls. Deps: `P2-005`.
 - [ ] `P2-007` Create PR Task: open Phase 2 PR after coding tasks are done. Deps: `P2-002`, `P2-004`, `P2-006`.
 - [ ] `P2-008` Fix CI failures for Phase 2 until all checks are green. Deps: `P2-007`.
 
@@ -73,4 +73,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P1-007` (Fix CI failures for Phase 1 until green).
+- [ ] Start `P2-007` (Create PR Task for Phase 2).
