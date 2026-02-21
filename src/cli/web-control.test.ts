@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  buildWebDaemonSpawnArgs,
   parseWebPort,
   resolveWebLogFilePath,
   readWebRuntimeRecord,
@@ -103,5 +104,28 @@ describe("web-control helpers", () => {
     if (result.status === "not_running") {
       expect(result.reason).toBe("missing_runtime_file");
     }
+  });
+
+  test("buildWebDaemonSpawnArgs includes script path when it exists", async () => {
+    const entryScriptPath = join(sandboxDir, "bin", "ixado.ts");
+    await mkdir(dirname(entryScriptPath), { recursive: true });
+    await writeFile(entryScriptPath, "console.log('ixado');\n", "utf8");
+
+    expect(buildWebDaemonSpawnArgs(entryScriptPath, 8787)).toEqual([
+      entryScriptPath,
+      "web",
+      "serve",
+      "8787",
+    ]);
+  });
+
+  test("buildWebDaemonSpawnArgs omits script path when it does not exist", () => {
+    const missingEntryScriptPath = join(sandboxDir, "missing-entry.ts");
+
+    expect(buildWebDaemonSpawnArgs(missingEntryScriptPath, 8787)).toEqual([
+      "web",
+      "serve",
+      "8787",
+    ]);
   });
 });

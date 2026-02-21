@@ -26,6 +26,11 @@ type ControlCenterControl = {
   createTask(input: CreateTaskInput): ReturnType<ControlCenterService["createTask"]>;
   setActivePhase(input: SetActivePhaseInput): ReturnType<ControlCenterService["setActivePhase"]>;
   startTask(input: StartTaskInput): ReturnType<ControlCenterService["startTask"]>;
+  resetTaskToTodo(input: { phaseId: string; taskId: string }): ReturnType<ControlCenterService["resetTaskToTodo"]>;
+  failTaskIfInProgress(input: {
+    taskId: string;
+    reason: string;
+  }): ReturnType<ControlCenterService["failTaskIfInProgress"]>;
   importFromTasksMarkdown(assignee: CLIAdapterId): Promise<ImportTasksMarkdownResult>;
   runInternalWork(input: RunInternalWorkInput): Promise<RunInternalWorkResult>;
 };
@@ -88,6 +93,19 @@ function ensureAllowedAssignee(assignee: CLIAdapterId, availableAssignees: CLIAd
   if (!availableAssignees.includes(assignee)) {
     throw new Error(`assignee '${assignee}' is disabled. Available: ${availableAssignees.join(", ")}.`);
   }
+}
+
+function buildAgentFailureReason(agent: AgentView, action: "terminated" | "killed"): string {
+  const lines = [`Agent '${agent.name}' ${action} before task completion.`];
+  if (typeof agent.lastExitCode === "number") {
+    lines.push(`Exit code: ${agent.lastExitCode}`);
+  }
+  if (agent.outputTail.length > 0) {
+    lines.push("Output tail:");
+    lines.push(...agent.outputTail.slice(-8));
+  }
+
+  return lines.join("\n");
 }
 
 function controlCenterHtml(): string {
@@ -308,15 +326,6 @@ function controlCenterHtml(): string {
 
     <section class="card wide">
       <h2>Running Agents</h2>
-      <form id="agentForm">
-        <div class="row">
-          <input id="agentName" placeholder="Agent name" required />
-          <input id="agentCommand" placeholder="Command (e.g. bun)" required />
-          <input id="agentArgs" placeholder="Args (space separated)" />
-          <input id="agentTaskId" placeholder="Assigned Task ID (optional)" />
-          <button type="submit">Start Agent</button>
-        </div>
-      </form>
       <div id="agentError" class="error"></div>
       <table id="agentTable">
         <thead>
@@ -351,7 +360,6 @@ function controlCenterHtml(): string {
     const agentLogs = document.getElementById("agentLogs");
     const importTasksStatus = document.getElementById("importTasksStatus");
     const importTasksButton = document.getElementById("importTasksButton");
-    const defaultAgentCwd = ${JSON.stringify("{{DEFAULT_AGENT_CWD}}")};
     const defaultInternalWorkAssignee = ${JSON.stringify("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}")};
     const defaultWebLogFilePath = ${JSON.stringify("{{DEFAULT_WEB_LOG_FILE_PATH}}")};
     const defaultCliLogFilePath = ${JSON.stringify("{{DEFAULT_CLI_LOG_FILE_PATH}}")};
@@ -537,9 +545,10 @@ function controlCenterHtml(): string {
                   )
                   .join("");
 
-                const assigneeControl =
-                  task.status === "TODO" || task.status === "FAILED"
-                    ? '<div class="small">Assign Agent / Retry</div>' +
+                const assigneeControl = (() => {
+                  if (task.status === "TODO") {
+                    return (
+                      '<div class="small">Assign Agent</div>' +
                       '<div class="task-run-controls">' +
                         '<select class="task-assignee-select" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '">' +
                           optionsHtml +
@@ -550,7 +559,30 @@ function controlCenterHtml(): string {
                         ? '<div class="small" style="color:#7a2618;">Cannot run until all dependencies are DONE.</div>'
                         : "") +
                       '<div class="error task-run-error"></div>'
-                    : '<div class="small">Assigned Agent: <span class="mono">' + escapeHtml(task.assignee) + "</span></div>";
+                    );
+                  }
+
+                  if (task.status === "FAILED") {
+                    const retryAssignee = task.assignee === "UNASSIGNED" ? "" : task.assignee;
+                    return (
+                      '<div class="small">Retry Agent: <span class="mono">' + escapeHtml(retryAssignee || "UNASSIGNED") + "</span></div>" +
+                      '<div class="row">' +
+                        '<button type="button" class="secondary task-run-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '" data-assignee="' + escapeHtml(retryAssignee) + '"' + (hasUnfinishedDependency || !retryAssignee ? " disabled" : "") + '>Retry</button>' +
+                        '<button type="button" class="secondary task-reset-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '">Reset TODO</button>' +
+                      "</div>" +
+                      '<details><summary class="small">Failure logs</summary><pre class="mono small">' + escapeHtml(task.errorLogs || "No logs available.") + "</pre></details>" +
+                      (hasUnfinishedDependency
+                        ? '<div class="small" style="color:#7a2618;">Cannot retry until all dependencies are DONE.</div>'
+                        : "") +
+                      (!retryAssignee
+                        ? '<div class="small" style="color:#7a2618;">Cannot retry without previous assignee. Reset to TODO and assign an agent.</div>'
+                        : "") +
+                      '<div class="error task-run-error"></div>'
+                    );
+                  }
+
+                  return '<div class="small">Assigned Agent: <span class="mono">' + escapeHtml(task.assignee) + "</span></div>";
+                })();
 
                 return (
                   '<div class="task-card">' +
@@ -709,26 +741,6 @@ function controlCenterHtml(): string {
       }
     });
 
-    document.getElementById("agentForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      setError("agentError", "");
-      try {
-        await api("/api/agents/start", {
-          method: "POST",
-          body: JSON.stringify({
-            name: document.getElementById("agentName").value,
-            command: document.getElementById("agentCommand").value,
-            args: (document.getElementById("agentArgs").value || "").split(" ").filter(Boolean),
-            taskId: document.getElementById("agentTaskId").value || undefined,
-            cwd: defaultAgentCwd,
-          }),
-        });
-        await refresh();
-      } catch (error) {
-        setError("agentError", error.message);
-      }
-    });
-
     kanbanBoard.addEventListener("click", async (event) => {
       const target = event.target;
       if (!(target instanceof HTMLButtonElement)) {
@@ -759,10 +771,14 @@ function controlCenterHtml(): string {
       if (target.classList.contains("task-run-button")) {
         const taskId = target.getAttribute("data-task-id") || "";
         const phaseId = target.getAttribute("data-phase-id") || "";
+        const directAssignee = target.getAttribute("data-assignee") || "";
         const taskCard = target.closest(".task-card");
         const assigneeSelect = taskCard ? taskCard.querySelector(".task-assignee-select") : null;
         const inlineError = taskCard ? taskCard.querySelector(".task-run-error") : null;
-        const assignee = assigneeSelect instanceof HTMLSelectElement ? assigneeSelect.value : "";
+        const assignee =
+          assigneeSelect instanceof HTMLSelectElement
+            ? assigneeSelect.value
+            : directAssignee;
 
         if (!phaseId || !taskId) {
           return;
@@ -803,6 +819,40 @@ function controlCenterHtml(): string {
           if (assigneeSelect instanceof HTMLSelectElement) {
             assigneeSelect.disabled = false;
           }
+        }
+      }
+
+      if (target.classList.contains("task-reset-button")) {
+        const taskId = target.getAttribute("data-task-id") || "";
+        const phaseId = target.getAttribute("data-phase-id") || "";
+        const taskCard = target.closest(".task-card");
+        const inlineError = taskCard ? taskCard.querySelector(".task-run-error") : null;
+        if (!phaseId || !taskId) {
+          return;
+        }
+
+        setError("kanbanError", "");
+        if (inlineError) {
+          inlineError.textContent = "";
+        }
+        target.disabled = true;
+        try {
+          await api("/api/tasks/reset", {
+            method: "POST",
+            body: JSON.stringify({
+              phaseId,
+              taskId,
+            }),
+          });
+          await refresh();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setError("kanbanError", message);
+          if (inlineError) {
+            inlineError.textContent = message;
+          }
+        } finally {
+          target.disabled = false;
         }
       }
     });
@@ -924,6 +974,15 @@ export function createWebApp(deps: WebAppDependencies): {
           return json(state, 202);
         }
 
+        if (request.method === "POST" && url.pathname === "/api/tasks/reset") {
+          const body = await readJson(request);
+          const state = await deps.control.resetTaskToTodo({
+            phaseId: asString(body.phaseId) ?? "",
+            taskId: asString(body.taskId) ?? "",
+          });
+          return json(state, 200);
+        }
+
         if (request.method === "POST" && url.pathname === "/api/import/tasks-md") {
           const body = await readJson(request);
           const assignee = asInternalAdapterAssignee(body.assignee) ?? deps.defaultInternalWorkAssignee;
@@ -953,7 +1012,34 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "GET" && url.pathname === "/api/agents") {
-          return json(deps.agents.list());
+          const agents = deps.agents.list();
+          const latestByTask = new Map<string, AgentView>();
+          for (const agent of agents) {
+            if (!agent.taskId) {
+              continue;
+            }
+            const existing = latestByTask.get(agent.taskId);
+            if (!existing || existing.startedAt < agent.startedAt) {
+              latestByTask.set(agent.taskId, agent);
+            }
+          }
+
+          for (const agent of latestByTask.values()) {
+            const isTerminalFailure =
+              agent.status === "FAILED" ||
+              (agent.status === "STOPPED" && (agent.lastExitCode ?? -1) !== 0);
+            if (isTerminalFailure && agent.taskId) {
+              try {
+                await deps.control.failTaskIfInProgress({
+                  taskId: agent.taskId,
+                  reason: buildAgentFailureReason(agent, "terminated"),
+                });
+              } catch {
+                // Ignore stale task references from historical agent entries.
+              }
+            }
+          }
+          return json(agents);
         }
 
         if (request.method === "POST" && url.pathname === "/api/agents/start") {
@@ -976,7 +1062,18 @@ export function createWebApp(deps: WebAppDependencies): {
 
         const killMatch = /^\/api\/agents\/([^/]+)\/kill$/.exec(url.pathname);
         if (request.method === "POST" && killMatch) {
-          return json(deps.agents.kill(killMatch[1]));
+          const killed = deps.agents.kill(killMatch[1]);
+          if (killed.taskId) {
+            try {
+              await deps.control.failTaskIfInProgress({
+                taskId: killed.taskId,
+                reason: buildAgentFailureReason(killed, "killed"),
+              });
+            } catch {
+              // Ignore stale task references from historical agent entries.
+            }
+          }
+          return json(killed);
         }
 
         const assignMatch = /^\/api\/agents\/([^/]+)\/assign$/.exec(url.pathname);

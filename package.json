@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun run --watch src/cli/index.ts",
     "start": "bun run src/cli/index.ts",
+    "build:binary": "bun build --compile --outfile dist/ixado ./src/cli/index.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun run test"

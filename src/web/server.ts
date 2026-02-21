@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
-import { CodexUsageTracker, createAdapter } from "../adapters";
+import { buildAdapterExecutionPlan, CodexUsageTracker, createAdapter } from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
@@ -82,18 +82,15 @@ export async function startWebControlCenter(
         assignee: workInput.assignee,
         prompt: workInput.prompt,
       });
-      const useStdinPrompt =
-        workInput.assignee === "CODEX_CLI" ||
-        workInput.assignee === "CLAUDE_CLI" ||
-        workInput.assignee === "GEMINI_CLI";
-      const args = workInput.assignee === "CODEX_CLI"
-        ? [...adapter.contract.baseArgs, "-"]
-        : workInput.assignee === "GEMINI_CLI"
-          ? [...adapter.contract.baseArgs, "--prompt", ""]
-          : useStdinPrompt
-            ? [...adapter.contract.baseArgs]
-            : [...adapter.contract.baseArgs, artifacts.inputFilePath];
-      const stdin = useStdinPrompt ? workInput.prompt : undefined;
+      const executionPlan = buildAdapterExecutionPlan({
+        assignee: workInput.assignee,
+        baseArgs: adapter.contract.baseArgs,
+        prompt: workInput.prompt,
+        promptFilePath: artifacts.inputFilePath,
+        resume: Boolean(workInput.resume),
+      });
+      const args = executionPlan.args;
+      const stdin = executionPlan.stdin;
       const agentName = workInput.taskId
         ? `${workInput.assignee} task worker`
         : `${workInput.assignee} internal worker`;
@@ -135,7 +132,7 @@ export async function startWebControlCenter(
             );
           }
 
-          throw error;
+          throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
         }
       })();
       console.info(
@@ -149,6 +146,13 @@ export async function startWebControlCenter(
         stderr: result.stderr,
         durationMs: result.durationMs,
       };
+    },
+    async () => {
+      await processManager.run({
+        command: "git",
+        args: ["reset", "--hard"],
+        cwd: input.cwd,
+      });
     }
   );
   await control.ensureInitialized(input.projectName, input.cwd);

@@ -61,11 +61,8 @@ Status markers:
 - [x] `P6-006` Create PR Task: open Phase 6 PR after coding tasks are done. Deps: `P6-005`.
 
 ## Phase 7: Polish & Distribution
-- [ ] `P7-001` Package IxADO as a Bun single binary for global distribution. Deps: `P6-007`.
+- [x] `P7-001` Package IxADO as a Bun single binary for global distribution. Deps: `P6-007`.
 - [ ] `P7-002` Add packaging validation and smoke-test scripts. Deps: `P7-001`.
 - [ ] `P7-003` Update docs for install/run/release usage. Deps: `P7-001`.
 - [ ] `P7-004` Create PR Task: open Phase 7 PR after coding tasks are done. Deps: `P7-002`, `P7-003`.
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
-
-## Current Focus
-- [ ] Start `P6-007` (Fix CI failures for Phase 6 until green).

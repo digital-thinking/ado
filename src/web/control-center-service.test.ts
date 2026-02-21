@@ -434,7 +434,7 @@ describe("ControlCenterService", () => {
     expect(phaseBResult.tasks[0].status).toBe("DONE");
   });
 
-  test("retries a FAILED task and allows reassignment", async () => {
+  test("fails fast when retrying FAILED task with different assignee", async () => {
     let runCount = 0;
     const serviceWithRunner = new ControlCenterService(
       new StateEngine(stateFilePath),
@@ -476,13 +476,103 @@ describe("ControlCenterService", () => {
     expect(failedState.phases[0].tasks[0].status).toBe("FAILED");
     expect(failedState.phases[0].tasks[0].assignee).toBe("CODEX_CLI");
 
+    await expect(
+      serviceWithRunner.startTaskAndWait({
+        phaseId,
+        taskId,
+        assignee: "CLAUDE_CLI",
+      })
+    ).rejects.toThrow("FAILED task must be retried with the same assignee");
+  });
+
+  test("retries FAILED task with same assignee using resume mode", async () => {
+    let runCount = 0;
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async (input) => {
+        runCount += 1;
+        if (runCount === 1) {
+          throw new Error("first run failed");
+        }
+        expect(input.resume).toBe(true);
+
+        return {
+          command: "codex",
+          args: ["exec", "resume", "--last", "--dangerously-bypass-approvals-and-sandbox", "-"],
+          stdout: "second run passed",
+          stderr: "",
+          durationMs: 10,
+        };
+      }
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Retry Resume",
+      branchName: "phase-retry-resume",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Retry me",
+      description: "Task that should fail once",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+
     const retriedState = await serviceWithRunner.startTaskAndWait({
       phaseId,
       taskId,
-      assignee: "CLAUDE_CLI",
+      assignee: "CODEX_CLI",
     });
     expect(retriedState.phases[0].tasks[0].status).toBe("DONE");
-    expect(retriedState.phases[0].tasks[0].assignee).toBe("CLAUDE_CLI");
-    expect(retriedState.phases[0].tasks[0].resultContext).toContain("second run passed");
+  });
+
+  test("resetTaskToTodo hard-resets repository and clears failed task", async () => {
+    let resetCalled = 0;
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => {
+        throw new Error("adapter failed");
+      },
+      async () => {
+        resetCalled += 1;
+      }
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Reset",
+      branchName: "phase-reset",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Reset me",
+      description: "Task to fail and reset",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const afterReset = await serviceWithRunner.resetTaskToTodo({
+      phaseId,
+      taskId,
+    });
+
+    expect(resetCalled).toBe(1);
+    expect(afterReset.phases[0].tasks[0].status).toBe("TODO");
+    expect(afterReset.phases[0].tasks[0].assignee).toBe("UNASSIGNED");
+    expect(afterReset.phases[0].tasks[0].errorLogs).toBeUndefined();
   });
 });
