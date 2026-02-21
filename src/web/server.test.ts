@@ -24,6 +24,8 @@ describe("web server runtime", () => {
       cwd: sandboxDir,
       stateFilePath,
       projectName: "IxADO",
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      webLogFilePath: join(sandboxDir, ".ixado", "web.log"),
       port: 0,
     });
 

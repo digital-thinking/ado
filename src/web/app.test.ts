@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 
 import { createWebApp } from "./app";
 import type { AgentView } from "./agent-supervisor";
-import type { CreatePhaseInput, CreateTaskInput } from "./control-center-service";
+import type {
+  CreatePhaseInput,
+  CreateTaskInput,
+  RunInternalWorkInput,
+  SetActivePhaseInput,
+  StartTaskInput,
+} from "./control-center-service";
+import type { CLIAdapterId } from "../types";
 
 type TestState = {
   projectName: string;
@@ -12,7 +19,14 @@ type TestState = {
     name: string;
     branchName: string;
     status: string;
-    tasks: Array<{ id: string; title: string; description: string; status: string; assignee: string }>;
+    tasks: Array<{
+      id: string;
+      title: string;
+      description: string;
+      status: string;
+      assignee: string;
+      dependencies?: string[];
+    }>;
   }>;
   activePhaseId?: string;
   createdAt: string;
@@ -64,8 +78,74 @@ describe("web app api", () => {
             description: input.description,
             status: "TODO",
             assignee: input.assignee ?? "UNASSIGNED",
+            dependencies: input.dependencies ?? [],
           });
           return state as never;
+        },
+        setActivePhase: async (input: SetActivePhaseInput) => {
+          const phase = state.phases.find((item) => item.id === input.phaseId);
+          if (!phase) {
+            throw new Error("Phase not found");
+          }
+
+          state.activePhaseId = phase.id;
+          return state as never;
+        },
+        startTask: async (input: StartTaskInput) => {
+          const phase = state.phases.find((item) => item.id === input.phaseId);
+          if (!phase) {
+            throw new Error("Phase not found");
+          }
+
+          const task = phase.tasks.find((item) => item.id === input.taskId);
+          if (!task) {
+            throw new Error("Task not found");
+          }
+
+          task.status = "IN_PROGRESS";
+          task.assignee = input.assignee;
+          return state as never;
+        },
+        importFromTasksMarkdown: async (assignee: CLIAdapterId) => {
+          expect(assignee).toBe("CODEX_CLI");
+          const existingPhase = state.phases.find((phase) => phase.id === "import-phase-1");
+          if (!existingPhase) {
+            state.phases.push({
+              id: "import-phase-1",
+              name: "Phase 1: Foundation",
+              branchName: "phase-1-foundation",
+              status: "PLANNING",
+              tasks: [
+                {
+                  id: "import-task-1",
+                  title: "P1-001 Initialize project",
+                  description: "Initialize project",
+                  status: "DONE",
+                  assignee: "UNASSIGNED",
+                },
+              ],
+            });
+          }
+
+          return {
+            state,
+            importedPhaseCount: existingPhase ? 0 : 1,
+            importedTaskCount: existingPhase ? 0 : 1,
+            sourceFilePath: "C:/repo/TASKS.md",
+            assignee: "CODEX_CLI",
+          } as never;
+        },
+        runInternalWork: async (input: RunInternalWorkInput) => {
+          expect(input.assignee).toBe("CODEX_CLI");
+          expect(input.prompt).toBe("do internal work");
+          return {
+            assignee: "CODEX_CLI",
+            command: "codex",
+            args: ["--dangerously-bypass-approvals-and-sandbox", "do internal work"],
+            stdout: "{\"ok\":true}",
+            stderr: "",
+            durationMs: 45,
+          } as never;
         },
       } as never,
       agents: {
@@ -91,6 +171,15 @@ describe("web app api", () => {
           agents[0].status = "STOPPED";
           return agents[0];
         },
+        assign: (id, input) => {
+          const found = agents.find((agent) => agent.id === id);
+          if (!found) {
+            throw new Error("Agent not found");
+          }
+          found.phaseId = input.taskId ? input.phaseId : undefined;
+          found.taskId = input.taskId;
+          return found;
+        },
         restart: () => {
           agents[0].status = "RUNNING";
           return agents[0];
@@ -106,11 +195,16 @@ describe("web app api", () => {
           },
         }),
       } as never,
+      defaultInternalWorkAssignee: "CODEX_CLI",
+      webLogFilePath: "C:/repo/.ixado/web.log",
+      cliLogFilePath: "C:/repo/.ixado/cli.log",
     });
 
     const htmlResponse = await app.fetch(new Request("http://localhost/"));
     expect(htmlResponse.status).toBe(200);
-    expect(await htmlResponse.text()).toContain("IxADO Control Center");
+    const htmlContent = await htmlResponse.text();
+    expect(htmlContent).toContain("IxADO Control Center");
+    expect(htmlContent).toContain("Phase Kanban");
 
     const createPhaseResponse = await app.fetch(
       new Request("http://localhost/api/phases", {
@@ -129,7 +223,6 @@ describe("web app api", () => {
           phaseId: "phase-1",
           title: "Build page",
           description: "Implement dashboard",
-          assignee: "CODEX_CLI",
         }),
       })
     );
@@ -139,6 +232,35 @@ describe("web app api", () => {
     const statePayload = (await stateResponse.json()) as TestState;
     expect(statePayload.phases).toHaveLength(1);
     expect(statePayload.phases[0].tasks).toHaveLength(1);
+
+    const setActiveResponse = await app.fetch(
+      new Request("http://localhost/api/phases/active", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          phaseId: "phase-1",
+        }),
+      })
+    );
+    expect(setActiveResponse.status).toBe(200);
+    const activePayload = (await setActiveResponse.json()) as TestState;
+    expect(activePayload.activePhaseId).toBe("phase-1");
+
+    const startTaskResponse = await app.fetch(
+      new Request("http://localhost/api/tasks/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          phaseId: "phase-1",
+          taskId: "task-1",
+          assignee: "CODEX_CLI",
+        }),
+      })
+    );
+    expect(startTaskResponse.status).toBe(202);
+    const startedState = (await startTaskResponse.json()) as TestState;
+    expect(startedState.phases[0].tasks[0].status).toBe("IN_PROGRESS");
+    expect(startedState.phases[0].tasks[0].assignee).toBe("CODEX_CLI");
 
     const startAgentResponse = await app.fetch(
       new Request("http://localhost/api/agents/start", {
@@ -160,6 +282,20 @@ describe("web app api", () => {
     );
     expect(killAgentResponse.status).toBe(200);
 
+    const assignAgentResponse = await app.fetch(
+      new Request("http://localhost/api/agents/agent-1/assign", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          phaseId: "phase-1",
+          taskId: "task-1",
+        }),
+      })
+    );
+    expect(assignAgentResponse.status).toBe(200);
+    const assignPayload = await assignAgentResponse.json();
+    expect(assignPayload.taskId).toBe("task-1");
+
     const restartAgentResponse = await app.fetch(
       new Request("http://localhost/api/agents/agent-1/restart", { method: "POST" })
     );
@@ -168,5 +304,32 @@ describe("web app api", () => {
     const usageResponse = await app.fetch(new Request("http://localhost/api/usage"));
     const usagePayload = await usageResponse.json();
     expect(usagePayload.available).toBe(true);
+
+    const importResponse = await app.fetch(
+      new Request("http://localhost/api/import/tasks-md", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ assignee: "CODEX_CLI" }),
+      })
+    );
+    expect(importResponse.status).toBe(200);
+    const importPayload = await importResponse.json();
+    expect(importPayload.importedPhaseCount).toBe(1);
+    expect(importPayload.importedTaskCount).toBe(1);
+
+    const internalRunResponse = await app.fetch(
+      new Request("http://localhost/api/internal-work/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          assignee: "CODEX_CLI",
+          prompt: "do internal work",
+        }),
+      })
+    );
+    expect(internalRunResponse.status).toBe(200);
+    const internalPayload = await internalRunResponse.json();
+    expect(internalPayload.assignee).toBe("CODEX_CLI");
+    expect(internalPayload.command).toBe("codex");
   });
 });

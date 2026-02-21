@@ -14,6 +14,11 @@ export type StartAgentInput = {
   taskId?: string;
 };
 
+export type AssignAgentInput = {
+  phaseId?: string;
+  taskId?: string;
+};
+
 type AgentRecord = {
   id: string;
   name: string;
@@ -181,6 +186,23 @@ export class AgentSupervisor {
       tailPush(record.outputTail, error.message);
       record.child = undefined;
     });
+
+    return toView(record);
+  }
+
+  assign(agentId: string, input: AssignAgentInput): AgentView {
+    const record = this.records.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    const rawPhaseId = input.phaseId?.trim();
+    const rawTaskId = input.taskId?.trim();
+    record.phaseId = rawPhaseId && rawTaskId ? rawPhaseId : undefined;
+    record.taskId = rawTaskId || undefined;
+    if (!record.taskId) {
+      record.phaseId = undefined;
+    }
 
     return toView(record);
   }

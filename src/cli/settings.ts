@@ -2,14 +2,18 @@ import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { CliSettingsSchema, type CliSettings } from "../types";
+import { CliSettingsSchema, type CLIAdapterId, type CliSettings } from "../types";
 
 const DEFAULT_SETTINGS_FILE = ".ixado/settings.json";
 const DEFAULT_SOUL_FILE = ".ixado/SOUL.md";
+const ONBOARD_SKIP_KEY = "s";
 
 export const DEFAULT_CLI_SETTINGS: CliSettings = {
   telegram: {
     enabled: false,
+  },
+  internalWork: {
+    assignee: "CODEX_CLI",
   },
 };
 
@@ -80,18 +84,23 @@ export async function saveSoulFile(soulFilePath: string, personality: string): P
 }
 
 type TelegramOnboardChoice = {
+  skip: boolean;
   enabled: boolean;
 };
 
 function parseTelegramOnboardChoice(rawAnswer: string): TelegramOnboardChoice | null {
   const normalized = rawAnswer.trim().toLowerCase();
 
+  if (normalized === ONBOARD_SKIP_KEY) {
+    return { skip: true, enabled: false };
+  }
+
   if (normalized === "y" || normalized === "yes") {
-    return { enabled: true };
+    return { skip: false, enabled: true };
   }
 
   if (normalized === "" || normalized === "n" || normalized === "no") {
-    return { enabled: false };
+    return { skip: false, enabled: false };
   }
 
   return null;
@@ -109,6 +118,48 @@ function parseOwnerId(rawOwnerId: string): number | null {
   return ownerId;
 }
 
+function isSkipAnswer(rawAnswer: string): boolean {
+  return rawAnswer.trim().toLowerCase() === ONBOARD_SKIP_KEY;
+}
+
+async function loadSoulPersonality(soulFilePath: string): Promise<string | null> {
+  try {
+    const soul = await readFile(soulFilePath, "utf8");
+    const match = /Personality:\s*(.+)/i.exec(soul);
+    if (!match) {
+      return null;
+    }
+
+    const personality = match[1].trim();
+    return personality ? personality : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function parseInternalWorkAssignee(rawAnswer: string): CLIAdapterId | null {
+  const normalized = rawAnswer.trim().toLowerCase();
+
+  if (!normalized || normalized === "1" || normalized === "codex" || normalized === "codex_cli") {
+    return "CODEX_CLI";
+  }
+  if (normalized === "2" || normalized === "claude" || normalized === "claude_cli") {
+    return "CLAUDE_CLI";
+  }
+  if (normalized === "3" || normalized === "gemini" || normalized === "gemini_cli") {
+    return "GEMINI_CLI";
+  }
+  if (normalized === "4" || normalized === "mock" || normalized === "mock_cli") {
+    return "MOCK_CLI";
+  }
+
+  return null;
+}
+
 export async function runOnboard(
   settingsFilePath: string,
   soulFilePath: string,
@@ -117,28 +168,82 @@ export async function runOnboard(
     console.info(line);
   }
 ): Promise<CliSettings> {
+  const existingSettings = await loadCliSettings(settingsFilePath);
+  const existingSoulPersonality = await loadSoulPersonality(soulFilePath);
+
   await output("Setup: Telegram mode enables remote /status and /tasks commands through your bot.");
   await output("Setup: SOUL.md stores IxADO's behavior/personality profile for future prompts.");
+  await output("Setup: Internal work adapter is used by the web UI for AI-assisted transformations.");
+  await output("Setup: make sure the selected internal-work CLI command is installed and available in PATH.");
+  await output("Setup: press 'S' to keep the current value for a field.");
 
-  let personality = "";
+  let internalWorkAssignee: CLIAdapterId | null = null;
+  while (internalWorkAssignee === null) {
+    const answer = await prompt(
+      `Select internal-work CLI [1=CODEX, 2=CLAUDE, 3=GEMINI, 4=MOCK, S=keep ${existingSettings.internalWork.assignee}]: `
+    );
+    if (isSkipAnswer(answer)) {
+      internalWorkAssignee = existingSettings.internalWork.assignee;
+      break;
+    }
+    internalWorkAssignee = parseInternalWorkAssignee(answer);
+  }
+
+  let personality: string | null = null;
   while (!personality) {
-    personality = (await prompt("Short personality description for IxADO: ")).trim();
+    const answer = await prompt("Short personality description for IxADO [S=keep current]: ");
+    if (isSkipAnswer(answer)) {
+      if (!existingSoulPersonality) {
+        await output("No existing SOUL profile found. Enter a new personality description.");
+        continue;
+      }
+
+      personality = existingSoulPersonality;
+      break;
+    }
+
+    const trimmed = answer.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    personality = trimmed;
   }
   await saveSoulFile(soulFilePath, personality);
   await output(`SOUL profile saved to ${soulFilePath}.`);
 
   while (true) {
-    const answer = await prompt("Enable Telegram integration? [y/N]: ");
+    const answer = await prompt(
+      `Enable Telegram integration? [y/N/S=keep ${existingSettings.telegram.enabled ? "enabled" : "disabled"}]: `
+    );
     const choice = parseTelegramOnboardChoice(answer);
 
     if (!choice) {
       continue;
     }
 
+    if (choice.skip) {
+      const settings: CliSettings = {
+        telegram: {
+          enabled: existingSettings.telegram.enabled,
+          botToken: existingSettings.telegram.botToken,
+          ownerId: existingSettings.telegram.ownerId,
+        },
+        internalWork: {
+          assignee: internalWorkAssignee,
+        },
+      };
+
+      return saveCliSettings(settingsFilePath, settings);
+    }
+
     if (!choice.enabled) {
       const settings: CliSettings = {
         telegram: {
           enabled: false,
+        },
+        internalWork: {
+          assignee: internalWorkAssignee,
         },
       };
 
@@ -148,13 +253,35 @@ export async function runOnboard(
     await output("Enter your Telegram bot token from BotFather.");
     let botToken = "";
     while (!botToken) {
-      botToken = (await prompt("Telegram bot token: ")).trim();
+      const tokenAnswer = await prompt("Telegram bot token [S=keep current]: ");
+      if (isSkipAnswer(tokenAnswer)) {
+        if (existingSettings.telegram.botToken?.trim()) {
+          botToken = existingSettings.telegram.botToken.trim();
+          break;
+        }
+
+        await output("No existing Telegram bot token found. Enter a token.");
+        continue;
+      }
+
+      botToken = tokenAnswer.trim();
     }
 
     await output("Enter your Telegram owner user ID (only this account can use bot commands).");
     let ownerId: number | null = null;
     while (ownerId === null) {
-      ownerId = parseOwnerId(await prompt("Telegram owner ID: "));
+      const ownerAnswer = await prompt("Telegram owner ID [S=keep current]: ");
+      if (isSkipAnswer(ownerAnswer)) {
+        if (existingSettings.telegram.ownerId !== undefined) {
+          ownerId = existingSettings.telegram.ownerId;
+          break;
+        }
+
+        await output("No existing Telegram owner ID found. Enter a valid owner ID.");
+        continue;
+      }
+
+      ownerId = parseOwnerId(ownerAnswer);
     }
 
     const settings: CliSettings = {
@@ -162,6 +289,9 @@ export async function runOnboard(
         enabled: true,
         botToken,
         ownerId,
+      },
+      internalWork: {
+        assignee: internalWorkAssignee,
       },
     };
 

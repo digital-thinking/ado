@@ -1,5 +1,7 @@
 export {
   createTelegramRuntime,
+  handleSetActivePhaseCommand,
+  handleStartTaskCommand,
   handleStatusCommand,
   handleTasksCommand,
   type TelegramRuntime,

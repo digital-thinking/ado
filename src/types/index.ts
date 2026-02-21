@@ -1,16 +1,6 @@
 import { z } from "zod";
 
-// 1. CLI Settings
-export const CliSettingsSchema = z.object({
-  telegram: z.object({
-    enabled: z.boolean().default(false),
-    botToken: z.string().min(1).optional(),
-    ownerId: z.number().int().positive().optional(),
-  }),
-});
-export type CliSettings = z.infer<typeof CliSettingsSchema>;
-
-// 2. Supported CLI Adapters
+// 1. Supported CLI Adapters
 export const CLIAdapterIdSchema = z.enum([
   "MOCK_CLI",
   "CLAUDE_CLI",
@@ -18,6 +8,21 @@ export const CLIAdapterIdSchema = z.enum([
   "CODEX_CLI",
 ]);
 export type CLIAdapterId = z.infer<typeof CLIAdapterIdSchema>;
+
+// 2. CLI Settings
+export const CliSettingsSchema = z.object({
+  telegram: z.object({
+    enabled: z.boolean().default(false),
+    botToken: z.string().min(1).optional(),
+    ownerId: z.number().int().positive().optional(),
+  }),
+  internalWork: z.object({
+    assignee: CLIAdapterIdSchema.default("CODEX_CLI"),
+  }).default({
+    assignee: "CODEX_CLI",
+  }),
+});
+export type CliSettings = z.infer<typeof CliSettingsSchema>;
 
 // 3. Worker Assignments
 export const WorkerAssigneeSchema = z.enum([

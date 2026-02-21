@@ -11,7 +11,6 @@ Status markers:
 - [x] `P1-004` Add unit tests for State Engine read/write/validation failure behavior. Deps: `P1-003`.
 - [x] `P1-005` Wire State Engine bootstrap into `src/cli/index.ts`. Deps: `P1-003`.
 - [x] `P1-006` Create PR Task: open Phase 1 PR after coding tasks are done. Deps: `P1-004`, `P1-005`.
-- [ ] `P1-007` Fix CI failures for Phase 1 until all checks are green. Deps: `P1-006`.
 
 ## Phase 2: Git & Subprocess Orchestration
 - [x] `P2-001` Implement async Process Manager using child processes in `src/process/`. Deps: `P1-007`.
@@ -21,7 +20,6 @@ Status markers:
 - [x] `P2-005` Implement `GitHubManager` for PR creation and CI polling via `gh` CLI. Deps: `P2-003`.
 - [x] `P2-006` Add `GitHubManager` tests with mocked `gh` calls. Deps: `P2-005`.
 - [x] `P2-007` Create PR Task: open Phase 2 PR after coding tasks are done. Deps: `P2-002`, `P2-004`, `P2-006`.
-- [ ] `P2-008` Fix CI failures for Phase 2 until all checks are green. Deps: `P2-007`.
 
 ## Phase 3: Telegram Command Center
 - [x] `P3-000` Add `ixado onboard` command and persisted CLI settings (`telegram.enabled`) in `.ixado/settings.json`. Deps: `P2-008`.
@@ -32,7 +30,6 @@ Status markers:
 - [x] `P3-005` Wire bot runtime alongside core engine in `src/cli/index.ts`. Deps: `P3-003`, `P3-004`.
 - [x] `P3-006` Add Telegram adapter tests with mocked Telegram API calls. Deps: `P3-003`, `P3-004`.
 - [x] `P3-007` Create PR Task: open Phase 3 PR after coding tasks are done. Deps: `P3-005`, `P3-006`.
-- [ ] `P3-008` Fix CI failures for Phase 3 until all checks are green. Deps: `P3-007`.
 
 ## Phase 4: Vendor Adapters
 - [x] `P4-001` Implement `MockCLIAdapter` for deterministic local testing. Deps: `P3-008`.
@@ -43,7 +40,6 @@ Status markers:
 - [x] `P4-006` Implement usage/quota tracker via `codexbar --source cli --provider all` polling every 5 minutes. Deps: `P4-005`.
 - [x] `P4-007` Add adapter and usage tracker tests with mocked process calls. Deps: `P4-005`, `P4-006`.
 - [x] `P4-008` Create PR Task: open Phase 4 PR after coding tasks are done. Deps: `P4-007`.
-- [ ] `P4-009` Fix CI failures for Phase 4 until all checks are green. Deps: `P4-008`.
 
 ## Phase 5: CI Execution Loop
 - [ ] `P5-001` Connect State Engine to Process Manager and adapter execution. Deps: `P4-009`.
@@ -55,7 +51,6 @@ Status markers:
 - [ ] `P5-007` Use usage/quota metrics for smart worker delegation. Deps: `P4-006`, `P5-003`.
 - [ ] `P5-008` Add integration tests for execution loop and CI fix loop. Deps: `P5-005`, `P5-006`, `P5-007`.
 - [ ] `P5-009` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-008`.
-- [ ] `P5-010` Fix CI failures for Phase 5 until all checks are green. Deps: `P5-009`.
 
 ## Phase 6: Web Interface
 - [x] `P6-001` Create local web control center for phase/task creation and tracking. Deps: `P5-010`.

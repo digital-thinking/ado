@@ -37,6 +37,7 @@ describe("type contracts", () => {
     expect(parsed.telegram.enabled).toBe(true);
     expect(parsed.telegram.botToken).toBe("token");
     expect(parsed.telegram.ownerId).toBe(123);
+    expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
   });
 
   test("rejects invalid project state", () => {

@@ -107,4 +107,25 @@ describe("AgentSupervisor", () => {
     expect(listed?.outputTail.some((line) => line.includes("line one"))).toBe(true);
     expect(listed?.lastExitCode).toBe(2);
   });
+
+  test("assigns and clears task ownership", () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+    const started = supervisor.start({
+      name: "Worker 4",
+      command: "bun",
+      cwd: "C:/repo",
+    });
+
+    const assigned = supervisor.assign(started.id, {
+      phaseId: "phase-1",
+      taskId: "task-1",
+    });
+    expect(assigned.phaseId).toBe("phase-1");
+    expect(assigned.taskId).toBe("task-1");
+
+    const cleared = supervisor.assign(started.id, {});
+    expect(cleared.phaseId).toBeUndefined();
+    expect(cleared.taskId).toBeUndefined();
+  });
 });
