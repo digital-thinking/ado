@@ -1,0 +1,33 @@
+# IxADO (Intelligent eXecution Agentic Development Orchestrator)
+
+IxADO is a thin, vendor-agnostic development orchestrator that acts as an AI project manager. It tracks development tasks, manages project state, and delegates coding work to specialized agentic CLIs (like Claude CLI, Gemini CLI, or Codex CLI).
+Unlike heavy agent frameworks, IxADO embraces a lightweight "fan-out/fan-in" architecture using standard shell subprocesses and strictly adheres to standard Git/CI workflows.
+
+## BE AWARE!!! 
+**IxADO is meant to run in a sandbox and will run the CLI agents in full-permission mode**
+
+## The IxADO Workflow
+IxADO organizes work into **Phases** (a set of tasks that can be independently done by agents). The lifecycle of a Phase is strictly managed:
+1. **Branching:** Starting a new Phase automatically creates a new Git feature branch.
+2. **Execution:** Tasks are delegated to vendor-specific Coding CLIs.
+3. **Pull Request:** Once all coding tasks in a Phase are complete, IxADO executes a "Create PR" task.
+4. **Agentic Review:** An automated PR review is conducted.
+5. **CI Fix Loop:** IxADO iteratively reads GitHub Actions CI pipeline results and dispatches fix tasks until all tests pass.
+6. **Done:** A Phase is only considered "Done" when there is an open PR with a perfectly green CI pipeline, awaiting final human review.
+
+## Core Features
+* **Vendor Agnostic:** Interfaces with any AI coding assistant that exposes a CLI.
+* **Task Tracking:** Maintains a strict state machine of project tasks and dependencies.
+* **CI-Driven Iteration:** Uses real CI/CD pipeline outputs as the ground truth for code verification.
+* **Telegram Command Center:** Remote control and real-time push notifications via a secure Telegram Bot interface.
+* **Contract-Driven:** Uses TypeScript and strict schema validation to ensure predictable task handoffs.
+
+## Requirements
+* git CLI
+* github CLI (authenticated)
+
+Any of the coding agents
+* Codex CLI (authenticated)
+* Claude Code CLI (authenticated)
+* Gemini CLI (authenticated)
+
