@@ -58,7 +58,7 @@ Status markers:
 - [x] `P6-003` Add agent kill/restart controls in the UI. Deps: `P6-002`.
 - [x] `P6-004` Show usage/quota telemetry in the UI when available. Deps: `P6-002`.
 - [x] `P6-005` Add UI tests for key user flows. Deps: `P6-003`, `P6-004`.
-- [ ] `P6-006` Create PR Task: open Phase 6 PR after coding tasks are done. Deps: `P6-005`.
+- [x] `P6-006` Create PR Task: open Phase 6 PR after coding tasks are done. Deps: `P6-005`.
 - [ ] `P6-007` Fix CI failures for Phase 6 until all checks are green. Deps: `P6-006`.
 
 ## Phase 7: Polish & Distribution
@@ -69,4 +69,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P6-006` (Create PR Task for Phase 6).
+- [ ] Start `P6-007` (Fix CI failures for Phase 6 until green).
