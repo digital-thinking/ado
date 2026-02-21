@@ -101,6 +101,16 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
 
   return {
     start: async () => {
+      try {
+        await bot.api.sendMessage(
+          input.ownerId,
+          "IxADO is online. Send /status or /tasks. Press Ctrl+C in CLI to stop."
+        );
+      } catch (error) {
+        const err = error instanceof Error ? error.message : String(error);
+        console.warn(`Unable to send Telegram hello message: ${err}`);
+      }
+
       await bot.start();
     },
     stop: () => {

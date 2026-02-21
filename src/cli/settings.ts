@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { CliSettingsSchema, type CliSettings } from "../types";
 
 const DEFAULT_SETTINGS_FILE = ".ixado/settings.json";
+const DEFAULT_SOUL_FILE = ".ixado/SOUL.md";
 
 export const DEFAULT_CLI_SETTINGS: CliSettings = {
   telegram: {
@@ -19,6 +20,15 @@ export function resolveSettingsFilePath(): string {
   }
 
   return resolve(process.cwd(), DEFAULT_SETTINGS_FILE);
+}
+
+export function resolveSoulFilePath(): string {
+  const configuredSoulPath = process.env.IXADO_SOUL_FILE?.trim();
+  if (configuredSoulPath) {
+    return resolve(configuredSoulPath);
+  }
+
+  return resolve(process.cwd(), DEFAULT_SOUL_FILE);
 }
 
 export async function loadCliSettings(settingsFilePath: string): Promise<CliSettings> {
@@ -55,6 +65,20 @@ export async function saveCliSettings(
   return validated;
 }
 
+export async function saveSoulFile(soulFilePath: string, personality: string): Promise<void> {
+  const trimmedPersonality = personality.trim();
+  if (!trimmedPersonality) {
+    throw new Error("personality must not be empty.");
+  }
+
+  await mkdir(dirname(soulFilePath), { recursive: true });
+  await writeFile(
+    soulFilePath,
+    `# SOUL\n\nPersonality: ${trimmedPersonality}\n`,
+    "utf8"
+  );
+}
+
 type TelegramOnboardChoice = {
   enabled: boolean;
 };
@@ -87,12 +111,21 @@ function parseOwnerId(rawOwnerId: string): number | null {
 
 export async function runOnboard(
   settingsFilePath: string,
+  soulFilePath: string,
   prompt: Prompt,
   output: Output = (line) => {
     console.info(line);
   }
 ): Promise<CliSettings> {
   await output("Setup: Telegram mode enables remote /status and /tasks commands through your bot.");
+  await output("Setup: SOUL.md stores IxADO's behavior/personality profile for future prompts.");
+
+  let personality = "";
+  while (!personality) {
+    personality = (await prompt("Short personality description for IxADO: ")).trim();
+  }
+  await saveSoulFile(soulFilePath, personality);
+  await output(`SOUL profile saved to ${soulFilePath}.`);
 
   while (true) {
     const answer = await prompt("Enable Telegram integration? [y/N]: ");

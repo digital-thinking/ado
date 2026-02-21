@@ -6,7 +6,12 @@ import { resolve } from "node:path";
 
 import { createTelegramRuntime } from "../bot";
 import { StateEngine } from "../state";
-import { loadCliSettings, resolveSettingsFilePath, runOnboard } from "./settings";
+import {
+  loadCliSettings,
+  resolveSettingsFilePath,
+  resolveSoulFilePath,
+  runOnboard,
+} from "./settings";
 
 const DEFAULT_STATE_FILE = ".ixado/state.json";
 
@@ -139,14 +144,20 @@ function printHelp(): void {
 
 async function runOnboardCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
+  const soulFilePath = resolveSoulFilePath();
   const rl = createInterface({
     input: stdin,
     output: stdout,
   });
 
   try {
-    const settings = await runOnboard(settingsFilePath, (question) => rl.question(question));
+    const settings = await runOnboard(
+      settingsFilePath,
+      soulFilePath,
+      (question) => rl.question(question)
+    );
     console.info(`Settings saved to ${settingsFilePath}.`);
+    console.info(`SOUL file saved to ${soulFilePath}.`);
     console.info(`Telegram mode ${settings.telegram.enabled ? "enabled" : "disabled"}.`);
     if (settings.telegram.enabled) {
       console.info("Telegram bot credentials stored in settings file.");
