@@ -41,7 +41,7 @@ Status markers:
 - [x] `P4-005` Implement adapter normalization contracts in `src/adapters/` to keep a single execution path. Deps: `P4-002`, `P4-003`, `P4-004`.
 - [x] `P4-006` Implement usage/quota tracker via `codexbar --source cli --provider all` polling every 5 minutes. Deps: `P4-005`.
 - [x] `P4-007` Add adapter and usage tracker tests with mocked process calls. Deps: `P4-005`, `P4-006`.
-- [ ] `P4-008` Create PR Task: open Phase 4 PR after coding tasks are done. Deps: `P4-007`.
+- [x] `P4-008` Create PR Task: open Phase 4 PR after coding tasks are done. Deps: `P4-007`.
 - [ ] `P4-009` Fix CI failures for Phase 4 until all checks are green. Deps: `P4-008`.
 
 ## Phase 5: CI Execution Loop
@@ -73,4 +73,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P4-008` (Create PR Task for Phase 4).
+- [ ] Start `P4-009` (Fix CI failures for Phase 4 until green).
