@@ -29,10 +29,14 @@ describe("type contracts", () => {
     const parsed = CliSettingsSchema.parse({
       telegram: {
         enabled: true,
+        botToken: "token",
+        ownerId: 123,
       },
     });
 
     expect(parsed.telegram.enabled).toBe(true);
+    expect(parsed.telegram.botToken).toBe("token");
+    expect(parsed.telegram.ownerId).toBe(123);
   });
 
   test("rejects invalid project state", () => {

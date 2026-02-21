@@ -31,12 +31,20 @@ describe("cli settings", () => {
 
   test("saves and loads settings", async () => {
     await saveCliSettings(settingsFilePath, {
-      telegram: { enabled: true },
+      telegram: {
+        enabled: true,
+        botToken: "abc",
+        ownerId: 123,
+      },
     });
 
     const settings = await loadCliSettings(settingsFilePath);
     expect(settings).toEqual({
-      telegram: { enabled: true },
+      telegram: {
+        enabled: true,
+        botToken: "abc",
+        ownerId: 123,
+      },
     });
   });
 
@@ -47,12 +55,27 @@ describe("cli settings", () => {
     );
   });
 
-  test("onboard accepts yes and persists telegram enabled", async () => {
-    const settings = await runOnboard(settingsFilePath, async () => "y");
+  test("onboard accepts yes and persists telegram bot settings", async () => {
+    const answers = ["y", "my-token", "123456"];
+    let idx = 0;
+    const output: string[] = [];
+
+    const settings = await runOnboard(
+      settingsFilePath,
+      async () => answers[idx++] ?? "",
+      async (line) => {
+        output.push(line);
+      }
+    );
 
     expect(settings).toEqual({
-      telegram: { enabled: true },
+      telegram: {
+        enabled: true,
+        botToken: "my-token",
+        ownerId: 123456,
+      },
     });
+    expect(output[0]).toContain("Setup: Telegram mode enables remote");
     await expect(loadCliSettings(settingsFilePath)).resolves.toEqual(settings);
   });
 
@@ -60,10 +83,33 @@ describe("cli settings", () => {
     const answers = ["maybe", "no"];
     let idx = 0;
 
-    const settings = await runOnboard(settingsFilePath, async () => answers[idx++] ?? "");
+    const settings = await runOnboard(
+      settingsFilePath,
+      async () => answers[idx++] ?? "",
+      async () => {}
+    );
 
     expect(settings).toEqual({
       telegram: { enabled: false },
+    });
+  });
+
+  test("onboard retries invalid bot token and owner ID", async () => {
+    const answers = ["y", "", "token", "abc", "0", "42"];
+    let idx = 0;
+
+    const settings = await runOnboard(
+      settingsFilePath,
+      async () => answers[idx++] ?? "",
+      async () => {}
+    );
+
+    expect(settings).toEqual({
+      telegram: {
+        enabled: true,
+        botToken: "token",
+        ownerId: 42,
+      },
     });
   });
 });

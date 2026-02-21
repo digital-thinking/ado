@@ -63,31 +63,36 @@ async function loadOrInitializeState(engine: StateEngine, stateFilePath: string)
   };
 }
 
-function resolveTelegramConfig(enabledBySettings: boolean): TelegramBootstrapConfig {
-  if (!enabledBySettings) {
+function resolveTelegramConfig(settings: {
+  enabled: boolean;
+  botToken?: string;
+  ownerId?: number;
+}): TelegramBootstrapConfig {
+  if (!settings.enabled) {
     return { enabled: false };
   }
 
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim() || settings.botToken?.trim();
   const rawOwnerId = process.env.TELEGRAM_OWNER_ID?.trim();
+  const ownerIdFromSettings = settings.ownerId;
 
-  if (!token || !rawOwnerId) {
+  if (!token || (!rawOwnerId && ownerIdFromSettings === undefined)) {
     throw new Error(
-      "Telegram is enabled in settings, but TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID are required."
+      "Telegram is enabled in settings, but bot token and owner ID are required (in settings or env)."
     );
   }
 
   return {
     enabled: true,
     token,
-    ownerId: parseOwnerId(rawOwnerId),
+    ownerId: rawOwnerId ? parseOwnerId(rawOwnerId) : ownerIdFromSettings!,
   };
 }
 
 async function runDefaultCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const telegram = resolveTelegramConfig(settings.telegram.enabled);
+  const telegram = resolveTelegramConfig(settings.telegram);
   const stateFilePath = resolveStateFilePath();
   const stateEngine = new StateEngine(stateFilePath);
   const stateSummary = await loadOrInitializeState(stateEngine, stateFilePath);
@@ -109,6 +114,7 @@ async function runDefaultCommand(): Promise<void> {
 
   if (telegram.enabled) {
     console.info("Starting Telegram command center.");
+    console.info("Bot polling is active. Send /status or /tasks to your bot. Press Ctrl+C to stop.");
     const runtime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
@@ -142,6 +148,9 @@ async function runOnboardCommand(): Promise<void> {
     const settings = await runOnboard(settingsFilePath, (question) => rl.question(question));
     console.info(`Settings saved to ${settingsFilePath}.`);
     console.info(`Telegram mode ${settings.telegram.enabled ? "enabled" : "disabled"}.`);
+    if (settings.telegram.enabled) {
+      console.info("Telegram bot credentials stored in settings file.");
+    }
   } finally {
     rl.close();
   }

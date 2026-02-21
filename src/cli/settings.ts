@@ -57,29 +57,43 @@ export async function saveCliSettings(
 
 type TelegramOnboardChoice = {
   enabled: boolean;
-  summary: string;
 };
 
 function parseTelegramOnboardChoice(rawAnswer: string): TelegramOnboardChoice | null {
   const normalized = rawAnswer.trim().toLowerCase();
 
   if (normalized === "y" || normalized === "yes") {
-    return { enabled: true, summary: "enabled" };
+    return { enabled: true };
   }
 
   if (normalized === "" || normalized === "n" || normalized === "no") {
-    return { enabled: false, summary: "disabled" };
+    return { enabled: false };
   }
 
   return null;
 }
 
 export type Prompt = (question: string) => Promise<string>;
+export type Output = (line: string) => void | Promise<void>;
+
+function parseOwnerId(rawOwnerId: string): number | null {
+  const ownerId = Number(rawOwnerId.trim());
+  if (!Number.isInteger(ownerId) || ownerId <= 0) {
+    return null;
+  }
+
+  return ownerId;
+}
 
 export async function runOnboard(
   settingsFilePath: string,
-  prompt: Prompt
+  prompt: Prompt,
+  output: Output = (line) => {
+    console.info(line);
+  }
 ): Promise<CliSettings> {
+  await output("Setup: Telegram mode enables remote /status and /tasks commands through your bot.");
+
   while (true) {
     const answer = await prompt("Enable Telegram integration? [y/N]: ");
     const choice = parseTelegramOnboardChoice(answer);
@@ -88,9 +102,33 @@ export async function runOnboard(
       continue;
     }
 
+    if (!choice.enabled) {
+      const settings: CliSettings = {
+        telegram: {
+          enabled: false,
+        },
+      };
+
+      return saveCliSettings(settingsFilePath, settings);
+    }
+
+    await output("Enter your Telegram bot token from BotFather.");
+    let botToken = "";
+    while (!botToken) {
+      botToken = (await prompt("Telegram bot token: ")).trim();
+    }
+
+    await output("Enter your Telegram owner user ID (only this account can use bot commands).");
+    let ownerId: number | null = null;
+    while (ownerId === null) {
+      ownerId = parseOwnerId(await prompt("Telegram owner ID: "));
+    }
+
     const settings: CliSettings = {
       telegram: {
-        enabled: choice.enabled,
+        enabled: true,
+        botToken,
+        ownerId,
       },
     };
 
