@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Thin, vendor-agnostic development orchestrator with Git/CI workflow control",
   "main": "src/cli/index.ts",
+  "bin": {
+    "ixado": "bin/ixado.ts"
+  },
   "scripts": {
     "dev": "bun run --watch src/cli/index.ts",
     "start": "bun run src/cli/index.ts",

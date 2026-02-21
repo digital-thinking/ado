@@ -4,18 +4,11 @@ import { resolve } from "node:path";
 
 import { StateEngine } from "../state";
 
-const REQUIRED_ENV_VARS = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID"] as const;
 const DEFAULT_STATE_FILE = ".ixado/state.json";
 
-function getRequiredEnv(name: (typeof REQUIRED_ENV_VARS)[number]): string {
-  const value = process.env[name]?.trim();
-
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value;
-}
+type TelegramBootstrapConfig =
+  | { enabled: false }
+  | { enabled: true; token: string; ownerId: number };
 
 function parseOwnerId(rawOwnerId: string): number {
   const ownerId = Number(rawOwnerId);
@@ -25,6 +18,27 @@ function parseOwnerId(rawOwnerId: string): number {
   }
 
   return ownerId;
+}
+
+function resolveTelegramConfig(): TelegramBootstrapConfig {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const rawOwnerId = process.env.TELEGRAM_OWNER_ID?.trim();
+
+  if (!token && !rawOwnerId) {
+    return { enabled: false };
+  }
+
+  if (!token || !rawOwnerId) {
+    throw new Error(
+      "TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID must both be set when Telegram mode is enabled."
+    );
+  }
+
+  return {
+    enabled: true,
+    token,
+    ownerId: parseOwnerId(rawOwnerId),
+  };
 }
 
 function resolveStateFilePath(): string {
@@ -67,16 +81,19 @@ async function loadOrInitializeState(engine: StateEngine, stateFilePath: string)
 }
 
 async function bootstrap(): Promise<void> {
-  const token = getRequiredEnv("TELEGRAM_BOT_TOKEN");
-  const ownerId = parseOwnerId(getRequiredEnv("TELEGRAM_OWNER_ID"));
+  const telegram = resolveTelegramConfig();
   const stateFilePath = resolveStateFilePath();
   const stateEngine = new StateEngine(stateFilePath);
   const stateSummary = await loadOrInitializeState(stateEngine, stateFilePath);
 
   console.info("IxADO bootstrap checks passed.");
-  console.info(
-    `Telegram security preconditions verified (owner: ${ownerId}, token length: ${token.length}).`
-  );
+  if (telegram.enabled) {
+    console.info(
+      `Telegram mode enabled (owner: ${telegram.ownerId}, token length: ${telegram.token.length}).`
+    );
+  } else {
+    console.info("Telegram mode disabled. Running in local CLI mode.");
+  }
   console.info(
     `State engine ready (${stateSummary.initialized ? "initialized" : "loaded"} at ${stateFilePath}, phases: ${stateSummary.phaseCount}).`
   );
