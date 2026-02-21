@@ -1,0 +1,87 @@
+import { z } from "zod";
+
+// 1. Supported CLI Adapters
+export const CLIAdapterIdSchema = z.enum([
+  "MOCK_CLI",
+  "CLAUDE_CLI",
+  "GEMINI_CLI",
+  "CODEX_CLI",
+]);
+export type CLIAdapterId = z.infer<typeof CLIAdapterIdSchema>;
+
+// 2. Worker Assignments
+export const WorkerAssigneeSchema = z.enum([
+  "MOCK_CLI",
+  "CLAUDE_CLI",
+  "GEMINI_CLI",
+  "CODEX_CLI",
+  "UNASSIGNED"
+]);
+export type WorkerAssignee = z.infer<typeof WorkerAssigneeSchema>;
+
+// 3. CLI Adapter Contract
+export const CLIAdapterSchema = z.object({
+  id: CLIAdapterIdSchema,
+  command: z.string().min(1),
+  baseArgs: z.array(z.string()).default([]),
+});
+export type CLIAdapter = z.infer<typeof CLIAdapterSchema>;
+
+// 4. Individual Task Statuses
+export const TaskStatusSchema = z.enum([
+  "TODO",
+  "IN_PROGRESS",
+  "DONE",
+  "FAILED",
+  "CI_FIX" // specifically for iterative fixing after a CI failure
+]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+// 5. A Single Coding Task
+export const TaskSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  description: z.string(),
+  status: TaskStatusSchema.default("TODO"),
+  assignee: WorkerAssigneeSchema.default("UNASSIGNED"),
+  dependencies: z.array(z.string().uuid()).default([]),
+  resultContext: z.string().optional(),
+  errorLogs: z.string().optional(),
+});
+export type Task = z.infer<typeof TaskSchema>;
+
+// 6. Phase Statuses (The GitOps Lifecycle)
+export const PhaseStatusSchema = z.enum([
+  "PLANNING",
+  "BRANCHING",        // Creating the Git feature branch
+  "CODING",           // Delegating Tasks to CLI Workers
+  "CREATING_PR",      // All tasks done, pushing to remote and opening PR
+  "AWAITING_CI",      // Polling GitHub Actions
+  "CI_FAILED",        // CI returned errors, triggering the fix loop
+  "READY_FOR_REVIEW", // Green CI, awaiting human
+  "DONE"
+]);
+export type PhaseStatus = z.infer<typeof PhaseStatusSchema>;
+
+// 7. A Development Phase
+export const PhaseSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  branchName: z.string(),
+  status: PhaseStatusSchema.default("PLANNING"),
+  tasks: z.array(TaskSchema),
+  prUrl: z.string().url().optional(),
+  ciStatusContext: z.string().optional(), // Stores the GH CLI output if CI fails
+});
+export type Phase = z.infer<typeof PhaseSchema>;
+
+// 8. Complete Project State
+export const ProjectStateSchema = z.object({
+  projectName: z.string(),
+  rootDir: z.string(),
+  phases: z.array(PhaseSchema),
+  activePhaseId: z.string().uuid().optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type ProjectState = z.infer<typeof ProjectStateSchema>;
