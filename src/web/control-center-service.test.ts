@@ -309,6 +309,30 @@ describe("ControlCenterService", () => {
     expect(updated.activePhaseId).toBe(firstPhaseId);
   });
 
+  test("sets active phase by 1-based phase number", async () => {
+    const createdA = await service.createPhase({
+      name: "Phase A",
+      branchName: "phase-a",
+    });
+    const firstPhaseId = createdA.phases[0].id;
+    await service.createPhase({
+      name: "Phase B",
+      branchName: "phase-b",
+    });
+
+    const updated = await service.setActivePhase({ phaseId: "1" });
+    expect(updated.activePhaseId).toBe(firstPhaseId);
+  });
+
+  test("fails fast when phase number is out of range", async () => {
+    await service.createPhase({
+      name: "Phase A",
+      branchName: "phase-a",
+    });
+
+    await expect(service.setActivePhase({ phaseId: "5" })).rejects.toThrow("Phase not found: 5");
+  });
+
   test("lists active phase tasks with 1-based numbers", async () => {
     const created = await service.createPhase({
       name: "Phase Numbers",

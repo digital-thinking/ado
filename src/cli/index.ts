@@ -310,7 +310,7 @@ function printHelp(): void {
   console.info("  ixado task retry <taskNumber>  Retry FAILED task with same assignee/session");
   console.info("  ixado task logs <taskNumber>   Show logs/result for task in active phase");
   console.info("  ixado task reset <taskNumber>  Reset FAILED task to TODO and hard-reset repo");
-  console.info("  ixado phase active <phaseId>  Set active phase");
+  console.info("  ixado phase active <phaseNumber|phaseId>  Set active phase");
   console.info("  ixado web start [port]   Start local web control center in background");
   console.info("  ixado web stop           Stop local web control center");
   console.info("  ixado help      Show this help");
@@ -664,7 +664,7 @@ async function runTaskCommand(args: string[]): Promise<void> {
 async function runPhaseActiveCommand(args: string[]): Promise<void> {
   const phaseId = args[2]?.trim() ?? "";
   if (!phaseId) {
-    throw new Error("Usage: ixado phase active <phaseId>");
+    throw new Error("Usage: ixado phase active <phaseNumber|phaseId>");
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -688,7 +688,7 @@ async function runPhaseCommand(args: string[]): Promise<void> {
     return;
   }
 
-  throw new Error("Unknown phase command. Use `ixado phase active <phaseId>`.");
+  throw new Error("Unknown phase command. Use `ixado phase active <phaseNumber|phaseId>`.");
 }
 
 function resolveAssignedTaskLabel(agent: AgentView, state: Awaited<ReturnType<ControlCenterService["getState"]>>): string {

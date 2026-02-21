@@ -300,6 +300,23 @@ function resolveActivePhaseOrThrow(state: ProjectState): Phase {
   return firstPhase;
 }
 
+function resolvePhaseIdForReference(state: ProjectState, phaseReference: string): string {
+  const exactMatch = state.phases.find((phase) => phase.id === phaseReference);
+  if (exactMatch) {
+    return exactMatch.id;
+  }
+
+  const phaseNumber = Number(phaseReference);
+  if (Number.isInteger(phaseNumber) && phaseNumber > 0) {
+    const phaseByNumber = state.phases[phaseNumber - 1];
+    if (phaseByNumber) {
+      return phaseByNumber.id;
+    }
+  }
+
+  throw new Error(`Phase not found: ${phaseReference}`);
+}
+
 export class ControlCenterService {
   private readonly state: StateEngine;
   private readonly tasksMarkdownFilePath: string;
@@ -399,16 +416,13 @@ export class ControlCenterService {
   }
 
   async setActivePhase(input: SetActivePhaseInput): Promise<ProjectState> {
-    const phaseId = input.phaseId.trim();
-    if (!phaseId) {
+    const phaseReference = input.phaseId.trim();
+    if (!phaseReference) {
       throw new Error("phaseId must not be empty.");
     }
 
     const state = await this.state.readProjectState();
-    const phaseExists = state.phases.some((phase) => phase.id === phaseId);
-    if (!phaseExists) {
-      throw new Error(`Phase not found: ${phaseId}`);
-    }
+    const phaseId = resolvePhaseIdForReference(state, phaseReference);
 
     return this.state.writeProjectState({
       ...state,
