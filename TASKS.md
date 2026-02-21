@@ -59,7 +59,6 @@ Status markers:
 - [x] `P6-004` Show usage/quota telemetry in the UI when available. Deps: `P6-002`.
 - [x] `P6-005` Add UI tests for key user flows. Deps: `P6-003`, `P6-004`.
 - [x] `P6-006` Create PR Task: open Phase 6 PR after coding tasks are done. Deps: `P6-005`.
-- [ ] `P6-007` Fix CI failures for Phase 6 until all checks are green. Deps: `P6-006`.
 
 ## Phase 7: Polish & Distribution
 - [ ] `P7-001` Package IxADO as a Bun single binary for global distribution. Deps: `P6-007`.
