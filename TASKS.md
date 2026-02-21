@@ -34,13 +34,13 @@ Status markers:
 - [ ] `P3-008` Fix CI failures for Phase 3 until all checks are green. Deps: `P3-007`.
 
 ## Phase 4: Vendor Adapters
-- [ ] `P4-001` Implement `MockCLIAdapter` for deterministic local testing. Deps: `P3-008`.
-- [ ] `P4-002` Implement `ClaudeAdapter` and always include `--dangerously-skip-permissions`. Deps: `P4-001`.
-- [ ] `P4-003` Implement `GeminiAdapter` and always include `--yolo`. Deps: `P4-001`.
-- [ ] `P4-004` Implement `CodexAdapter` and always include `--dangerously-bypass-approvals-and-sandbox`. Deps: `P4-001`.
-- [ ] `P4-005` Implement adapter normalization contracts in `src/adapters/` to keep a single execution path. Deps: `P4-002`, `P4-003`, `P4-004`.
-- [ ] `P4-006` Implement usage/quota tracker via `codexbar --source cli --provider all` polling every 5 minutes. Deps: `P4-005`.
-- [ ] `P4-007` Add adapter and usage tracker tests with mocked process calls. Deps: `P4-005`, `P4-006`.
+- [x] `P4-001` Implement `MockCLIAdapter` for deterministic local testing. Deps: `P3-008`.
+- [x] `P4-002` Implement `ClaudeAdapter` and always include `--dangerously-skip-permissions`. Deps: `P4-001`.
+- [x] `P4-003` Implement `GeminiAdapter` and always include `--yolo`. Deps: `P4-001`.
+- [x] `P4-004` Implement `CodexAdapter` and always include `--dangerously-bypass-approvals-and-sandbox`. Deps: `P4-001`.
+- [x] `P4-005` Implement adapter normalization contracts in `src/adapters/` to keep a single execution path. Deps: `P4-002`, `P4-003`, `P4-004`.
+- [x] `P4-006` Implement usage/quota tracker via `codexbar --source cli --provider all` polling every 5 minutes. Deps: `P4-005`.
+- [x] `P4-007` Add adapter and usage tracker tests with mocked process calls. Deps: `P4-005`, `P4-006`.
 - [ ] `P4-008` Create PR Task: open Phase 4 PR after coding tasks are done. Deps: `P4-007`.
 - [ ] `P4-009` Fix CI failures for Phase 4 until all checks are green. Deps: `P4-008`.
 
@@ -73,4 +73,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P2-008` (Fix CI failures for Phase 2 until green).
+- [ ] Start `P4-008` (Create PR Task for Phase 4).
