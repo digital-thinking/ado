@@ -1,21 +1,17 @@
-import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { access } from "node:fs/promises";
+import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 
 import { StateEngine } from "../state";
+import { loadCliSettings, resolveSettingsFilePath, runOnboard } from "./settings";
 
-const REQUIRED_ENV_VARS = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID"] as const;
 const DEFAULT_STATE_FILE = ".ixado/state.json";
 
-function getRequiredEnv(name: (typeof REQUIRED_ENV_VARS)[number]): string {
-  const value = process.env[name]?.trim();
-
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value;
-}
+type TelegramBootstrapConfig =
+  | { enabled: false }
+  | { enabled: true; token: string; ownerId: number };
 
 function parseOwnerId(rawOwnerId: string): number {
   const ownerId = Number(rawOwnerId);
@@ -66,24 +62,99 @@ async function loadOrInitializeState(engine: StateEngine, stateFilePath: string)
   };
 }
 
-async function bootstrap(): Promise<void> {
-  const token = getRequiredEnv("TELEGRAM_BOT_TOKEN");
-  const ownerId = parseOwnerId(getRequiredEnv("TELEGRAM_OWNER_ID"));
+function resolveTelegramConfig(enabledBySettings: boolean): TelegramBootstrapConfig {
+  if (!enabledBySettings) {
+    return { enabled: false };
+  }
+
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const rawOwnerId = process.env.TELEGRAM_OWNER_ID?.trim();
+
+  if (!token || !rawOwnerId) {
+    throw new Error(
+      "Telegram is enabled in settings, but TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID are required."
+    );
+  }
+
+  return {
+    enabled: true,
+    token,
+    ownerId: parseOwnerId(rawOwnerId),
+  };
+}
+
+async function runDefaultCommand(): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const telegram = resolveTelegramConfig(settings.telegram.enabled);
   const stateFilePath = resolveStateFilePath();
   const stateEngine = new StateEngine(stateFilePath);
   const stateSummary = await loadOrInitializeState(stateEngine, stateFilePath);
 
   console.info("IxADO bootstrap checks passed.");
-  console.info(
-    `Telegram security preconditions verified (owner: ${ownerId}, token length: ${token.length}).`
-  );
+  console.info(`Settings loaded from ${settingsFilePath}.`);
+
+  if (telegram.enabled) {
+    console.info(
+      `Telegram mode enabled (owner: ${telegram.ownerId}, token length: ${telegram.token.length}).`
+    );
+  } else {
+    console.info("Telegram mode disabled. Running in local CLI mode.");
+  }
+
   console.info(
     `State engine ready (${stateSummary.initialized ? "initialized" : "loaded"} at ${stateFilePath}, phases: ${stateSummary.phaseCount}).`
   );
   console.info("Core engine and Telegram adapter wiring are pending in ROADMAP phases.");
 }
 
-await bootstrap().catch((error) => {
+function printHelp(): void {
+  console.info("IxADO CLI");
+  console.info("");
+  console.info("Usage:");
+  console.info("  ixado           Run IxADO with stored settings");
+  console.info("  ixado onboard   Configure local CLI settings");
+  console.info("  ixado help      Show this help");
+}
+
+async function runOnboardCommand(): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const rl = createInterface({
+    input: stdin,
+    output: stdout,
+  });
+
+  try {
+    const settings = await runOnboard(settingsFilePath, (question) => rl.question(question));
+    console.info(`Settings saved to ${settingsFilePath}.`);
+    console.info(`Telegram mode ${settings.telegram.enabled ? "enabled" : "disabled"}.`);
+  } finally {
+    rl.close();
+  }
+}
+
+async function runCli(args: string[]): Promise<void> {
+  const command = args[0];
+
+  if (!command) {
+    await runDefaultCommand();
+    return;
+  }
+
+  if (command === "onboard") {
+    await runOnboardCommand();
+    return;
+  }
+
+  if (command === "help" || command === "--help" || command === "-h") {
+    printHelp();
+    return;
+  }
+
+  throw new Error(`Unknown command: ${command}`);
+}
+
+await runCli(process.argv.slice(2)).catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`Startup failed: ${message}`);
   process.exitCode = 1;

@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-// 1. Supported CLI Adapters
+// 1. CLI Settings
+export const CliSettingsSchema = z.object({
+  telegram: z.object({
+    enabled: z.boolean().default(false),
+  }),
+});
+export type CliSettings = z.infer<typeof CliSettingsSchema>;
+
+// 2. Supported CLI Adapters
 export const CLIAdapterIdSchema = z.enum([
   "MOCK_CLI",
   "CLAUDE_CLI",
@@ -9,7 +17,7 @@ export const CLIAdapterIdSchema = z.enum([
 ]);
 export type CLIAdapterId = z.infer<typeof CLIAdapterIdSchema>;
 
-// 2. Worker Assignments
+// 3. Worker Assignments
 export const WorkerAssigneeSchema = z.enum([
   "MOCK_CLI",
   "CLAUDE_CLI",
@@ -19,7 +27,7 @@ export const WorkerAssigneeSchema = z.enum([
 ]);
 export type WorkerAssignee = z.infer<typeof WorkerAssigneeSchema>;
 
-// 3. CLI Adapter Contract
+// 4. CLI Adapter Contract
 export const CLIAdapterSchema = z.object({
   id: CLIAdapterIdSchema,
   command: z.string().min(1),
@@ -27,7 +35,7 @@ export const CLIAdapterSchema = z.object({
 });
 export type CLIAdapter = z.infer<typeof CLIAdapterSchema>;
 
-// 4. Individual Task Statuses
+// 5. Individual Task Statuses
 export const TaskStatusSchema = z.enum([
   "TODO",
   "IN_PROGRESS",
@@ -37,7 +45,7 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-// 5. A Single Coding Task
+// 6. A Single Coding Task
 export const TaskSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
@@ -50,7 +58,7 @@ export const TaskSchema = z.object({
 });
 export type Task = z.infer<typeof TaskSchema>;
 
-// 6. Phase Statuses (The GitOps Lifecycle)
+// 7. Phase Statuses (The GitOps Lifecycle)
 export const PhaseStatusSchema = z.enum([
   "PLANNING",
   "BRANCHING",        // Creating the Git feature branch
@@ -63,7 +71,7 @@ export const PhaseStatusSchema = z.enum([
 ]);
 export type PhaseStatus = z.infer<typeof PhaseStatusSchema>;
 
-// 7. A Development Phase
+// 8. A Development Phase
 export const PhaseSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -75,7 +83,7 @@ export const PhaseSchema = z.object({
 });
 export type Phase = z.infer<typeof PhaseSchema>;
 
-// 8. Complete Project State
+// 9. Complete Project State
 export const ProjectStateSchema = z.object({
   projectName: z.string(),
   rootDir: z.string(),
