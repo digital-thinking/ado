@@ -7,9 +7,9 @@ Status markers:
 ## Phase 1: Foundation & State Management
 - [x] `P1-001` Initialize TypeScript/Bun project. Deps: none.
 - [x] `P1-002` Define core Zod schemas for `Task`, `Phase`, `ProjectState`, and `CLIAdapter`. Deps: `P1-001`.
-- [ ] `P1-003` Implement a file-backed State Engine for reading/writing project tasks and phases in `src/state/`. Deps: `P1-002`.
-- [ ] `P1-004` Add unit tests for State Engine read/write/validation failure behavior. Deps: `P1-003`.
-- [ ] `P1-005` Wire State Engine bootstrap into `src/cli/index.ts`. Deps: `P1-003`.
+- [x] `P1-003` Implement a file-backed State Engine for reading/writing project tasks and phases in `src/state/`. Deps: `P1-002`.
+- [x] `P1-004` Add unit tests for State Engine read/write/validation failure behavior. Deps: `P1-003`.
+- [x] `P1-005` Wire State Engine bootstrap into `src/cli/index.ts`. Deps: `P1-003`.
 - [ ] `P1-006` Create PR Task: open Phase 1 PR after coding tasks are done. Deps: `P1-004`, `P1-005`.
 - [ ] `P1-007` Fix CI failures for Phase 1 until all checks are green. Deps: `P1-006`.
 
@@ -73,4 +73,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P1-003` (State Engine implementation).
+- [ ] Start `P1-006` (Create PR Task for Phase 1).
