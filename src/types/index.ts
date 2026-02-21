@@ -4,6 +4,8 @@ import { z } from "zod";
 export const CliSettingsSchema = z.object({
   telegram: z.object({
     enabled: z.boolean().default(false),
+    botToken: z.string().min(1).optional(),
+    ownerId: z.number().int().positive().optional(),
   }),
 });
 export type CliSettings = z.infer<typeof CliSettingsSchema>;
