@@ -7,7 +7,7 @@ type ClaudeAdapterOptions = {
   baseArgs?: string[];
 };
 
-const REQUIRED_CLAUDE_ARGS = ["--dangerously-skip-permissions"];
+const REQUIRED_CLAUDE_ARGS = ["--print", "--dangerously-skip-permissions"];
 
 export class ClaudeAdapter extends BaseCliAdapter {
   constructor(runner: ProcessRunner, options: ClaudeAdapterOptions = {}) {

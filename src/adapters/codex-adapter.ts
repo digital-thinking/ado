@@ -7,7 +7,7 @@ type CodexAdapterOptions = {
   baseArgs?: string[];
 };
 
-const REQUIRED_CODEX_ARGS = ["--dangerously-bypass-approvals-and-sandbox"];
+const REQUIRED_CODEX_ARGS = ["exec", "--dangerously-bypass-approvals-and-sandbox"];
 
 export class CodexAdapter extends BaseCliAdapter {
   constructor(runner: ProcessRunner, options: CodexAdapterOptions = {}) {

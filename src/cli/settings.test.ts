@@ -12,6 +12,13 @@ import {
   saveCliSettings,
 } from "./settings";
 
+const DEFAULT_AGENT_SETTINGS = {
+  CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+};
+
 describe("cli settings", () => {
   let sandboxDir: string;
   let settingsFilePath: string;
@@ -39,6 +46,10 @@ describe("cli settings", () => {
         botToken: "abc",
         ownerId: 123,
       },
+      internalWork: {
+        assignee: "CLAUDE_CLI",
+      },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
 
     const settings = await loadCliSettings(settingsFilePath);
@@ -48,6 +59,10 @@ describe("cli settings", () => {
         botToken: "abc",
         ownerId: 123,
       },
+      internalWork: {
+        assignee: "CLAUDE_CLI",
+      },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
   });
 
@@ -67,7 +82,21 @@ describe("cli settings", () => {
   });
 
   test("onboard accepts yes and persists telegram bot settings", async () => {
-    const answers = ["Concise and pragmatic", "y", "my-token", "123456"];
+    const answers = [
+      "y",
+      "600000",
+      "y",
+      "600000",
+      "y",
+      "600000",
+      "y",
+      "600000",
+      "2",
+      "Concise and pragmatic",
+      "y",
+      "my-token",
+      "123456",
+    ];
     let idx = 0;
     const output: string[] = [];
 
@@ -86,16 +115,42 @@ describe("cli settings", () => {
         botToken: "my-token",
         ownerId: 123456,
       },
+      internalWork: {
+        assignee: "CLAUDE_CLI",
+      },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 600000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 600000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 600000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 600000 },
+      },
     });
     expect(output[0]).toContain("Setup: Telegram mode enables remote");
     expect(output[1]).toContain("Setup: SOUL.md stores IxADO");
+    expect(output.some((line) => line.includes("Setup: Internal work adapter"))).toBe(true);
+    expect(output.some((line) => line.includes("installed and available in PATH"))).toBe(true);
+    expect(output.some((line) => line.includes("press 'S' to keep"))).toBe(true);
     await expect(loadCliSettings(settingsFilePath)).resolves.toEqual(settings);
     const soul = await Bun.file(soulFilePath).text();
     expect(soul).toContain("Personality: Concise and pragmatic");
   });
 
   test("onboard retries invalid answer and stores no as disabled", async () => {
-    const answers = ["Reliable and precise", "maybe", "no"];
+    const answers = [
+      "",
+      "700000",
+      "",
+      "700000",
+      "",
+      "700000",
+      "",
+      "700000",
+      "invalid",
+      "3",
+      "Reliable and precise",
+      "maybe",
+      "no",
+    ];
     let idx = 0;
 
     const settings = await runOnboard(
@@ -107,11 +162,35 @@ describe("cli settings", () => {
 
     expect(settings).toEqual({
       telegram: { enabled: false },
+      internalWork: { assignee: "GEMINI_CLI" },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 700000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 700000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 700000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 700000 },
+      },
     });
   });
 
   test("onboard retries invalid bot token and owner ID", async () => {
-    const answers = ["Pragmatic helper", "y", "", "token", "abc", "0", "42"];
+    const answers = [
+      "y",
+      "800000",
+      "y",
+      "800000",
+      "y",
+      "800000",
+      "y",
+      "800000",
+      "4",
+      "Pragmatic helper",
+      "y",
+      "",
+      "token",
+      "abc",
+      "0",
+      "42",
+    ];
     let idx = 0;
 
     const settings = await runOnboard(
@@ -127,6 +206,114 @@ describe("cli settings", () => {
         botToken: "token",
         ownerId: 42,
       },
+      internalWork: {
+        assignee: "MOCK_CLI",
+      },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 800000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 800000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 800000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 800000 },
+      },
     });
+  });
+
+  test("onboard supports skip key to keep existing values", async () => {
+    await saveCliSettings(settingsFilePath, {
+      telegram: {
+        enabled: true,
+        botToken: "existing-token",
+        ownerId: 999,
+      },
+      internalWork: {
+        assignee: "GEMINI_CLI",
+      },
+      agents: DEFAULT_AGENT_SETTINGS,
+    });
+    await saveSoulFile(soulFilePath, "Existing soul");
+
+    const answers = [
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+    ];
+    let idx = 0;
+
+    const settings = await runOnboard(
+      settingsFilePath,
+      soulFilePath,
+      async () => answers[idx++] ?? "",
+      async () => {}
+    );
+
+    expect(settings).toEqual({
+      telegram: {
+        enabled: true,
+        botToken: "existing-token",
+        ownerId: 999,
+      },
+      internalWork: {
+        assignee: "GEMINI_CLI",
+      },
+      agents: DEFAULT_AGENT_SETTINGS,
+    });
+
+    const soul = await Bun.file(soulFilePath).text();
+    expect(soul).toContain("Personality: Existing soul");
+  });
+
+  test("onboard skip on missing existing value asks again", async () => {
+    const answers = [
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "New personality",
+      "y",
+      "s",
+      "token",
+      "s",
+      "123",
+    ];
+    let idx = 0;
+    const output: string[] = [];
+
+    const settings = await runOnboard(
+      settingsFilePath,
+      soulFilePath,
+      async () => answers[idx++] ?? "",
+      async (line) => {
+        output.push(line);
+      }
+    );
+
+    expect(settings).toEqual({
+      telegram: {
+        enabled: true,
+        botToken: "token",
+        ownerId: 123,
+      },
+      internalWork: {
+        assignee: "CODEX_CLI",
+      },
+      agents: DEFAULT_AGENT_SETTINGS,
+    });
+    expect(output.some((line) => line.includes("No existing SOUL profile found"))).toBe(true);
+    expect(output.some((line) => line.includes("No existing Telegram bot token found"))).toBe(true);
+    expect(output.some((line) => line.includes("No existing Telegram owner ID found"))).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 
+import { resolveCommandForSpawn } from "./command-resolver";
 import type { ProcessRunOptions, ProcessRunResult, SpawnFn } from "./types";
 
 export class ProcessExecutionError extends Error {
@@ -29,9 +30,10 @@ export class ProcessManager {
 
     return new Promise<ProcessRunResult>((resolve, reject) => {
       const startedAt = Date.now();
-      const child = this.spawnFn(command, args, {
+      const env = options.env ?? process.env;
+      const child = this.spawnFn(resolveCommandForSpawn(command, env), args, {
         cwd: options.cwd,
-        env: options.env,
+        env,
         stdio: "pipe",
         shell: false,
         windowsHide: true,

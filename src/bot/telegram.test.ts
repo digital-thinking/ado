@@ -1,17 +1,24 @@
 import { describe, expect, test } from "bun:test";
 
-import { handleStatusCommand, handleTasksCommand } from "./telegram";
+import {
+  handleSetActivePhaseCommand,
+  handleStartTaskCommand,
+  handleStatusCommand,
+  handleTasksCommand,
+} from "./telegram";
 import type { ProjectState } from "../types";
 
 type FakeCtx = {
   from?: { id?: number };
+  message?: { text?: string };
   replies: string[];
   reply: (text: string) => Promise<void>;
 };
 
-function createCtx(userId?: number): FakeCtx {
+function createCtx(userId?: number, text?: string): FakeCtx {
   return {
     from: userId === undefined ? undefined : { id: userId },
+    message: text ? { text } : undefined,
     replies: [],
     async reply(text: string): Promise<void> {
       this.replies.push(text);
@@ -55,7 +62,7 @@ describe("telegram command handlers", () => {
     await handleStatusCommand(ctx, 123, async () => {
       called = true;
       return buildState();
-    });
+    }, () => [], ["CODEX_CLI"]);
 
     expect(called).toBe(false);
     expect(ctx.replies).toEqual(["Unauthorized user."]);
@@ -64,11 +71,26 @@ describe("telegram command handlers", () => {
   test("returns status for authorized user", async () => {
     const ctx = createCtx(123);
 
-    await handleStatusCommand(ctx, 123, async () => buildState());
+    await handleStatusCommand(
+      ctx,
+      123,
+      async () => buildState(),
+      () => [
+        {
+          name: "CODEX_CLI task worker",
+          status: "RUNNING",
+          taskId: "22222222-2222-2222-2222-222222222222",
+        },
+      ],
+      ["CODEX_CLI", "CLAUDE_CLI"]
+    );
 
     expect(ctx.replies).toHaveLength(1);
     expect(ctx.replies[0]).toContain("Project: IxADO");
     expect(ctx.replies[0]).toContain("Active: Phase 3 (CODING)");
+    expect(ctx.replies[0]).toContain("Available Agents: CODEX_CLI, CLAUDE_CLI");
+    expect(ctx.replies[0]).toContain("Running Agents (1):");
+    expect(ctx.replies[0]).toContain("Phase 3: Implement Telegram adapter");
   });
 
   test("returns tasks list for authorized user", async () => {
@@ -78,7 +100,7 @@ describe("telegram command handlers", () => {
 
     expect(ctx.replies).toHaveLength(1);
     expect(ctx.replies[0]).toContain("Tasks for Phase 3:");
-    expect(ctx.replies[0]).toContain("- [IN_PROGRESS] Implement Telegram adapter");
+    expect(ctx.replies[0]).toContain("1. [IN_PROGRESS] Implement Telegram adapter (CODEX_CLI)");
   });
 
   test("returns no active phase when there is no active phase", async () => {
@@ -97,5 +119,61 @@ describe("telegram command handlers", () => {
     await handleTasksCommand(ctx, 999, async () => buildState());
 
     expect(ctx.replies).toEqual(["Unauthorized user."]);
+  });
+
+  test("starts task through shared task starter", async () => {
+    const ctx = createCtx(123, "/starttask 1 CODEX_CLI");
+
+    await handleStartTaskCommand(
+      ctx,
+      123,
+      ["CODEX_CLI", "MOCK_CLI"],
+      "MOCK_CLI",
+      async (input) => {
+      expect(input.taskNumber).toBe(1);
+      expect(input.assignee).toBe("CODEX_CLI");
+      const state = buildState();
+      state.phases[0].tasks[0].status = "DONE";
+      return state;
+      }
+    );
+
+    expect(ctx.replies[0]).toContain("Starting task");
+    expect(ctx.replies[1]).toContain("finished with status DONE");
+  });
+
+  test("returns usage for invalid starttask command", async () => {
+    const ctx = createCtx(123, "/starttask");
+
+    await handleStartTaskCommand(
+      ctx,
+      123,
+      ["CODEX_CLI"],
+      "CODEX_CLI",
+      async () => buildState()
+    );
+
+    expect(ctx.replies).toEqual(["Usage: /starttask <taskNumber> [assignee]"]);
+  });
+
+  test("sets active phase through shared setter", async () => {
+    const ctx = createCtx(123, "/setactivephase 11111111-1111-1111-1111-111111111111");
+
+    await handleSetActivePhaseCommand(ctx, 123, async (input) => {
+      expect(input.phaseId).toBe("11111111-1111-1111-1111-111111111111");
+      const state = buildState();
+      state.activePhaseId = input.phaseId;
+      return state;
+    });
+
+    expect(ctx.replies).toEqual(["Active phase set to Phase 3."]);
+  });
+
+  test("returns usage for invalid setactivephase command", async () => {
+    const ctx = createCtx(123, "/setactivephase");
+
+    await handleSetActivePhaseCommand(ctx, 123, async () => buildState());
+
+    expect(ctx.replies).toEqual(["Usage: /setactivephase <phaseId>"]);
   });
 });
