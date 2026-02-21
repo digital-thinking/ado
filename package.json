@@ -4,12 +4,21 @@
   "description": "Thin, vendor-agnostic development orchestrator with Git/CI workflow control",
   "main": "src/cli/index.ts",
   "bin": {
-    "ixado": "bin/ixado.ts"
+    "ixado": "dist/ixado.exe"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "bun run --watch src/cli/index.ts",
     "start": "bun run src/cli/index.ts",
-    "build:binary": "bun build --compile --outfile dist/ixado ./src/cli/index.ts",
+    "build:binary": "bun build --compile --outfile dist/ixado.exe ./src/cli/index.ts",
+    "package:validate": "node scripts/package-validate.mjs",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "package:verify": "npm run package:validate && npm run package:smoke",
+    "prepack": "npm run build:binary && npm run package:verify",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun run test"

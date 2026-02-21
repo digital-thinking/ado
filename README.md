@@ -31,3 +31,32 @@ Any of the coding agents
 * Claude Code CLI (authenticated)
 * Gemini CLI (authenticated)
 
+## Binary Build and Distribution
+IxADO is packaged as a single compiled executable at `dist/ixado.exe`.
+
+Build the binary:
+```bash
+npm run build:binary
+```
+
+Validate and smoke-test the binary:
+```bash
+npm run package:verify
+```
+
+Run the compiled binary:
+```bash
+./dist/ixado.exe help
+```
+
+Install globally on your machine (Windows PowerShell):
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\bin" | Out-Null
+Copy-Item .\dist\ixado.exe "$env:USERPROFILE\bin\ixado.exe" -Force
+```
+
+Release checklist:
+1. Run `npm run build:binary`.
+2. Run `npm run package:verify`.
+3. Publish/upload `dist/ixado.exe` as the release artifact.
+

@@ -42,14 +42,14 @@ Status markers:
 - [x] `P4-008` Create PR Task: open Phase 4 PR after coding tasks are done. Deps: `P4-007`.
 
 ## Phase 5: CI Execution Loop
-- [ ] `P5-001` Connect State Engine to Process Manager and adapter execution. Deps: `P4-009`.
-- [ ] `P5-002` Implement "Phase Start -> Branch" trigger using `GitManager`. Deps: `P5-001`.
-- [ ] `P5-003` Implement task execution loop (`read task -> spawn adapter -> await result`). Deps: `P5-001`.
-- [ ] `P5-004` Implement automated PR review and CI polling loop. Deps: `P5-002`, `P5-003`.
-- [ ] `P5-005` Implement CI fix loop that consumes failing logs and spawns fix tasks. Deps: `P5-004`.
-- [ ] `P5-006` Add Telegram push notifications for CI failures and PR readiness. Deps: `P5-004`.
-- [ ] `P5-007` Use usage/quota metrics for smart worker delegation. Deps: `P4-006`, `P5-003`.
-- [ ] `P5-008` Add integration tests for execution loop and CI fix loop. Deps: `P5-005`, `P5-006`, `P5-007`.
+- [ ] `P5-001` Define Worker Archetypes (`Coder`, `Tester`, `Reviewer`, `Fixer`) and their system prompts. Ensure `Reviewer` uses `git diff` context. Deps: `P4-008`.
+- [ ] `P5-002` Implement Execution Loop Configuration (`auto_mode`) with CLI UX (wait prompt vs countdown) and Telegram controls (`/next`, `/stop`). Deps: `P5-001`.
+- [ ] `P5-003` Implement "Tester" workflow: runs after tasks, executes tests, creates fix tasks on failure. Deps: `P5-002`.
+- [ ] `P5-004` Implement Optional CI Integration: Programmatic PR creation via `gh` CLI. Deps: `P5-003`.
+- [ ] `P5-005` Implement CI Validation Loop: `Reviewer` (comments) and `Fixer` (addresses comments) with `max_retries` safety valve. Deps: `P5-004`.
+- [ ] `P5-006` Integrate loops into State Engine: Phase Start -> Branch -> Task Loop -> Tester -> PR -> Validation. Deps: `P5-005`.
+- [ ] `P5-007` Add Telegram notifications for loop events (Task Done, Test Fail, PR Created, Review). Deps: `P5-006`.
+- [ ] `P5-008` Add integration tests for Auto/Manual modes and Tester/CI loops. Deps: `P5-007`.
 - [ ] `P5-009` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-008`.
 
 ## Phase 6: Web Interface
@@ -61,8 +61,8 @@ Status markers:
 - [x] `P6-006` Create PR Task: open Phase 6 PR after coding tasks are done. Deps: `P6-005`.
 
 ## Phase 7: Polish & Distribution
-- [x] `P7-001` Package IxADO as a Bun single binary for global distribution. Deps: `P6-007`.
-- [ ] `P7-002` Add packaging validation and smoke-test scripts. Deps: `P7-001`.
-- [ ] `P7-003` Update docs for install/run/release usage. Deps: `P7-001`.
+- [x] `P7-001` Package IxADO as a Bun single binary for global distribution. Deps: `P6-006`.
+- [x] `P7-002` Add packaging validation and smoke-test scripts. Deps: `P7-001`.
+- [x] `P7-003` Update docs for install/run/release usage. Deps: `P7-001`.
 - [ ] `P7-004` Create PR Task: open Phase 7 PR after coding tasks are done. Deps: `P7-002`, `P7-003`.
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.

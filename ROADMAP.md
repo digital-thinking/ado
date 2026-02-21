@@ -43,4 +43,4 @@
 - [ ] Show usage and quota data (if available)
 
 ## Phase 7: Polish & Distribution
-- [ ] Package for global distribution as a single binary using Bun.
+- [x] Package for global distribution as a single binary using Bun.
