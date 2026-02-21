@@ -68,15 +68,25 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+const MAX_TAIL_LINE_LENGTH = 240;
+
 function toView(record: AgentRecord): AgentView {
   const { child: _child, runToken: _runToken, ...view } = record;
   return view;
 }
 
+function truncateTailLine(line: string): string {
+  if (line.length <= MAX_TAIL_LINE_LENGTH) {
+    return line;
+  }
+
+  return `${line.slice(0, MAX_TAIL_LINE_LENGTH)}...`;
+}
+
 function tailPush(lines: string[], value: string): void {
   const chunks = value
     .split(/\r?\n/)
-    .map((line) => line.trimEnd())
+    .map((line) => truncateTailLine(line.trimEnd()))
     .filter((line) => line.length > 0);
 
   lines.push(...chunks);
@@ -130,7 +140,7 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     startedAt: candidate.startedAt,
     stoppedAt: typeof candidate.stoppedAt === "string" ? candidate.stoppedAt : undefined,
     lastExitCode: typeof candidate.lastExitCode === "number" ? candidate.lastExitCode : undefined,
-    outputTail: normalizeStringArray(candidate.outputTail),
+    outputTail: normalizeStringArray(candidate.outputTail).map((line) => truncateTailLine(line)),
   };
 }
 

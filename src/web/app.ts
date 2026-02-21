@@ -395,6 +395,15 @@ function controlCenterHtml(): string {
         .replace(/'/g, "&#39;");
     }
 
+    function truncateTailPreview(value) {
+      const text = String(value);
+      if (text.length <= 120) {
+        return text;
+      }
+
+      return text.slice(0, 120) + "...";
+    }
+
     function renderState(state) {
       latestState = state;
       const selectedPhaseId =
@@ -598,7 +607,7 @@ function controlCenterHtml(): string {
               <button data-action="restart" data-id="\${agent.id}" class="secondary">Restart</button>
             </div>
           </td>
-          <td><div class="mono small">\${(agent.outputTail || []).slice(-3).join(" | ")}</div></td>
+          <td><div class="mono small">\${(agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ")}</div></td>
         \`;
         agentTableBody.appendChild(row);
       });
