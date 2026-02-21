@@ -8,6 +8,15 @@ export type TaskStarter = (input: {
   assignee: CLIAdapterId;
 }) => Promise<ProjectState>;
 export type ActivePhaseSetter = (input: { phaseId: string }) => Promise<ProjectState>;
+export type AgentListReader = () => Promise<StatusAgent[]> | StatusAgent[];
+
+export type StatusAgent = {
+  id?: string;
+  name: string;
+  status: "RUNNING" | "STOPPED" | "FAILED" | string;
+  phaseId?: string;
+  taskId?: string;
+};
 
 type TelegramCtx = {
   from?: { id?: number };
@@ -20,15 +29,34 @@ export type TelegramRuntime = {
   stop: () => void;
 };
 
-function formatStatus(state: ProjectState): string {
+function formatStatus(
+  state: ProjectState,
+  agents: StatusAgent[],
+  availableAssignees: CLIAdapterId[]
+): string {
   const activePhase = state.phases.find((phase) => phase.id === state.activePhaseId);
   const activeStatus = activePhase ? `${activePhase.name} (${activePhase.status})` : "none";
+  const tasksById = new Map(
+    state.phases.flatMap((phase) =>
+      phase.tasks.map((task) => [task.id, `${phase.name}: ${task.title}`] as const)
+    )
+  );
+  const runningAgents = agents.filter((agent) => agent.status === "RUNNING");
+  const runningLines = runningAgents.length
+    ? runningAgents.map((agent, index) => {
+        const taskLabel = agent.taskId ? tasksById.get(agent.taskId) ?? agent.taskId : "unassigned";
+        return `${index + 1}. ${agent.name} -> ${taskLabel}`;
+      })
+    : ["none"];
 
   return [
     `Project: ${state.projectName}`,
     `Root: ${state.rootDir}`,
     `Phases: ${state.phases.length}`,
     `Active: ${activeStatus}`,
+    `Available Agents: ${availableAssignees.join(", ")}`,
+    `Running Agents (${runningAgents.length}):`,
+    ...runningLines,
   ].join("\n");
 }
 
@@ -70,14 +98,16 @@ async function ensureOwner(ctx: TelegramCtx, ownerId: number): Promise<boolean> 
 export async function handleStatusCommand(
   ctx: TelegramCtx,
   ownerId: number,
-  readState: StateReader
+  readState: StateReader,
+  readAgents: AgentListReader,
+  availableAssignees: CLIAdapterId[]
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
   }
 
-  const state = await readState();
-  await ctx.reply(formatStatus(state));
+  const [state, agents] = await Promise.all([readState(), Promise.resolve(readAgents())]);
+  await ctx.reply(formatStatus(state, agents, availableAssignees));
 }
 
 export async function handleTasksCommand(
@@ -96,6 +126,7 @@ export async function handleTasksCommand(
 export async function handleStartTaskCommand(
   ctx: TelegramCtx,
   ownerId: number,
+  availableAssignees: CLIAdapterId[],
   defaultAssignee: CLIAdapterId,
   startTask: TaskStarter
 ): Promise<void> {
@@ -113,8 +144,8 @@ export async function handleStartTaskCommand(
     await ctx.reply("Usage: /starttask <taskNumber> [assignee]");
     return;
   }
-  if (!parsedAssignee.success) {
-    await ctx.reply("Assignee must be one of: CODEX_CLI, CLAUDE_CLI, GEMINI_CLI, MOCK_CLI.");
+  if (!parsedAssignee.success || !availableAssignees.includes(parsedAssignee.data)) {
+    await ctx.reply(`Assignee must be one of: ${availableAssignees.join(", ")}.`);
     return;
   }
 
@@ -172,6 +203,8 @@ type CreateTelegramRuntimeInput = {
   token: string;
   ownerId: number;
   readState: StateReader;
+  listAgents: AgentListReader;
+  availableAssignees: CLIAdapterId[];
   defaultAssignee: CLIAdapterId;
   startTask: TaskStarter;
   setActivePhase: ActivePhaseSetter;
@@ -181,7 +214,13 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
   const bot = new Bot(input.token);
 
   bot.command("status", async (ctx) => {
-    await handleStatusCommand(ctx, input.ownerId, input.readState);
+    await handleStatusCommand(
+      ctx,
+      input.ownerId,
+      input.readState,
+      input.listAgents,
+      input.availableAssignees
+    );
   });
 
   bot.command("tasks", async (ctx) => {
@@ -189,7 +228,13 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
   });
 
   bot.command("starttask", async (ctx) => {
-    await handleStartTaskCommand(ctx, input.ownerId, input.defaultAssignee, input.startTask);
+    await handleStartTaskCommand(
+      ctx,
+      input.ownerId,
+      input.availableAssignees,
+      input.defaultAssignee,
+      input.startTask
+    );
   });
   bot.command("setactivephase", async (ctx) => {
     await handleSetActivePhaseCommand(ctx, input.ownerId, input.setActivePhase);

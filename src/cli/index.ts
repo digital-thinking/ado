@@ -4,14 +4,17 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 
+import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
+import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
-import { ControlCenterService } from "../web";
+import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { initializeCliLogging } from "./logging";
 import {
+  getAvailableAgents,
   loadCliSettings,
   resolveSettingsFilePath,
   resolveSoulFilePath,
@@ -120,18 +123,70 @@ function isMissingCommandError(error: unknown): boolean {
   return message.includes("ENOENT") || message.includes("uv_spawn");
 }
 
-function createControlCenterService(stateFilePath: string): ControlCenterService {
-  const processManager = new ProcessManager();
+function createControlCenterService(
+  stateFilePath: string,
+  settings: Awaited<ReturnType<typeof loadCliSettings>>
+): ControlCenterService {
+  return createServices(stateFilePath, settings).control;
+}
+
+function createControlCenterServiceWithAgentTracking(
+  stateFilePath: string,
+  processManager: ProcessManager,
+  agents: AgentSupervisor,
+  settings: Awaited<ReturnType<typeof loadCliSettings>>
+): ControlCenterService {
   return new ControlCenterService(
     new StateEngine(stateFilePath),
     resolve(process.cwd(), "TASKS.md"),
     async (workInput) => {
+      const availableAgents = getAvailableAgents(settings);
+      if (!availableAgents.includes(workInput.assignee)) {
+        throw new Error(
+          `Agent '${workInput.assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`
+        );
+      }
+
+      const assigneeSettings = settings.agents[workInput.assignee];
       const adapter = createAdapter(workInput.assignee, processManager);
+      const artifacts = await createPromptLogArtifacts({
+        cwd: process.cwd(),
+        assignee: workInput.assignee,
+        prompt: workInput.prompt,
+      });
+      const useStdinPrompt =
+        workInput.assignee === "CODEX_CLI" ||
+        workInput.assignee === "CLAUDE_CLI" ||
+        workInput.assignee === "GEMINI_CLI";
+      const args = workInput.assignee === "CODEX_CLI"
+        ? [...adapter.contract.baseArgs, "-"]
+        : workInput.assignee === "GEMINI_CLI"
+          ? [...adapter.contract.baseArgs, "--prompt", ""]
+          : useStdinPrompt
+            ? [...adapter.contract.baseArgs]
+            : [...adapter.contract.baseArgs, artifacts.inputFilePath];
+      const stdin = useStdinPrompt ? workInput.prompt : undefined;
+      const agentName = workInput.taskId
+        ? `${workInput.assignee} task worker`
+        : `${workInput.assignee} internal worker`;
       try {
-        const result = await adapter.run({
-          prompt: workInput.prompt,
+        const result = await agents.runToCompletion({
+          name: agentName,
+          command: adapter.contract.command,
+          args,
           cwd: process.cwd(),
-          timeoutMs: workInput.timeoutMs,
+          timeoutMs: assigneeSettings.timeoutMs,
+          stdin,
+          phaseId: workInput.phaseId,
+          taskId: workInput.taskId,
+        });
+        await writeOutputLog({
+          outputFilePath: artifacts.outputFilePath,
+          command: result.command,
+          args: result.args,
+          durationMs: result.durationMs,
+          stdout: result.stdout,
+          stderr: result.stderr,
         });
         return {
           command: result.command,
@@ -141,6 +196,13 @@ function createControlCenterService(stateFilePath: string): ControlCenterService
           durationMs: result.durationMs,
         };
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await writeOutputLog({
+          outputFilePath: artifacts.outputFilePath,
+          command: adapter.contract.command,
+          args,
+          errorMessage: message,
+        });
         if (isMissingCommandError(error)) {
           throw new Error(
             `Adapter '${workInput.assignee}' requires '${adapter.contract.command}' but it is not installed or not on PATH. Install it or select another adapter with 'ixado onboard'.`
@@ -153,14 +215,35 @@ function createControlCenterService(stateFilePath: string): ControlCenterService
   );
 }
 
+function createServices(
+  stateFilePath: string,
+  settings: Awaited<ReturnType<typeof loadCliSettings>>
+): {
+  control: ControlCenterService;
+  agents: AgentSupervisor;
+} {
+  const processManager = new ProcessManager();
+  const agents = new AgentSupervisor({
+    registryFilePath: resolveAgentRegistryFilePath(process.cwd()),
+  });
+  const control = createControlCenterServiceWithAgentTracking(
+    stateFilePath,
+    processManager,
+    agents,
+    settings
+  );
+  return { control, agents };
+}
+
 async function runDefaultCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const telegram = resolveTelegramConfig(settings.telegram);
   const stateFilePath = resolveStateFilePath();
   const stateEngine = new StateEngine(stateFilePath);
-  const control = createControlCenterService(stateFilePath);
+  const { control, agents } = createServices(stateFilePath, settings);
   const stateSummary = await loadOrInitializeState(stateEngine, stateFilePath);
+  const availableAgents = getAvailableAgents(settings);
 
   console.info("IxADO bootstrap checks passed.");
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}.`);
@@ -177,6 +260,7 @@ async function runDefaultCommand(): Promise<void> {
   console.info(
     `State engine ready (${stateSummary.initialized ? "initialized" : "loaded"} at ${stateFilePath}, phases: ${stateSummary.phaseCount}).`
   );
+  console.info(`Available agents: ${availableAgents.join(", ")}.`);
 
   if (telegram.enabled) {
     console.info("Starting Telegram command center.");
@@ -187,6 +271,8 @@ async function runDefaultCommand(): Promise<void> {
       token: telegram.token,
       ownerId: telegram.ownerId,
       readState: () => control.getState(),
+      listAgents: () => agents.list(),
+      availableAssignees: availableAgents,
       defaultAssignee: settings.internalWork.assignee,
       startTask: async (input) =>
         control.startActiveTaskAndWait({
@@ -211,6 +297,7 @@ function printHelp(): void {
   console.info("");
   console.info("Usage:");
   console.info("  ixado           Run IxADO with stored settings");
+  console.info("  ixado status    Show project status and running agents");
   console.info("  ixado onboard   Configure local CLI settings");
   console.info(
     "  ixado task list  List tasks in active phase with numbers"
@@ -241,6 +328,10 @@ async function runOnboardCommand(): Promise<void> {
     console.info(`SOUL file saved to ${soulFilePath}.`);
     console.info(`Telegram mode ${settings.telegram.enabled ? "enabled" : "disabled"}.`);
     console.info(`Internal work adapter: ${settings.internalWork.assignee}.`);
+    console.info(`Available agents: ${getAvailableAgents(settings).join(", ")}.`);
+    for (const agentId of getAvailableAgents(settings)) {
+      console.info(`  ${agentId} timeout: ${settings.agents[agentId].timeoutMs}ms`);
+    }
     if (settings.telegram.enabled) {
       console.info("Telegram bot credentials stored in settings file.");
     }
@@ -311,6 +402,7 @@ async function runWebServeCommand(args: string[]): Promise<void> {
     stateFilePath,
     projectName: "IxADO",
     defaultInternalWorkAssignee: settings.internalWork.assignee,
+    agentSettings: settings.agents,
     port,
   });
 
@@ -352,8 +444,12 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   const assignee = CLIAdapterIdSchema.parse(
     args[3]?.trim() ? args[3].trim() : settings.internalWork.assignee
   );
+  const availableAgents = getAvailableAgents(settings);
+  if (!availableAgents.includes(assignee)) {
+    throw new Error(`Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`);
+  }
   const stateFilePath = resolveStateFilePath();
-  const control = createControlCenterService(stateFilePath);
+  const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   console.info(`Starting active-phase task #${taskNumber} with ${assignee}.`);
 
@@ -378,8 +474,10 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
 }
 
 async function runTaskListCommand(): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
   const stateFilePath = resolveStateFilePath();
-  const control = createControlCenterService(stateFilePath);
+  const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const tasksView = await control.listActivePhaseTasks();
   console.info(`Active phase: ${tasksView.phaseName}`);
@@ -414,8 +512,10 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
     throw new Error("Usage: ixado phase active <phaseId>");
   }
 
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
   const stateFilePath = resolveStateFilePath();
-  const control = createControlCenterService(stateFilePath);
+  const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const state = await control.setActivePhase({ phaseId });
   const active = state.phases.find((phase) => phase.id === state.activePhaseId);
@@ -436,6 +536,51 @@ async function runPhaseCommand(args: string[]): Promise<void> {
   throw new Error("Unknown phase command. Use `ixado phase active <phaseId>`.");
 }
 
+function resolveAssignedTaskLabel(agent: AgentView, state: Awaited<ReturnType<ControlCenterService["getState"]>>): string {
+  const taskId = agent.taskId?.trim();
+  if (!taskId) {
+    return "unassigned";
+  }
+
+  for (const phase of state.phases) {
+    const task = phase.tasks.find((candidate) => candidate.id === taskId);
+    if (task) {
+      return `${phase.name}: ${task.title}`;
+    }
+  }
+
+  return taskId;
+}
+
+async function runStatusCommand(): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const stateFilePath = resolveStateFilePath();
+  const { control, agents } = createServices(stateFilePath, settings);
+  await control.ensureInitialized("IxADO", process.cwd());
+  const state = await control.getState();
+  const activePhase = state.phases.find((phase) => phase.id === state.activePhaseId);
+  const runningAgents = agents.list().filter((agent) => agent.status === "RUNNING");
+  const availableAgents = getAvailableAgents(settings);
+
+  console.info(`Project: ${state.projectName}`);
+  console.info(`Root: ${state.rootDir}`);
+  console.info(`Phases: ${state.phases.length}`);
+  console.info(
+    `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`
+  );
+  console.info(`Available agents: ${availableAgents.join(", ")}`);
+  console.info(`Running Agents (${runningAgents.length}):`);
+  if (runningAgents.length === 0) {
+    console.info("none");
+    return;
+  }
+
+  for (const [index, agent] of runningAgents.entries()) {
+    console.info(`${index + 1}. ${agent.name} -> ${resolveAssignedTaskLabel(agent, state)}`);
+  }
+}
+
 async function runCli(args: string[]): Promise<void> {
   const command = args[0];
 
@@ -446,6 +591,11 @@ async function runCli(args: string[]): Promise<void> {
 
   if (command === "onboard") {
     await runOnboardCommand();
+    return;
+  }
+
+  if (command === "status") {
+    await runStatusCommand();
     return;
   }
 

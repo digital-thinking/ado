@@ -62,6 +62,8 @@ export type RunInternalWorkInput = {
   assignee: CLIAdapterId;
   prompt: string;
   timeoutMs?: number;
+  phaseId?: string;
+  taskId?: string;
 };
 
 export type RunInternalWorkResult = {
@@ -703,6 +705,8 @@ export class ControlCenterService {
         assignee: input.assignee,
         prompt: input.prompt,
         timeoutMs: TASK_EXECUTION_TIMEOUT_MS,
+        phaseId: input.phaseId,
+        taskId: input.taskId,
       });
 
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]

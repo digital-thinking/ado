@@ -36,6 +36,7 @@ export type WebAppDependencies = {
   usage: UsageService;
   defaultAgentCwd: string;
   defaultInternalWorkAssignee: CLIAdapterId;
+  availableWorkerAssignees: CLIAdapterId[];
   webLogFilePath: string;
   cliLogFilePath: string;
 };
@@ -81,6 +82,12 @@ function asInternalAdapterAssignee(value: unknown): InternalAdapterAssignee | un
   }
 
   return undefined;
+}
+
+function ensureAllowedAssignee(assignee: CLIAdapterId, availableAssignees: CLIAdapterId[]): void {
+  if (!availableAssignees.includes(assignee)) {
+    throw new Error(`assignee '${assignee}' is disabled. Available: ${availableAssignees.join(", ")}.`);
+  }
 }
 
 function controlCenterHtml(): string {
@@ -348,7 +355,7 @@ function controlCenterHtml(): string {
     const defaultInternalWorkAssignee = ${JSON.stringify("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}")};
     const defaultWebLogFilePath = ${JSON.stringify("{{DEFAULT_WEB_LOG_FILE_PATH}}")};
     const defaultCliLogFilePath = ${JSON.stringify("{{DEFAULT_CLI_LOG_FILE_PATH}}")};
-    const WORKER_ASSIGNEES = ["CODEX_CLI", "CLAUDE_CLI", "GEMINI_CLI", "MOCK_CLI"];
+    const WORKER_ASSIGNEES = {{AVAILABLE_WORKER_ASSIGNEES_JSON}};
     let latestAgents = [];
     let latestState = null;
     webLogPath.textContent = defaultWebLogFilePath;
@@ -672,7 +679,7 @@ function controlCenterHtml(): string {
         const result = await api("/api/import/tasks-md", {
           method: "POST",
           body: JSON.stringify({}),
-        }, 60000);
+        });
         importTasksStatus.textContent =
           "Imported " +
           result.importedPhaseCount +
@@ -686,18 +693,7 @@ function controlCenterHtml(): string {
         await refresh();
       } catch (error) {
         importTasksStatus.textContent = "";
-        const message = error instanceof Error ? error.message : String(error);
-        const isAbortError =
-          (error instanceof Error && error.name === "AbortError") ||
-          message.toLowerCase().includes("aborted");
-        if (isAbortError) {
-          setError(
-            "importTasksError",
-            "Import timed out after 60s. Check logs: " + defaultWebLogFilePath + " and " + defaultCliLogFilePath + "."
-          );
-        } else {
-          setError("importTasksError", message);
-        }
+        setError("importTasksError", error instanceof Error ? error.message : String(error));
       } finally {
         clearInterval(ticker);
         importTasksButton.disabled = false;
@@ -844,7 +840,11 @@ export function createWebApp(deps: WebAppDependencies): {
     .replace("{{DEFAULT_AGENT_CWD}}", deps.defaultAgentCwd.replace(/\\/g, "\\\\"))
     .replace("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}", deps.defaultInternalWorkAssignee)
     .replace("{{DEFAULT_WEB_LOG_FILE_PATH}}", deps.webLogFilePath.replace(/\\/g, "\\\\"))
-    .replace("{{DEFAULT_CLI_LOG_FILE_PATH}}", deps.cliLogFilePath.replace(/\\/g, "\\\\"));
+    .replace("{{DEFAULT_CLI_LOG_FILE_PATH}}", deps.cliLogFilePath.replace(/\\/g, "\\\\"))
+    .replace(
+      "{{AVAILABLE_WORKER_ASSIGNEES_JSON}}",
+      JSON.stringify(deps.availableWorkerAssignees)
+    );
 
   return {
     fetch: async (request: Request): Promise<Response> => {
@@ -903,8 +903,9 @@ export function createWebApp(deps: WebAppDependencies): {
           const body = await readJson(request);
           const assignee = asInternalAdapterAssignee(body.assignee);
           if (!assignee) {
-            throw new Error("assignee must be one of MOCK_CLI, CODEX_CLI, GEMINI_CLI, CLAUDE_CLI.");
+            throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
           }
+          ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
           const state = await deps.control.startTask({
             phaseId: asString(body.phaseId) ?? "",
@@ -918,8 +919,9 @@ export function createWebApp(deps: WebAppDependencies): {
           const body = await readJson(request);
           const assignee = asInternalAdapterAssignee(body.assignee) ?? deps.defaultInternalWorkAssignee;
           if (!assignee) {
-            throw new Error("assignee must be one of MOCK_CLI, CODEX_CLI, GEMINI_CLI, CLAUDE_CLI.");
+            throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
           }
+          ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
           return json(await deps.control.importFromTasksMarkdown(assignee), 200);
         }
@@ -928,8 +930,9 @@ export function createWebApp(deps: WebAppDependencies): {
           const body = await readJson(request);
           const assignee = asInternalAdapterAssignee(body.assignee) ?? deps.defaultInternalWorkAssignee;
           if (!assignee) {
-            throw new Error("assignee must be one of MOCK_CLI, CODEX_CLI, GEMINI_CLI, CLAUDE_CLI.");
+            throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
           }
+          ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
           return json(
             await deps.control.runInternalWork({

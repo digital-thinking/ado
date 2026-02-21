@@ -1,8 +1,11 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { AgentSupervisor } from "./agent-supervisor";
 
@@ -39,6 +42,16 @@ function createFakeChild(pid = 1001): FakeChild {
 }
 
 describe("AgentSupervisor", () => {
+  let sandboxDir: string;
+
+  beforeEach(async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-agent-supervisor-"));
+  });
+
+  afterEach(async () => {
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
   test("starts, lists, and kills an agent", () => {
     const child = createFakeChild();
     const spawnCalls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
@@ -127,5 +140,55 @@ describe("AgentSupervisor", () => {
     const cleared = supervisor.assign(started.id, {});
     expect(cleared.phaseId).toBeUndefined();
     expect(cleared.taskId).toBeUndefined();
+  });
+
+  test("tracks run-to-completion output and task assignment", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+
+    const runPromise = supervisor.runToCompletion({
+      name: "Task worker",
+      command: "codex",
+      args: ["run", "prompt"],
+      cwd: "C:/repo",
+      phaseId: "phase-1",
+      taskId: "task-1",
+    });
+
+    child.stdout.write("hello\n");
+    child.stderr.write("world\n");
+    child.emit("close", 0, null);
+
+    const result = await runPromise;
+    const listed = supervisor.list().find((item) => item.id === result.id);
+    expect(result.stdout).toContain("hello");
+    expect(result.stderr).toContain("world");
+    expect(listed?.status).toBe("STOPPED");
+    expect(listed?.taskId).toBe("task-1");
+  });
+
+  test("shares tracked agents through registry file", () => {
+    const registryFilePath = join(sandboxDir, ".ixado", "agents.json");
+    const child = createFakeChild();
+    const primary = new AgentSupervisor({
+      spawnFn: () => child,
+      registryFilePath,
+    });
+    const secondary = new AgentSupervisor({
+      registryFilePath,
+    });
+
+    const started = primary.start({
+      name: "Shared worker",
+      command: "codex",
+      args: ["run", "x"],
+      cwd: "C:/repo",
+      taskId: "task-shared",
+    });
+
+    const found = secondary.list().find((agent) => agent.id === started.id);
+    expect(found).toBeDefined();
+    expect(found?.status).toBe("RUNNING");
+    expect(found?.taskId).toBe("task-shared");
   });
 });

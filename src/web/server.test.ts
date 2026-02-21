@@ -25,6 +25,12 @@ describe("web server runtime", () => {
       stateFilePath,
       projectName: "IxADO",
       defaultInternalWorkAssignee: "MOCK_CLI",
+      agentSettings: {
+        CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+      },
       webLogFilePath: join(sandboxDir, ".ixado", "web.log"),
       port: 0,
     });

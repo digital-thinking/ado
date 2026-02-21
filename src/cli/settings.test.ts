@@ -12,6 +12,13 @@ import {
   saveCliSettings,
 } from "./settings";
 
+const DEFAULT_AGENT_SETTINGS = {
+  CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+};
+
 describe("cli settings", () => {
   let sandboxDir: string;
   let settingsFilePath: string;
@@ -42,6 +49,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
 
     const settings = await loadCliSettings(settingsFilePath);
@@ -54,6 +62,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
   });
 
@@ -73,7 +82,21 @@ describe("cli settings", () => {
   });
 
   test("onboard accepts yes and persists telegram bot settings", async () => {
-    const answers = ["2", "Concise and pragmatic", "y", "my-token", "123456"];
+    const answers = [
+      "y",
+      "600000",
+      "y",
+      "600000",
+      "y",
+      "600000",
+      "y",
+      "600000",
+      "2",
+      "Concise and pragmatic",
+      "y",
+      "my-token",
+      "123456",
+    ];
     let idx = 0;
     const output: string[] = [];
 
@@ -95,6 +118,12 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 600000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 600000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 600000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 600000 },
+      },
     });
     expect(output[0]).toContain("Setup: Telegram mode enables remote");
     expect(output[1]).toContain("Setup: SOUL.md stores IxADO");
@@ -107,7 +136,21 @@ describe("cli settings", () => {
   });
 
   test("onboard retries invalid answer and stores no as disabled", async () => {
-    const answers = ["invalid", "3", "Reliable and precise", "maybe", "no"];
+    const answers = [
+      "",
+      "700000",
+      "",
+      "700000",
+      "",
+      "700000",
+      "",
+      "700000",
+      "invalid",
+      "3",
+      "Reliable and precise",
+      "maybe",
+      "no",
+    ];
     let idx = 0;
 
     const settings = await runOnboard(
@@ -120,11 +163,34 @@ describe("cli settings", () => {
     expect(settings).toEqual({
       telegram: { enabled: false },
       internalWork: { assignee: "GEMINI_CLI" },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 700000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 700000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 700000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 700000 },
+      },
     });
   });
 
   test("onboard retries invalid bot token and owner ID", async () => {
-    const answers = ["4", "Pragmatic helper", "y", "", "token", "abc", "0", "42"];
+    const answers = [
+      "y",
+      "800000",
+      "y",
+      "800000",
+      "y",
+      "800000",
+      "y",
+      "800000",
+      "4",
+      "Pragmatic helper",
+      "y",
+      "",
+      "token",
+      "abc",
+      "0",
+      "42",
+    ];
     let idx = 0;
 
     const settings = await runOnboard(
@@ -143,6 +209,12 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "MOCK_CLI",
       },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 800000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 800000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 800000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 800000 },
+      },
     });
   });
 
@@ -156,10 +228,23 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "GEMINI_CLI",
       },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
     await saveSoulFile(soulFilePath, "Existing soul");
 
-    const answers = ["s", "s", "s"];
+    const answers = [
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+    ];
     let idx = 0;
 
     const settings = await runOnboard(
@@ -178,6 +263,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "GEMINI_CLI",
       },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
 
     const soul = await Bun.file(soulFilePath).text();
@@ -185,7 +271,24 @@ describe("cli settings", () => {
   });
 
   test("onboard skip on missing existing value asks again", async () => {
-    const answers = ["s", "s", "New personality", "y", "s", "token", "s", "123"];
+    const answers = [
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "s",
+      "New personality",
+      "y",
+      "s",
+      "token",
+      "s",
+      "123",
+    ];
     let idx = 0;
     const output: string[] = [];
 
@@ -207,6 +310,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CODEX_CLI",
       },
+      agents: DEFAULT_AGENT_SETTINGS,
     });
     expect(output.some((line) => line.includes("No existing SOUL profile found"))).toBe(true);
     expect(output.some((line) => line.includes("No existing Telegram bot token found"))).toBe(true);

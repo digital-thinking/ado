@@ -62,7 +62,7 @@ describe("telegram command handlers", () => {
     await handleStatusCommand(ctx, 123, async () => {
       called = true;
       return buildState();
-    });
+    }, () => [], ["CODEX_CLI"]);
 
     expect(called).toBe(false);
     expect(ctx.replies).toEqual(["Unauthorized user."]);
@@ -71,11 +71,26 @@ describe("telegram command handlers", () => {
   test("returns status for authorized user", async () => {
     const ctx = createCtx(123);
 
-    await handleStatusCommand(ctx, 123, async () => buildState());
+    await handleStatusCommand(
+      ctx,
+      123,
+      async () => buildState(),
+      () => [
+        {
+          name: "CODEX_CLI task worker",
+          status: "RUNNING",
+          taskId: "22222222-2222-2222-2222-222222222222",
+        },
+      ],
+      ["CODEX_CLI", "CLAUDE_CLI"]
+    );
 
     expect(ctx.replies).toHaveLength(1);
     expect(ctx.replies[0]).toContain("Project: IxADO");
     expect(ctx.replies[0]).toContain("Active: Phase 3 (CODING)");
+    expect(ctx.replies[0]).toContain("Available Agents: CODEX_CLI, CLAUDE_CLI");
+    expect(ctx.replies[0]).toContain("Running Agents (1):");
+    expect(ctx.replies[0]).toContain("Phase 3: Implement Telegram adapter");
   });
 
   test("returns tasks list for authorized user", async () => {
@@ -109,13 +124,19 @@ describe("telegram command handlers", () => {
   test("starts task through shared task starter", async () => {
     const ctx = createCtx(123, "/starttask 1 CODEX_CLI");
 
-    await handleStartTaskCommand(ctx, 123, "MOCK_CLI", async (input) => {
+    await handleStartTaskCommand(
+      ctx,
+      123,
+      ["CODEX_CLI", "MOCK_CLI"],
+      "MOCK_CLI",
+      async (input) => {
       expect(input.taskNumber).toBe(1);
       expect(input.assignee).toBe("CODEX_CLI");
       const state = buildState();
       state.phases[0].tasks[0].status = "DONE";
       return state;
-    });
+      }
+    );
 
     expect(ctx.replies[0]).toContain("Starting task");
     expect(ctx.replies[1]).toContain("finished with status DONE");
@@ -124,7 +145,13 @@ describe("telegram command handlers", () => {
   test("returns usage for invalid starttask command", async () => {
     const ctx = createCtx(123, "/starttask");
 
-    await handleStartTaskCommand(ctx, 123, "CODEX_CLI", async () => buildState());
+    await handleStartTaskCommand(
+      ctx,
+      123,
+      ["CODEX_CLI"],
+      "CODEX_CLI",
+      async () => buildState()
+    );
 
     expect(ctx.replies).toEqual(["Usage: /starttask <taskNumber> [assignee]"]);
   });

@@ -196,6 +196,7 @@ describe("web app api", () => {
         }),
       } as never,
       defaultInternalWorkAssignee: "CODEX_CLI",
+      availableWorkerAssignees: ["CODEX_CLI", "CLAUDE_CLI", "GEMINI_CLI", "MOCK_CLI"],
       webLogFilePath: "C:/repo/.ixado/web.log",
       cliLogFilePath: "C:/repo/.ixado/cli.log",
     });

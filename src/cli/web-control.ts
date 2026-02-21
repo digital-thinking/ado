@@ -4,7 +4,7 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import { startWebControlCenter } from "../web";
-import type { CLIAdapterId } from "../types";
+import type { CLIAdapterId, CliAgentSettings } from "../types";
 
 const DEFAULT_WEB_RUNTIME_FILE = ".ixado/web-runtime.json";
 const DEFAULT_WEB_LOG_FILE = ".ixado/web.log";
@@ -45,6 +45,7 @@ export type ServeWebControlCenterInput = {
   stateFilePath: string;
   projectName: string;
   defaultInternalWorkAssignee: CLIAdapterId;
+  agentSettings: CliAgentSettings;
   port?: number;
 };
 

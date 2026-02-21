@@ -8,6 +8,38 @@ export const CLIAdapterIdSchema = z.enum([
   "CODEX_CLI",
 ]);
 export type CLIAdapterId = z.infer<typeof CLIAdapterIdSchema>;
+export const CLI_ADAPTER_IDS: CLIAdapterId[] = [
+  "CODEX_CLI",
+  "CLAUDE_CLI",
+  "GEMINI_CLI",
+  "MOCK_CLI",
+];
+
+export const CliAgentSettingsItemSchema = z.object({
+  enabled: z.boolean().default(true),
+  timeoutMs: z.number().int().positive().default(3_600_000),
+});
+export type CliAgentSettingsItem = z.infer<typeof CliAgentSettingsItemSchema>;
+
+export const CliAgentSettingsSchema = z.object({
+  CODEX_CLI: CliAgentSettingsItemSchema.default({
+    enabled: true,
+    timeoutMs: 3_600_000,
+  }),
+  CLAUDE_CLI: CliAgentSettingsItemSchema.default({
+    enabled: true,
+    timeoutMs: 3_600_000,
+  }),
+  GEMINI_CLI: CliAgentSettingsItemSchema.default({
+    enabled: true,
+    timeoutMs: 3_600_000,
+  }),
+  MOCK_CLI: CliAgentSettingsItemSchema.default({
+    enabled: true,
+    timeoutMs: 3_600_000,
+  }),
+});
+export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
 
 // 2. CLI Settings
 export const CliSettingsSchema = z.object({
@@ -21,6 +53,40 @@ export const CliSettingsSchema = z.object({
   }).default({
     assignee: "CODEX_CLI",
   }),
+  agents: CliAgentSettingsSchema.default({
+    CODEX_CLI: {
+      enabled: true,
+      timeoutMs: 3_600_000,
+    },
+    CLAUDE_CLI: {
+      enabled: true,
+      timeoutMs: 3_600_000,
+    },
+    GEMINI_CLI: {
+      enabled: true,
+      timeoutMs: 3_600_000,
+    },
+    MOCK_CLI: {
+      enabled: true,
+      timeoutMs: 3_600_000,
+    },
+  }),
+}).superRefine((value, context) => {
+  const enabledCount = CLI_ADAPTER_IDS.filter((adapterId) => value.agents[adapterId].enabled).length;
+  if (enabledCount === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "At least one agent must be enabled in settings.agents.",
+      path: ["agents"],
+    });
+  }
+  if (!value.agents[value.internalWork.assignee].enabled) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `internalWork.assignee '${value.internalWork.assignee}' must be enabled in settings.agents.`,
+      path: ["internalWork", "assignee"],
+    });
+  }
 });
 export type CliSettings = z.infer<typeof CliSettingsSchema>;
 

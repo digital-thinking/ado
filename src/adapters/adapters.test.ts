@@ -36,8 +36,10 @@ describe("CLI adapters", () => {
       cwd: "C:/repo",
     });
 
-    expect(adapter.contract.baseArgs[0]).toBe("--dangerously-skip-permissions");
+    expect(adapter.contract.baseArgs[0]).toBe("--print");
+    expect(adapter.contract.baseArgs[1]).toBe("--dangerously-skip-permissions");
     expect(runner.calls[0]?.args).toEqual([
+      "--print",
       "--dangerously-skip-permissions",
       "--model",
       "sonnet",
@@ -67,8 +69,10 @@ describe("CLI adapters", () => {
       cwd: "C:/repo",
     });
 
-    expect(adapter.contract.baseArgs[0]).toBe("--dangerously-bypass-approvals-and-sandbox");
+    expect(adapter.contract.baseArgs[0]).toBe("exec");
+    expect(adapter.contract.baseArgs[1]).toBe("--dangerously-bypass-approvals-and-sandbox");
     expect(runner.calls[0]?.args).toEqual([
+      "exec",
       "--dangerously-bypass-approvals-and-sandbox",
       "refactor module",
     ]);

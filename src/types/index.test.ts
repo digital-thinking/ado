@@ -38,6 +38,27 @@ describe("type contracts", () => {
     expect(parsed.telegram.botToken).toBe("token");
     expect(parsed.telegram.ownerId).toBe(123);
     expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
+    expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
+    expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
+  });
+
+  test("rejects internal work assignee if disabled", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: {
+          enabled: false,
+        },
+        internalWork: {
+          assignee: "CODEX_CLI",
+        },
+        agents: {
+          CODEX_CLI: { enabled: false, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: true, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+        },
+      })
+    ).toThrow("must be enabled");
   });
 
   test("rejects invalid project state", () => {
