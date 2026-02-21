@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  CliSettingsSchema,
   CLIAdapterSchema,
   ProjectStateSchema,
   TaskStatusSchema,
@@ -22,6 +23,16 @@ describe("type contracts", () => {
 
     expect(parsed.id).toBe("MOCK_CLI");
     expect(parsed.baseArgs).toEqual(["hello"]);
+  });
+
+  test("validates cli settings schema", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: {
+        enabled: true,
+      },
+    });
+
+    expect(parsed.telegram.enabled).toBe(true);
   });
 
   test("rejects invalid project state", () => {

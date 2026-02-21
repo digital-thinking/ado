@@ -24,6 +24,7 @@ Status markers:
 - [ ] `P2-008` Fix CI failures for Phase 2 until all checks are green. Deps: `P2-007`.
 
 ## Phase 3: Telegram Command Center
+- [x] `P3-000` Add `ixado onboard` command and persisted CLI settings (`telegram.enabled`) in `.ixado/settings.json`. Deps: `P2-008`.
 - [ ] `P3-001` Add `grammY` dependency and enforce strict owner ID env checks. Deps: `P2-008`.
 - [ ] `P3-002` Implement Telegram adapter in `src/bot/telegram.ts` with strict `ctx.from?.id` verification. Deps: `P3-001`.
 - [ ] `P3-003` Implement read-only `/status` command. Deps: `P3-002`.
