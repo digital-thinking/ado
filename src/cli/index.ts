@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 
 import { createTelegramRuntime } from "../bot";
 import { StateEngine } from "../state";
+import { startWebControlCenter } from "../web";
 import {
   loadCliSettings,
   resolveSettingsFilePath,
@@ -139,6 +140,7 @@ function printHelp(): void {
   console.info("Usage:");
   console.info("  ixado           Run IxADO with stored settings");
   console.info("  ixado onboard   Configure local CLI settings");
+  console.info("  ixado web [port]   Start local web control center");
   console.info("  ixado help      Show this help");
 }
 
@@ -167,6 +169,36 @@ async function runOnboardCommand(): Promise<void> {
   }
 }
 
+function parseWebPort(raw: string | undefined): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error("Invalid web port. Expected integer between 0 and 65535.");
+  }
+
+  return port;
+}
+
+async function runWebCommand(args: string[]): Promise<void> {
+  const stateFilePath = resolveStateFilePath();
+  const portFromArgs = parseWebPort(args[1]);
+  const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
+  const port = portFromArgs ?? portFromEnv;
+
+  const runtime = await startWebControlCenter({
+    cwd: process.cwd(),
+    stateFilePath,
+    projectName: "IxADO",
+    port,
+  });
+
+  console.info(`Web control center started at ${runtime.url}`);
+  console.info("Press Ctrl+C to stop.");
+}
+
 async function runCli(args: string[]): Promise<void> {
   const command = args[0];
 
@@ -177,6 +209,11 @@ async function runCli(args: string[]): Promise<void> {
 
   if (command === "onboard") {
     await runOnboardCommand();
+    return;
+  }
+
+  if (command === "web") {
+    await runWebCommand(args);
     return;
   }
 

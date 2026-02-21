@@ -58,11 +58,11 @@ Status markers:
 - [ ] `P5-010` Fix CI failures for Phase 5 until all checks are green. Deps: `P5-009`.
 
 ## Phase 6: Web Interface
-- [ ] `P6-001` Create local web control center for phase/task creation and tracking. Deps: `P5-010`.
-- [ ] `P6-002` Show active agents and assigned tasks in the UI. Deps: `P6-001`.
-- [ ] `P6-003` Add agent kill/restart controls in the UI. Deps: `P6-002`.
-- [ ] `P6-004` Show usage/quota telemetry in the UI when available. Deps: `P6-002`.
-- [ ] `P6-005` Add UI tests for key user flows. Deps: `P6-003`, `P6-004`.
+- [x] `P6-001` Create local web control center for phase/task creation and tracking. Deps: `P5-010`.
+- [x] `P6-002` Show active agents and assigned tasks in the UI. Deps: `P6-001`.
+- [x] `P6-003` Add agent kill/restart controls in the UI. Deps: `P6-002`.
+- [x] `P6-004` Show usage/quota telemetry in the UI when available. Deps: `P6-002`.
+- [x] `P6-005` Add UI tests for key user flows. Deps: `P6-003`, `P6-004`.
 - [ ] `P6-006` Create PR Task: open Phase 6 PR after coding tasks are done. Deps: `P6-005`.
 - [ ] `P6-007` Fix CI failures for Phase 6 until all checks are green. Deps: `P6-006`.
 
@@ -74,4 +74,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P3-008` (Fix CI failures for Phase 3 until green).
+- [ ] Start `P6-006` (Create PR Task for Phase 6).
