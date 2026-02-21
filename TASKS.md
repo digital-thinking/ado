@@ -25,12 +25,12 @@ Status markers:
 
 ## Phase 3: Telegram Command Center
 - [x] `P3-000` Add `ixado onboard` command and persisted CLI settings (`telegram.enabled`) in `.ixado/settings.json`. Deps: `P2-008`.
-- [ ] `P3-001` Add `grammY` dependency and enforce strict owner ID env checks. Deps: `P2-008`.
-- [ ] `P3-002` Implement Telegram adapter in `src/bot/telegram.ts` with strict `ctx.from?.id` verification. Deps: `P3-001`.
-- [ ] `P3-003` Implement read-only `/status` command. Deps: `P3-002`.
-- [ ] `P3-004` Implement read-only `/tasks` command. Deps: `P3-002`.
-- [ ] `P3-005` Wire bot runtime alongside core engine in `src/cli/index.ts`. Deps: `P3-003`, `P3-004`.
-- [ ] `P3-006` Add Telegram adapter tests with mocked Telegram API calls. Deps: `P3-003`, `P3-004`.
+- [x] `P3-001` Add `grammY` dependency and enforce strict owner ID env checks. Deps: `P2-008`.
+- [x] `P3-002` Implement Telegram adapter in `src/bot/telegram.ts` with strict `ctx.from?.id` verification. Deps: `P3-001`.
+- [x] `P3-003` Implement read-only `/status` command. Deps: `P3-002`.
+- [x] `P3-004` Implement read-only `/tasks` command. Deps: `P3-002`.
+- [x] `P3-005` Wire bot runtime alongside core engine in `src/cli/index.ts`. Deps: `P3-003`, `P3-004`.
+- [x] `P3-006` Add Telegram adapter tests with mocked Telegram API calls. Deps: `P3-003`, `P3-004`.
 - [ ] `P3-007` Create PR Task: open Phase 3 PR after coding tasks are done. Deps: `P3-005`, `P3-006`.
 - [ ] `P3-008` Fix CI failures for Phase 3 until all checks are green. Deps: `P3-007`.
 
@@ -74,4 +74,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P4-009` (Fix CI failures for Phase 4 until green).
+- [ ] Start `P3-007` (Create PR Task for Phase 3).

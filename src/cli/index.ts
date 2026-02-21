@@ -4,6 +4,7 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 
+import { createTelegramRuntime } from "../bot";
 import { StateEngine } from "../state";
 import { loadCliSettings, resolveSettingsFilePath, runOnboard } from "./settings";
 
@@ -105,7 +106,20 @@ async function runDefaultCommand(): Promise<void> {
   console.info(
     `State engine ready (${stateSummary.initialized ? "initialized" : "loaded"} at ${stateFilePath}, phases: ${stateSummary.phaseCount}).`
   );
-  console.info("Core engine and Telegram adapter wiring are pending in ROADMAP phases.");
+
+  if (telegram.enabled) {
+    console.info("Starting Telegram command center.");
+    const runtime = createTelegramRuntime({
+      token: telegram.token,
+      ownerId: telegram.ownerId,
+      readState: () => stateEngine.readProjectState(),
+    });
+
+    await runtime.start();
+    return;
+  }
+
+  console.info("Telegram command center not started.");
 }
 
 function printHelp(): void {
