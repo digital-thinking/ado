@@ -46,15 +46,15 @@ Status markers:
 - [ ] `P4-009` Fix CI failures for Phase 4 until all checks are green. Deps: `P4-008`.
 
 ## Phase 5: CI Execution Loop
-- [ ] `P5-001` Connect State Engine to Process Manager and adapter execution. Deps: `P4-009`.
-- [ ] `P5-002` Implement "Phase Start -> Branch" trigger using `GitManager`. Deps: `P5-001`.
-- [ ] `P5-003` Implement task execution loop (`read task -> spawn adapter -> await result`). Deps: `P5-001`.
-- [ ] `P5-004` Implement automated PR review and CI polling loop. Deps: `P5-002`, `P5-003`.
-- [ ] `P5-005` Implement CI fix loop that consumes failing logs and spawns fix tasks. Deps: `P5-004`.
-- [ ] `P5-006` Add Telegram push notifications for CI failures and PR readiness. Deps: `P5-004`.
-- [ ] `P5-007` Use usage/quota metrics for smart worker delegation. Deps: `P4-006`, `P5-003`.
-- [ ] `P5-008` Add integration tests for execution loop and CI fix loop. Deps: `P5-005`, `P5-006`, `P5-007`.
-- [ ] `P5-009` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-008`.
+- [x] `P5-001` Connect State Engine to Process Manager and adapter execution. Deps: `P4-009`.
+- [x] `P5-002` Implement "Phase Start -> Branch" trigger using `GitManager`. Deps: `P5-001`.
+- [x] `P5-003` Implement task execution loop (`read task -> spawn adapter -> await result`). Deps: `P5-001`.
+- [x] `P5-004` Implement automated PR review and CI polling loop. Deps: `P5-002`, `P5-003`.
+- [x] `P5-005` Implement CI fix loop that consumes failing logs and spawns fix tasks. Deps: `P5-004`.
+- [x] `P5-006` Add Telegram push notifications for CI failures and PR readiness. Deps: `P5-004`.
+- [x] `P5-007` Use usage/quota metrics for smart worker delegation. Deps: `P4-006`, `P5-003`.
+- [x] `P5-008` Add integration tests for execution loop and CI fix loop. Deps: `P5-005`, `P5-006`, `P5-007`.
+- [x] `P5-009` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-008`.
 - [ ] `P5-010` Fix CI failures for Phase 5 until all checks are green. Deps: `P5-009`.
 
 ## Phase 6: Web Interface
@@ -74,4 +74,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P3-008` (Fix CI failures for Phase 3 until green).
+- [ ] Start `P5-010` (Fix CI failures for Phase 5 until green).

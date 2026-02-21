@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 
 import { createTelegramRuntime } from "../bot";
+import { createPhaseExecutionEngine } from "../engine";
 import { StateEngine } from "../state";
 import {
   loadCliSettings,
@@ -139,6 +140,7 @@ function printHelp(): void {
   console.info("Usage:");
   console.info("  ixado           Run IxADO with stored settings");
   console.info("  ixado onboard   Configure local CLI settings");
+  console.info("  ixado run-phase <phase-id>   Execute Phase 5 orchestration loop");
   console.info("  ixado help      Show this help");
 }
 
@@ -167,6 +169,33 @@ async function runOnboardCommand(): Promise<void> {
   }
 }
 
+async function runPhaseCommand(args: string[]): Promise<void> {
+  const phaseId = args[1]?.trim();
+  if (!phaseId) {
+    throw new Error("Usage: ixado run-phase <phase-id>");
+  }
+
+  const settings = await loadCliSettings(resolveSettingsFilePath());
+  const telegram = resolveTelegramConfig(settings.telegram);
+  const stateFilePath = resolveStateFilePath();
+  const engine = createPhaseExecutionEngine({
+    cwd: process.cwd(),
+    stateFilePath,
+    telegram: telegram.enabled
+      ? {
+          token: telegram.token,
+          ownerId: telegram.ownerId,
+        }
+      : undefined,
+  });
+
+  console.info(`Executing phase ${phaseId} via CI orchestration loop...`);
+  const result = await engine.runPhase(phaseId, {
+    cwd: process.cwd(),
+  });
+  console.info(`Phase execution complete. PR: ${result.prUrl}. CI: ${result.ciStatus.overall}.`);
+}
+
 async function runCli(args: string[]): Promise<void> {
   const command = args[0];
 
@@ -177,6 +206,11 @@ async function runCli(args: string[]): Promise<void> {
 
   if (command === "onboard") {
     await runOnboardCommand();
+    return;
+  }
+
+  if (command === "run-phase") {
+    await runPhaseCommand(args);
     return;
   }
 
