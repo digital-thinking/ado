@@ -19,6 +19,11 @@ const DEFAULT_AGENT_SETTINGS = {
   MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
 };
 
+const DEFAULT_LOOP_SETTINGS = {
+  autoMode: false,
+  countdownSeconds: 10,
+};
+
 describe("cli settings", () => {
   let sandboxDir: string;
   let settingsFilePath: string;
@@ -49,6 +54,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
 
@@ -62,6 +68,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
   });
@@ -118,6 +125,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 600000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 600000 },
@@ -163,6 +171,7 @@ describe("cli settings", () => {
     expect(settings).toEqual({
       telegram: { enabled: false },
       internalWork: { assignee: "GEMINI_CLI" },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 700000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 700000 },
@@ -209,6 +218,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "MOCK_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 800000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 800000 },
@@ -228,6 +238,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "GEMINI_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
     await saveSoulFile(soulFilePath, "Existing soul");
@@ -263,6 +274,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "GEMINI_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
 
@@ -310,6 +322,7 @@ describe("cli settings", () => {
       internalWork: {
         assignee: "CODEX_CLI",
       },
+      executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
     expect(output.some((line) => line.includes("No existing SOUL profile found"))).toBe(true);

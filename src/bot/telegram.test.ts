@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  handleNextCommand,
   handleSetActivePhaseCommand,
+  handleStopCommand,
   handleStartTaskCommand,
   handleStatusCommand,
   handleTasksCommand,
@@ -174,6 +176,32 @@ describe("telegram command handlers", () => {
 
     await handleSetActivePhaseCommand(ctx, 123, async () => buildState());
 
-    expect(ctx.replies).toEqual(["Usage: /setactivephase <phaseId>"]);
+    expect(ctx.replies).toEqual(["Usage: /setactivephase <phaseNumber|phaseId>"]);
+  });
+
+  test("next command triggers loop advancement callback", async () => {
+    const ctx = createCtx(123, "/next");
+
+    await handleNextCommand(ctx, 123, () => "Execution loop advanced.");
+
+    expect(ctx.replies).toEqual(["Execution loop advanced."]);
+  });
+
+  test("stop command triggers loop stop callback", async () => {
+    const ctx = createCtx(123, "/stop");
+
+    await handleStopCommand(ctx, 123, () => "Execution loop stop requested.");
+
+    expect(ctx.replies).toEqual(["Execution loop stop requested."]);
+  });
+
+  test("next/stop return no-loop message without callbacks", async () => {
+    const nextCtx = createCtx(123, "/next");
+    await handleNextCommand(nextCtx, 123);
+    expect(nextCtx.replies).toEqual(["No active execution loop."]);
+
+    const stopCtx = createCtx(123, "/stop");
+    await handleStopCommand(stopCtx, 123);
+    expect(stopCtx.replies).toEqual(["No active execution loop."]);
   });
 });

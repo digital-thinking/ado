@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import { buildWorkerPrompt } from "../engine/worker-prompts";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
@@ -267,21 +268,6 @@ function truncateForState(value: string): string {
   }
 
   return value.slice(0, MAX_STORED_CONTEXT_LENGTH);
-}
-
-function buildTaskExecutionPrompt(projectName: string, rootDir: string, phase: Phase, task: Task): string {
-  return [
-    `You are implementing a coding task for the ${projectName} project.`,
-    `Repository root: ${rootDir}`,
-    `Phase: ${phase.name}`,
-    `Task: ${task.title}`,
-    `Task description:`,
-    task.description,
-    "Requirements:",
-    "- Implement the task in this repository.",
-    "- Run relevant validations/tests.",
-    "- Return a concise summary of concrete changes and validation commands.",
-  ].join("\n\n");
 }
 
 function resolveActivePhaseOrThrow(state: ProjectState): Phase {
@@ -562,7 +548,13 @@ export class ControlCenterService {
       );
     }
 
-    const prompt = buildTaskExecutionPrompt(state.projectName, state.rootDir, phase, task);
+    const prompt = buildWorkerPrompt({
+      archetype: "CODER",
+      projectName: state.projectName,
+      rootDir: state.rootDir,
+      phase,
+      task,
+    });
 
     const updatedTask = TaskSchema.parse({
       ...task,

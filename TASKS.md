@@ -42,8 +42,8 @@ Status markers:
 - [x] `P4-008` Create PR Task: open Phase 4 PR after coding tasks are done. Deps: `P4-007`.
 
 ## Phase 5: CI Execution Loop
-- [ ] `P5-001` Define Worker Archetypes (`Coder`, `Tester`, `Reviewer`, `Fixer`) and their system prompts. Ensure `Reviewer` uses `git diff` context. Deps: `P4-008`.
-- [ ] `P5-002` Implement Execution Loop Configuration (`auto_mode`) with CLI UX (wait prompt vs countdown) and Telegram controls (`/next`, `/stop`). Deps: `P5-001`.
+- [x] `P5-001` Define Worker Archetypes (`Coder`, `Tester`, `Reviewer`, `Fixer`) and their system prompts. Ensure `Reviewer` uses `git diff` context. Deps: `P4-008`.
+- [x] `P5-002` Implement Execution Loop Configuration (`auto_mode`) with CLI UX (wait prompt vs countdown) and Telegram controls (`/next`, `/stop`). Deps: `P5-001`.
 - [ ] `P5-003` Implement Session Persistence: Reuse Coder agent context/process across sequential tasks; reset on failure. Deps: `P5-002`.
 - [ ] `P5-004` Implement "Tester" workflow: runs after tasks, executes tests, creates fix tasks on failure. Deps: `P5-003`.
 - [ ] `P5-005` Implement Optional CI Integration: Programmatic PR creation via `gh` CLI. Deps: `P5-004`.

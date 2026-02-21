@@ -8,6 +8,7 @@ import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
+import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
@@ -269,7 +270,7 @@ async function runDefaultCommand(): Promise<void> {
   if (telegram.enabled) {
     console.info("Starting Telegram command center.");
     console.info(
-      "Bot polling is active. Send /status, /tasks, /starttask <taskNumber> [assignee], or /setactivephase <phaseId>. Press Ctrl+C to stop."
+      "Bot polling is active. Send /status, /tasks, /starttask <taskNumber> [assignee], /setactivephase <phaseNumber|phaseId>, /next, or /stop. Press Ctrl+C to stop."
     );
     const runtime = createTelegramRuntime({
       token: telegram.token,
@@ -287,6 +288,8 @@ async function runDefaultCommand(): Promise<void> {
         control.setActivePhase({
           phaseId: input.phaseId,
         }),
+      requestNextLoop: () => "No active execution loop.",
+      requestStopLoop: () => "No active execution loop.",
     });
 
     await runtime.start();
@@ -311,6 +314,9 @@ function printHelp(): void {
   console.info("  ixado task logs <taskNumber>   Show logs/result for task in active phase");
   console.info("  ixado task reset <taskNumber>  Reset FAILED task to TODO and hard-reset repo");
   console.info("  ixado phase active <phaseNumber|phaseId>  Set active phase");
+  console.info(
+    "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO tasks in active phase sequentially"
+  );
   console.info("  ixado web start [port]   Start local web control center in background");
   console.info("  ixado web stop           Stop local web control center");
   console.info("  ixado help      Show this help");
@@ -437,6 +443,133 @@ async function runWebCommand(args: string[]): Promise<void> {
   }
 
   throw new Error("Unknown web command. Use `ixado web start [port]` or `ixado web stop`.");
+}
+
+type PhaseRunMode = "AUTO" | "MANUAL";
+
+function resolveActivePhaseFromState(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>
+): Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number] {
+  const phase = state.phases.find((candidate) => candidate.id === state.activePhaseId) ?? state.phases[0];
+  if (!phase) {
+    throw new Error("No active phase found.");
+  }
+
+  return phase;
+}
+
+function resolvePhaseRunMode(rawMode: string | undefined, autoModeDefault: boolean): PhaseRunMode {
+  const normalized = rawMode?.trim().toLowerCase();
+  if (!normalized) {
+    return autoModeDefault ? "AUTO" : "MANUAL";
+  }
+  if (normalized === "auto") {
+    return "AUTO";
+  }
+  if (normalized === "manual") {
+    return "MANUAL";
+  }
+
+  throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds]");
+}
+
+function resolveCountdownSeconds(rawCountdown: string | undefined, fallback: number): number {
+  const normalized = rawCountdown?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds]");
+  }
+
+  return parsed;
+}
+
+async function waitForManualAdvance(
+  rl: ReturnType<typeof createInterface>,
+  loopControl: PhaseLoopControl,
+  nextTaskLabel: string
+): Promise<"NEXT" | "STOP"> {
+  if (loopControl.isStopRequested()) {
+    return "STOP";
+  }
+
+  console.info(
+    `Manual mode: press Enter to start ${nextTaskLabel}, type 'stop' to halt (Telegram: /next or /stop).`
+  );
+  const waitHandle = loopControl.waitForSignal();
+  const abortController = new AbortController();
+
+  const localPromise = rl
+    .question("> ", { signal: abortController.signal })
+    .then((answer) => (answer.trim().toLowerCase() === "stop" ? "STOP" : "NEXT"))
+    .catch((error) => {
+      if ((error as { name?: string }).name === "AbortError") {
+        return new Promise<"NEXT" | "STOP">(() => {});
+      }
+
+      throw error;
+    });
+
+  const remotePromise = waitHandle.promise.then((signal) => ({
+    source: "remote" as const,
+    signal,
+  }));
+  const localDecisionPromise = localPromise.then((signal) => ({
+    source: "local" as const,
+    signal,
+  }));
+
+  const outcome = await Promise.race([remotePromise, localDecisionPromise]);
+  if (outcome.source === "remote") {
+    abortController.abort();
+  } else {
+    loopControl.cancelWait(waitHandle.id);
+  }
+
+  return outcome.signal;
+}
+
+async function waitForAutoAdvance(
+  loopControl: PhaseLoopControl,
+  countdownSeconds: number,
+  nextTaskLabel: string
+): Promise<"NEXT" | "STOP"> {
+  if (loopControl.isStopRequested()) {
+    return "STOP";
+  }
+
+  console.info(
+    `Auto mode: starting ${nextTaskLabel} in ${countdownSeconds}s (Telegram: /next to start now, /stop to halt).`
+  );
+  for (let remaining = countdownSeconds; remaining > 0; remaining -= 1) {
+    if (loopControl.isStopRequested()) {
+      return "STOP";
+    }
+
+    const waitHandle = loopControl.waitForSignal();
+    const tickPromise = new Promise<"TICK">((resolve) => {
+      setTimeout(() => resolve("TICK"), 1_000);
+    });
+    const outcome = await Promise.race([waitHandle.promise, tickPromise]);
+
+    if (outcome === "STOP") {
+      return "STOP";
+    }
+    if (outcome === "NEXT") {
+      return "NEXT";
+    }
+
+    loopControl.cancelWait(waitHandle.id);
+    const nextRemaining = remaining - 1;
+    if (nextRemaining > 0) {
+      console.info(`Auto mode: ${nextRemaining}s remaining before ${nextTaskLabel}.`);
+    }
+  }
+
+  return "NEXT";
 }
 
 async function resolveActivePhaseTaskForNumber(
@@ -661,6 +794,119 @@ async function runTaskCommand(args: string[]): Promise<void> {
   );
 }
 
+async function runPhaseRunCommand(args: string[]): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const stateFilePath = resolveStateFilePath();
+  const control = createControlCenterService(stateFilePath, settings);
+  await control.ensureInitialized("IxADO", process.cwd());
+
+  const mode = resolvePhaseRunMode(args[2], settings.executionLoop.autoMode);
+  const countdownSeconds = resolveCountdownSeconds(args[3], settings.executionLoop.countdownSeconds);
+  const loopControl = new PhaseLoopControl();
+  const activeAssignee = settings.internalWork.assignee;
+  const telegram = resolveTelegramConfig(settings.telegram);
+
+  let runtime: ReturnType<typeof createTelegramRuntime> | undefined;
+  if (telegram.enabled) {
+    runtime = createTelegramRuntime({
+      token: telegram.token,
+      ownerId: telegram.ownerId,
+      readState: () => control.getState(),
+      listAgents: () => [],
+      availableAssignees: getAvailableAgents(settings),
+      defaultAssignee: activeAssignee,
+      startTask: async (input) =>
+        control.startActiveTaskAndWait({
+          taskNumber: input.taskNumber,
+          assignee: input.assignee,
+        }),
+      setActivePhase: async (input) =>
+        control.setActivePhase({
+          phaseId: input.phaseId,
+        }),
+      requestNextLoop: () =>
+        loopControl.requestNext()
+          ? "Execution loop advance requested."
+          : "Execution loop is already stopped.",
+      requestStopLoop: () => {
+        loopControl.requestStop();
+        return "Execution loop stop requested.";
+      },
+    });
+    await runtime.start();
+    console.info("Telegram loop controls enabled: /next and /stop.");
+  }
+
+  const rl = createInterface({
+    input: stdin,
+    output: stdout,
+  });
+
+  console.info(
+    `Starting phase execution loop in ${mode} mode (countdown: ${countdownSeconds}s, assignee: ${activeAssignee}).`
+  );
+
+  try {
+    let iteration = 0;
+    while (true) {
+      if (loopControl.isStopRequested()) {
+        console.info("Execution loop stopped.");
+        break;
+      }
+
+      const state = await control.getState();
+      const phase = resolveActivePhaseFromState(state);
+      const nextTaskIndex = phase.tasks.findIndex((task) => task.status === "TODO");
+      if (nextTaskIndex < 0) {
+        console.info(`Execution loop finished. No TODO tasks in active phase ${phase.name}.`);
+        break;
+      }
+
+      const nextTaskNumber = nextTaskIndex + 1;
+      const nextTask = phase.tasks[nextTaskIndex];
+      const nextTaskLabel = `task #${nextTaskNumber} ${nextTask.title}`;
+
+      if (iteration > 0) {
+        const decision =
+          mode === "AUTO"
+            ? await waitForAutoAdvance(loopControl, countdownSeconds, nextTaskLabel)
+            : await waitForManualAdvance(rl, loopControl, nextTaskLabel);
+        if (decision === "STOP") {
+          loopControl.requestStop();
+          console.info("Execution loop stopped before starting the next task.");
+          break;
+        }
+      }
+
+      iteration += 1;
+      console.info(`Execution loop: starting ${nextTaskLabel} with ${activeAssignee}.`);
+      const updatedState = await control.startActiveTaskAndWait({
+        taskNumber: nextTaskNumber,
+        assignee: activeAssignee,
+      });
+      const updatedPhase = resolveActivePhaseFromState(updatedState);
+      const resultTask = updatedPhase.tasks[nextTaskNumber - 1];
+      if (!resultTask) {
+        throw new Error(`Task #${nextTaskNumber} not found after loop execution.`);
+      }
+
+      console.info(`Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`);
+      if (resultTask.status === "FAILED") {
+        if (resultTask.errorLogs) {
+          console.info(`Failure details: ${resultTask.errorLogs}`);
+        }
+        throw new Error(
+          `Execution loop stopped after FAILED task #${nextTaskNumber}. Resolve it or reset the task before continuing.`
+        );
+      }
+    }
+  } finally {
+    rl.close();
+    runtime?.stop();
+  }
+}
+
 async function runPhaseActiveCommand(args: string[]): Promise<void> {
   const phaseId = args[2]?.trim() ?? "";
   if (!phaseId) {
@@ -683,12 +929,19 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
 
 async function runPhaseCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
+  if (subcommand === "run") {
+    await runPhaseRunCommand(args);
+    return;
+  }
+
   if (subcommand === "active") {
     await runPhaseActiveCommand(args);
     return;
   }
 
-  throw new Error("Unknown phase command. Use `ixado phase active <phaseNumber|phaseId>`.");
+  throw new Error(
+    "Unknown phase command. Use `ixado phase active <phaseNumber|phaseId>` or `ixado phase run [auto|manual] [countdownSeconds]`."
+  );
 }
 
 function resolveAssignedTaskLabel(agent: AgentView, state: Awaited<ReturnType<ControlCenterService["getState"]>>): string {
