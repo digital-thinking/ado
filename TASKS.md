@@ -54,7 +54,7 @@ Status markers:
 - [x] `P5-006` Add Telegram push notifications for CI failures and PR readiness. Deps: `P5-004`.
 - [x] `P5-007` Use usage/quota metrics for smart worker delegation. Deps: `P4-006`, `P5-003`.
 - [x] `P5-008` Add integration tests for execution loop and CI fix loop. Deps: `P5-005`, `P5-006`, `P5-007`.
-- [ ] `P5-009` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-008`.
+- [x] `P5-009` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-008`.
 - [ ] `P5-010` Fix CI failures for Phase 5 until all checks are green. Deps: `P5-009`.
 
 ## Phase 6: Web Interface
@@ -74,4 +74,4 @@ Status markers:
 - [ ] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Current Focus
-- [ ] Start `P5-009` (Create PR Task for Phase 5).
+- [ ] Start `P5-010` (Fix CI failures for Phase 5 until green).
