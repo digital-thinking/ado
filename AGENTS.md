@@ -46,3 +46,41 @@
 * **Review Readiness**: The PR is ready for human review, and the user has been notified via Telegram.
 * Code changes are complete and consistent with `src/types/` contracts.
 * Final report includes changed files, validation commands, and concrete remaining risks.
+
+## Worker Archetypes
+IxADO uses specialized worker archetypes to handle different stages of the development lifecycle. These archetypes are defined by specific system prompts and responsibilities:
+
+*   **Coder**:
+    *   **Role**: Implements features and writes code based on task descriptions.
+    *   **Responsibility**: Writes production code and accompanying unit tests.
+    *   **Context**: Maintains session context across sequential tasks to understand previous changes. Context is reset only on failure or phase change.
+    *   **Output**: Modified source files and test files.
+
+*   **Tester**:
+    *   **Role**: Validates the codebase.
+    *   **Responsibility**: Runs the full test suite after tasks are completed.
+    *   **Trigger**: Runs automatically after the Coder finishes a task or a set of tasks.
+    *   **Action on Failure**: Creates a new "Fix" task for the Coder/Fixer if tests fail.
+
+*   **Reviewer**:
+    *   **Role**: Code quality assurance.
+    *   **Responsibility**: Reviews changes before a PR is finalized or merged.
+    *   **Context**: Uses `git diff` or commit ranges to focus strictly on changed code.
+    *   **Output**: Comments and change requests.
+
+*   **Fixer**:
+    *   **Role**: Remediation specialist.
+    *   **Responsibility**: Addresses specific failures (test failures, lint errors, review comments).
+    *   **Safety Valve**: Operates with a strict `max_retries` limit (e.g., 3 attempts) to prevent infinite loops. If the limit is reached, the system pauses for human intervention.
+
+## Execution Modes
+*   **Manual Mode (Default)**:
+    *   The system pauses after each task.
+    *   User must explicitly trigger the next step via CLI (`ixado next`) or Telegram (`/next`).
+    *   Provides a "Waiting" prompt in the CLI.
+
+*   **Auto Mode**:
+    *   The system automatically proceeds to the next task after a success.
+    *   CLI shows a countdown/spinner before starting the next task.
+    *   Can be paused via CLI (`Ctrl+C`) or Telegram (`/stop`).
+    *   Automatically pauses if a critical failure occurs or the Fixer loop exceeds retries.
