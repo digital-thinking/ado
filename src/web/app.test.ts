@@ -26,6 +26,8 @@ type TestState = {
       status: string;
       assignee: string;
       dependencies?: string[];
+      errorLogs?: string;
+      resultContext?: string;
     }>;
   }>;
   activePhaseId?: string;
@@ -104,6 +106,31 @@ describe("web app api", () => {
 
           task.status = "IN_PROGRESS";
           task.assignee = input.assignee;
+          return state as never;
+        },
+        resetTaskToTodo: async (input: { phaseId: string; taskId: string }) => {
+          const phase = state.phases.find((item) => item.id === input.phaseId);
+          if (!phase) {
+            throw new Error("Phase not found");
+          }
+          const task = phase.tasks.find((item) => item.id === input.taskId);
+          if (!task) {
+            throw new Error("Task not found");
+          }
+          task.status = "TODO";
+          task.assignee = "UNASSIGNED";
+          task.errorLogs = undefined;
+          task.resultContext = undefined;
+          return state as never;
+        },
+        failTaskIfInProgress: async (input: { taskId: string; reason: string }) => {
+          for (const phase of state.phases) {
+            const task = phase.tasks.find((item) => item.id === input.taskId);
+            if (task && task.status === "IN_PROGRESS") {
+              task.status = "FAILED";
+              task.errorLogs = input.reason;
+            }
+          }
           return state as never;
         },
         importFromTasksMarkdown: async (assignee: CLIAdapterId) => {

@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
-import { createAdapter } from "../adapters";
+import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
@@ -154,18 +154,15 @@ function createControlCenterServiceWithAgentTracking(
         assignee: workInput.assignee,
         prompt: workInput.prompt,
       });
-      const useStdinPrompt =
-        workInput.assignee === "CODEX_CLI" ||
-        workInput.assignee === "CLAUDE_CLI" ||
-        workInput.assignee === "GEMINI_CLI";
-      const args = workInput.assignee === "CODEX_CLI"
-        ? [...adapter.contract.baseArgs, "-"]
-        : workInput.assignee === "GEMINI_CLI"
-          ? [...adapter.contract.baseArgs, "--prompt", ""]
-          : useStdinPrompt
-            ? [...adapter.contract.baseArgs]
-            : [...adapter.contract.baseArgs, artifacts.inputFilePath];
-      const stdin = useStdinPrompt ? workInput.prompt : undefined;
+      const executionPlan = buildAdapterExecutionPlan({
+        assignee: workInput.assignee,
+        baseArgs: adapter.contract.baseArgs,
+        prompt: workInput.prompt,
+        promptFilePath: artifacts.inputFilePath,
+        resume: Boolean(workInput.resume),
+      });
+      const args = executionPlan.args;
+      const stdin = executionPlan.stdin;
       const agentName = workInput.taskId
         ? `${workInput.assignee} task worker`
         : `${workInput.assignee} internal worker`;
@@ -209,8 +206,15 @@ function createControlCenterServiceWithAgentTracking(
           );
         }
 
-        throw error;
+        throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
       }
+    },
+    async () => {
+      await processManager.run({
+        command: "git",
+        args: ["reset", "--hard"],
+        cwd: process.cwd(),
+      });
     }
   );
 }
@@ -303,6 +307,9 @@ function printHelp(): void {
     "  ixado task list  List tasks in active phase with numbers"
   );
   console.info("  ixado task start <taskNumber> [assignee]  Start active-phase task");
+  console.info("  ixado task retry <taskNumber>  Retry FAILED task with same assignee/session");
+  console.info("  ixado task logs <taskNumber>   Show logs/result for task in active phase");
+  console.info("  ixado task reset <taskNumber>  Reset FAILED task to TODO and hard-reset repo");
   console.info("  ixado phase active <phaseId>  Set active phase");
   console.info("  ixado web start [port]   Start local web control center in background");
   console.info("  ixado web stop           Stop local web control center");
@@ -432,6 +439,27 @@ async function runWebCommand(args: string[]): Promise<void> {
   throw new Error("Unknown web command. Use `ixado web start [port]` or `ixado web stop`.");
 }
 
+async function resolveActivePhaseTaskForNumber(
+  control: ControlCenterService,
+  taskNumber: number
+): Promise<{
+  phase: Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number];
+  task: Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number]["tasks"][number];
+}> {
+  const state = await control.getState();
+  const phase = state.phases.find((candidate) => candidate.id === state.activePhaseId) ?? state.phases[0];
+  if (!phase) {
+    throw new Error("No active phase found.");
+  }
+
+  const task = phase.tasks[taskNumber - 1];
+  if (!task) {
+    throw new Error(`Task #${taskNumber} not found in active phase ${phase.name}.`);
+  }
+
+  return { phase, task };
+}
+
 async function runTaskStartCommand(args: string[]): Promise<void> {
   const rawTaskNumber = args[2]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
@@ -441,16 +469,24 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const assignee = CLIAdapterIdSchema.parse(
-    args[3]?.trim() ? args[3].trim() : settings.internalWork.assignee
-  );
+  const stateFilePath = resolveStateFilePath();
+  const control = createControlCenterService(stateFilePath, settings);
+  await control.ensureInitialized("IxADO", process.cwd());
+
+  const explicitAssignee = args[3]?.trim();
+  let assigneeCandidate = explicitAssignee || settings.internalWork.assignee;
+  if (!explicitAssignee) {
+    const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
+    if (task.status === "FAILED" && task.assignee !== "UNASSIGNED") {
+      assigneeCandidate = task.assignee;
+    }
+  }
+
+  const assignee = CLIAdapterIdSchema.parse(assigneeCandidate);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
     throw new Error(`Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`);
   }
-  const stateFilePath = resolveStateFilePath();
-  const control = createControlCenterService(stateFilePath, settings);
-  await control.ensureInitialized("IxADO", process.cwd());
   console.info(`Starting active-phase task #${taskNumber} with ${assignee}.`);
 
   const state = await control.startActiveTaskAndWait({
@@ -491,6 +527,108 @@ async function runTaskListCommand(): Promise<void> {
   }
 }
 
+async function runTaskRetryCommand(args: string[]): Promise<void> {
+  const rawTaskNumber = args[2]?.trim() ?? "";
+  const taskNumber = Number(rawTaskNumber);
+  if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
+    throw new Error("Usage: ixado task retry <taskNumber>");
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const stateFilePath = resolveStateFilePath();
+  const control = createControlCenterService(stateFilePath, settings);
+  await control.ensureInitialized("IxADO", process.cwd());
+
+  const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
+  if (task.status !== "FAILED") {
+    throw new Error(`Task #${taskNumber} must be FAILED before retry. Current status: ${task.status}.`);
+  }
+  if (task.assignee === "UNASSIGNED") {
+    throw new Error(
+      `Task #${taskNumber} has no retry assignee. Reset to TODO, assign an agent, and start it again.`
+    );
+  }
+
+  const assignee = CLIAdapterIdSchema.parse(task.assignee);
+  const availableAgents = getAvailableAgents(settings);
+  if (!availableAgents.includes(assignee)) {
+    throw new Error(`Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`);
+  }
+
+  console.info(`Retrying active-phase task #${taskNumber} with ${assignee}.`);
+  const state = await control.startActiveTaskAndWait({
+    taskNumber,
+    assignee,
+  });
+
+  const phase = state.phases.find((candidate) => candidate.id === state.activePhaseId) ?? state.phases[0];
+  if (!phase) {
+    throw new Error("No phase available after task retry.");
+  }
+  const retriedTask = phase.tasks[taskNumber - 1];
+  if (!retriedTask) {
+    throw new Error(`Task #${taskNumber} not found after retry.`);
+  }
+
+  console.info(`Task #${taskNumber} ${retriedTask.title} finished with status ${retriedTask.status}.`);
+  if (retriedTask.status === "FAILED" && retriedTask.errorLogs) {
+    console.info(`Failure details: ${retriedTask.errorLogs}`);
+  }
+}
+
+async function runTaskLogsCommand(args: string[]): Promise<void> {
+  const rawTaskNumber = args[2]?.trim() ?? "";
+  const taskNumber = Number(rawTaskNumber);
+  if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
+    throw new Error("Usage: ixado task logs <taskNumber>");
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const stateFilePath = resolveStateFilePath();
+  const control = createControlCenterService(stateFilePath, settings);
+  await control.ensureInitialized("IxADO", process.cwd());
+  const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
+
+  console.info(`Task #${taskNumber}: ${task.title} [${task.status}]`);
+  if (task.status === "FAILED") {
+    console.info(task.errorLogs ?? "No failure logs recorded.");
+    return;
+  }
+  if (task.status === "DONE") {
+    console.info(task.resultContext ?? "No result context recorded.");
+    return;
+  }
+
+  console.info("Task has no terminal logs yet.");
+}
+
+async function runTaskResetCommand(args: string[]): Promise<void> {
+  const rawTaskNumber = args[2]?.trim() ?? "";
+  const taskNumber = Number(rawTaskNumber);
+  if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
+    throw new Error("Usage: ixado task reset <taskNumber>");
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const stateFilePath = resolveStateFilePath();
+  const control = createControlCenterService(stateFilePath, settings);
+  await control.ensureInitialized("IxADO", process.cwd());
+  const { phase, task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
+
+  if (task.status !== "FAILED") {
+    throw new Error(`Task #${taskNumber} must be FAILED before reset. Current status: ${task.status}.`);
+  }
+
+  await control.resetTaskToTodo({
+    phaseId: phase.id,
+    taskId: task.id,
+  });
+  console.info(`Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`);
+}
+
 async function runTaskCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
   if (subcommand === "list") {
@@ -503,7 +641,24 @@ async function runTaskCommand(args: string[]): Promise<void> {
     return;
   }
 
-  throw new Error("Unknown task command. Use `ixado task list` or `ixado task start <taskNumber> [assignee]`.");
+  if (subcommand === "retry") {
+    await runTaskRetryCommand(args);
+    return;
+  }
+
+  if (subcommand === "logs") {
+    await runTaskLogsCommand(args);
+    return;
+  }
+
+  if (subcommand === "reset") {
+    await runTaskResetCommand(args);
+    return;
+  }
+
+  throw new Error(
+    "Unknown task command. Use `ixado task list`, `ixado task start <taskNumber> [assignee]`, `ixado task retry <taskNumber>`, `ixado task logs <taskNumber>`, or `ixado task reset <taskNumber>`."
+  );
 }
 
 async function runPhaseActiveCommand(args: string[]): Promise<void> {

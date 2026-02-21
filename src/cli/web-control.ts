@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -216,9 +216,6 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
   if (!input.projectName.trim()) {
     throw new Error("projectName must not be empty.");
   }
-  if (!input.entryScriptPath.trim()) {
-    throw new Error("entryScriptPath must not be empty.");
-  }
 
   const runtimeFilePath = resolveWebRuntimeFilePath(input.cwd);
   const logFilePath = resolveWebLogFilePath(input.cwd);
@@ -239,10 +236,7 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
     "utf8"
   );
 
-  const spawnArgs = [input.entryScriptPath, "web", "serve"];
-  if (input.port !== undefined) {
-    spawnArgs.push(String(input.port));
-  }
+  const spawnArgs = buildWebDaemonSpawnArgs(input.entryScriptPath, input.port);
 
   const stdoutFd = openSync(logFilePath, "a");
   const stderrFd = openSync(logFilePath, "a");
@@ -272,6 +266,24 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
 
   child.unref();
   return waitForWebRuntimeRecord(runtimeFilePath, child.pid);
+}
+
+export function buildWebDaemonSpawnArgs(entryScriptPath: string, port?: number): string[] {
+  const spawnArgs: string[] = [];
+  const trimmedEntryScriptPath = entryScriptPath.trim();
+  if (trimmedEntryScriptPath) {
+    const resolvedEntryScriptPath = resolve(trimmedEntryScriptPath);
+    if (existsSync(resolvedEntryScriptPath)) {
+      spawnArgs.push(resolvedEntryScriptPath);
+    }
+  }
+
+  spawnArgs.push("web", "serve");
+  if (port !== undefined) {
+    spawnArgs.push(String(port));
+  }
+
+  return spawnArgs;
 }
 
 export async function stopWebDaemon(cwd: string): Promise<StopWebDaemonResult> {

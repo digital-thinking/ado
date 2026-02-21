@@ -60,23 +60,34 @@ type AgentRecord = {
   outputTail: string[];
   child?: ChildProcess;
   runToken: number;
+  stopRequested: boolean;
 };
 
-export type AgentView = Omit<AgentRecord, "child" | "runToken">;
+export type AgentView = Omit<AgentRecord, "child" | "runToken" | "stopRequested">;
 
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+const MAX_TAIL_LINE_LENGTH = 240;
 
 function toView(record: AgentRecord): AgentView {
   const { child: _child, runToken: _runToken, ...view } = record;
   return view;
 }
 
+function truncateTailLine(line: string): string {
+  if (line.length <= MAX_TAIL_LINE_LENGTH) {
+    return line;
+  }
+
+  return `${line.slice(0, MAX_TAIL_LINE_LENGTH)}...`;
+}
+
 function tailPush(lines: string[], value: string): void {
   const chunks = value
     .split(/\r?\n/)
-    .map((line) => line.trimEnd())
+    .map((line) => truncateTailLine(line.trimEnd()))
     .filter((line) => line.length > 0);
 
   lines.push(...chunks);
@@ -130,7 +141,7 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     startedAt: candidate.startedAt,
     stoppedAt: typeof candidate.stoppedAt === "string" ? candidate.stoppedAt : undefined,
     lastExitCode: typeof candidate.lastExitCode === "number" ? candidate.lastExitCode : undefined,
-    outputTail: normalizeStringArray(candidate.outputTail),
+    outputTail: normalizeStringArray(candidate.outputTail).map((line) => truncateTailLine(line)),
   };
 }
 
@@ -245,6 +256,7 @@ export class AgentSupervisor {
       startedAt: nowIso(),
       outputTail: [],
       runToken: 0,
+      stopRequested: false,
     };
   }
 
@@ -276,6 +288,7 @@ export class AgentSupervisor {
 
     record.pid = child.pid;
     record.child = child;
+    record.stopRequested = false;
     this.persistRecord(record);
 
     let timeoutHandle: NodeJS.Timeout | undefined;
@@ -302,10 +315,15 @@ export class AgentSupervisor {
       if (runToken !== record.runToken) {
         return;
       }
-      record.status = exitCode === 0 ? "STOPPED" : "FAILED";
+      if (record.stopRequested) {
+        record.status = "STOPPED";
+      } else {
+        record.status = exitCode === 0 ? "STOPPED" : "FAILED";
+      }
       record.lastExitCode = exitCode ?? -1;
       record.stoppedAt = nowIso();
       record.child = undefined;
+      record.stopRequested = false;
       this.persistRecord(record);
       options.onClose?.(exitCode, signal);
     });
@@ -318,6 +336,7 @@ export class AgentSupervisor {
       record.stoppedAt = nowIso();
       tailPush(record.outputTail, error.message);
       record.child = undefined;
+      record.stopRequested = false;
       this.persistRecord(record);
       options.onError?.(error);
     });
@@ -421,11 +440,11 @@ export class AgentSupervisor {
     }
 
     if (record.status === "RUNNING" && record.child) {
-      record.runToken += 1;
-      const child = record.child;
-      record.child = undefined;
-      child.kill();
+      record.stopRequested = true;
+      tailPush(record.outputTail, "Agent kill requested.");
+      record.child.kill();
       record.status = "STOPPED";
+      record.lastExitCode = -1;
       record.stoppedAt = nowIso();
     }
     this.persistRecord(record);

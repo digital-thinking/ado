@@ -64,6 +64,7 @@ export type RunInternalWorkInput = {
   timeoutMs?: number;
   phaseId?: string;
   taskId?: string;
+  resume?: boolean;
 };
 
 export type RunInternalWorkResult = {
@@ -98,6 +99,11 @@ export type StartActiveTaskInput = {
   assignee: CLIAdapterId;
 };
 
+export type ResetTaskInput = {
+  phaseId: string;
+  taskId: string;
+};
+
 export type ActivePhaseTaskItem = {
   number: number;
   title: string;
@@ -114,6 +120,8 @@ export type ActivePhaseTasksView = {
 type InternalWorkRunner = (
   input: RunInternalWorkInput
 ) => Promise<Omit<RunInternalWorkResult, "assignee">>;
+
+type RepositoryResetRunner = () => Promise<void>;
 
 type ImportedTaskDraft = ImportedTaskPlan & {
   id: string;
@@ -296,16 +304,19 @@ export class ControlCenterService {
   private readonly state: StateEngine;
   private readonly tasksMarkdownFilePath: string;
   private readonly internalWorkRunner?: InternalWorkRunner;
+  private readonly repositoryResetRunner?: RepositoryResetRunner;
   private readonly runningTaskExecutions = new Map<string, Promise<void>>();
 
   constructor(
     state: StateEngine,
     tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
-    internalWorkRunner?: InternalWorkRunner
+    internalWorkRunner?: InternalWorkRunner,
+    repositoryResetRunner?: RepositoryResetRunner
   ) {
     this.state = state;
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
+    this.repositoryResetRunner = repositoryResetRunner;
   }
 
   async ensureInitialized(projectName: string, rootDir: string): Promise<ProjectState> {
@@ -502,6 +513,11 @@ export class ControlCenterService {
         `Task must be TODO or FAILED before start. Current status: ${task.status}`
       );
     }
+    if (task.status === "FAILED" && task.assignee !== assignee) {
+      throw new Error(
+        `FAILED task must be retried with the same assignee (${task.assignee}). Reset the task to TODO before assigning a different agent.`
+      );
+    }
 
     const dependencyMap = new Map(
       state.phases.flatMap((candidatePhase) =>
@@ -560,6 +576,7 @@ export class ControlCenterService {
       taskId,
       assignee,
       prompt,
+      resume: task.status === "FAILED" && task.assignee === assignee,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });
@@ -594,6 +611,9 @@ export class ControlCenterService {
       assignee,
       prompt,
       timeoutMs: input.timeoutMs,
+      phaseId: input.phaseId,
+      taskId: input.taskId,
+      resume: input.resume,
     });
 
     return {
@@ -699,6 +719,7 @@ export class ControlCenterService {
     taskId: string;
     assignee: CLIAdapterId;
     prompt: string;
+    resume: boolean;
   }): Promise<void> {
     try {
       const result = await this.runInternalWork({
@@ -707,6 +728,7 @@ export class ControlCenterService {
         timeoutMs: TASK_EXECUTION_TIMEOUT_MS,
         phaseId: input.phaseId,
         taskId: input.taskId,
+        resume: input.resume,
       });
 
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
@@ -758,7 +780,19 @@ export class ControlCenterService {
     }
 
     const currentTask = phase.tasks[taskIndex];
-    if (currentTask.status !== "IN_PROGRESS") {
+    const normalizedResultContext = resultContext ? truncateForState(resultContext) : undefined;
+    const normalizedErrorLogs = errorLogs ? truncateForState(errorLogs) : undefined;
+
+    if (currentTask.status === status) {
+      if (status === "DONE") {
+        if (!normalizedResultContext || currentTask.resultContext === normalizedResultContext) {
+          return;
+        }
+      } else if (!normalizedErrorLogs || currentTask.errorLogs === normalizedErrorLogs) {
+        return;
+      }
+    }
+    if (currentTask.status !== status && currentTask.status !== "IN_PROGRESS") {
       throw new Error(
         `Task must be IN_PROGRESS before completion update. Current status: ${currentTask.status}`
       );
@@ -767,8 +801,14 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...currentTask,
       status,
-      resultContext: resultContext ? truncateForState(resultContext) : undefined,
-      errorLogs: errorLogs ? truncateForState(errorLogs) : undefined,
+      resultContext:
+        status === "DONE"
+          ? normalizedResultContext ?? currentTask.resultContext
+          : undefined,
+      errorLogs:
+        status === "FAILED"
+          ? normalizedErrorLogs ?? currentTask.errorLogs
+          : undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -780,6 +820,115 @@ export class ControlCenterService {
     };
 
     await this.state.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
+  async failTaskIfInProgress(input: { taskId: string; reason: string }): Promise<ProjectState> {
+    const taskId = input.taskId.trim();
+    const reason = input.reason.trim();
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!reason) {
+      throw new Error("reason must not be empty.");
+    }
+
+    const state = await this.state.readProjectState();
+    let phaseIndex = -1;
+    let taskIndex = -1;
+    for (let index = 0; index < state.phases.length; index += 1) {
+      const foundTaskIndex = state.phases[index].tasks.findIndex((task) => task.id === taskId);
+      if (foundTaskIndex >= 0) {
+        phaseIndex = index;
+        taskIndex = foundTaskIndex;
+        break;
+      }
+    }
+    if (phaseIndex < 0 || taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "IN_PROGRESS") {
+      return state;
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "FAILED",
+      resultContext: undefined,
+      errorLogs: truncateForState(reason),
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    return this.state.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
+  async resetTaskToTodo(input: ResetTaskInput): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!this.repositoryResetRunner) {
+      throw new Error("Repository reset runner is not configured.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot reset a running task.");
+    }
+
+    const state = await this.state.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "FAILED") {
+      throw new Error(`Task must be FAILED before reset. Current status: ${task.status}`);
+    }
+
+    await this.repositoryResetRunner();
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "TODO",
+      assignee: "UNASSIGNED",
+      resultContext: undefined,
+      errorLogs: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    return this.state.writeProjectState({
       ...state,
       phases: nextPhases,
     });

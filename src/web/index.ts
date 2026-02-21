@@ -13,6 +13,7 @@ export {
   type ActivePhaseTasksView,
   type ImportTasksMarkdownResult,
   type SetActivePhaseInput,
+  type ResetTaskInput,
   type StartActiveTaskInput,
   type StartTaskInput,
   type RunInternalWorkInput,
