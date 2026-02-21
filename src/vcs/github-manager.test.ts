@@ -109,4 +109,17 @@ describe("GitHubManager", () => {
     expect(summary.overall).toBe("SUCCESS");
     expect(runner.calls).toHaveLength(2);
   });
+
+  test("adds review comment to pull request", async () => {
+    const runner = new MockProcessRunner([{}]);
+    const manager = new GitHubManager(runner);
+
+    await manager.addReviewComment(12, "Looks good.", "C:/repo");
+
+    expect(runner.calls[0]).toEqual({
+      command: "gh",
+      args: ["pr", "review", "12", "--comment", "--body", "Looks good."],
+      cwd: "C:/repo",
+    });
+  });
 });

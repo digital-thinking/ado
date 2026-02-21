@@ -119,6 +119,18 @@ export class GitHubManager {
     return url;
   }
 
+  async addReviewComment(prNumber: number, body: string, cwd: string): Promise<void> {
+    if (!body.trim()) {
+      throw new Error("review body must not be empty.");
+    }
+
+    await this.runner.run({
+      command: "gh",
+      args: ["pr", "review", String(prNumber), "--comment", "--body", body],
+      cwd,
+    });
+  }
+
   async getCiStatus(prNumber: number, cwd: string): Promise<CiStatusSummary> {
     const result = await this.runner.run({
       command: "gh",
