@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged=()
+while IFS= read -r file; do
+  case "$file" in
+    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.json|*.md|*.yml|*.yaml)
+      staged+=("$file")
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+if [ "${#staged[@]}" -gt 0 ]; then
+  bunx prettier --write "${staged[@]}"
+  git add "${staged[@]}"
+fi
+
+bun run lint

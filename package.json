@@ -14,6 +14,7 @@
   "scripts": {
     "dev": "bun run --watch src/cli/index.ts",
     "start": "bun run src/cli/index.ts",
+    "prepare": "bash scripts/setup-git-hooks.sh",
     "build:binary": "bun build --compile --outfile dist/ixado.exe ./src/cli/index.ts",
     "build:linux": "bun build --compile --outfile dist/ixado ./src/cli/index.ts",
     "package:validate": "node scripts/package-validate.mjs",
@@ -24,6 +25,7 @@
     "test:unit": "node scripts/run-tests.mjs unit",
     "test:integration": "node scripts/run-tests.mjs integration",
     "coverage": "bun test --coverage --coverage-reporter=lcov && node scripts/coverage-summary.mjs coverage/lcov.info",
+    "format": "prettier --write .",
     "lint": "bun run typecheck",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun run test"
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   }
 }
