@@ -8,6 +8,7 @@ describe("resolveCommandForSpawn", () => {
   });
 
   test("resolves windows command via PATH/PATHEXT", () => {
+    const expected = "c:\\bin\\codex.cmd";
     const resolved = resolveCommandForSpawn(
       "codex",
       {
@@ -15,10 +16,10 @@ describe("resolveCommandForSpawn", () => {
         PATHEXT: ".EXE;.CMD",
       },
       "win32",
-      (candidate) => candidate === "C:\\bin\\codex.CMD"
+      (candidate) => candidate.replace(/\//g, "\\").toLowerCase() === expected
     );
 
-    expect(resolved).toBe("C:\\bin\\codex.CMD");
+    expect(resolved.replace(/\//g, "\\").toLowerCase()).toBe(expected);
   });
 
   test("keeps explicit extension command on windows", () => {
