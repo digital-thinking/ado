@@ -112,6 +112,7 @@ async function readSettingsOverrideFile(settingsFilePath: string): Promise<CliSe
 function mergeCliSettings(base: CliSettings, override: CliSettingsOverride): CliSettings {
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
+    activeProject: override.activeProject ?? base.activeProject,
     telegram: {
       ...base.telegram,
       ...override.telegram,

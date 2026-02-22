@@ -62,6 +62,7 @@ export type ProjectRecord = z.infer<typeof ProjectRecordSchema>;
 
 export const CliSettingsSchema = z.object({
   projects: z.array(ProjectRecordSchema).default([]),
+  activeProject: z.string().min(1).optional(),
   telegram: z.object({
     enabled: z.boolean().default(false),
     botToken: z.string().min(1).optional(),
@@ -144,6 +145,7 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
 
 export const CliSettingsOverrideSchema = z.object({
   projects: z.array(ProjectRecordSchema).optional(),
+  activeProject: z.string().min(1).optional(),
   telegram: z.object({
     enabled: z.boolean().optional(),
     botToken: z.string().min(1).optional(),

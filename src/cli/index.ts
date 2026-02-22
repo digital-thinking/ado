@@ -65,6 +65,36 @@ function resolveStateFilePath(): string {
   return resolve(process.cwd(), DEFAULT_STATE_FILE);
 }
 
+function resolveStateFilePathForProject(projectRootDir: string): string {
+  return resolve(projectRootDir, DEFAULT_STATE_FILE);
+}
+
+async function resolveActiveProjectRootDir(): Promise<string | undefined> {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(globalSettingsFilePath);
+
+  if (!settings.activeProject) {
+    return undefined;
+  }
+
+  const project = settings.projects.find((p) => p.name === settings.activeProject);
+  return project?.rootDir;
+}
+
+async function resolveProjectAwareStateFilePath(): Promise<string> {
+  const configuredStatePath = process.env.IXADO_STATE_FILE?.trim();
+  if (configuredStatePath) {
+    return resolve(configuredStatePath);
+  }
+
+  const activeRootDir = await resolveActiveProjectRootDir();
+  if (activeRootDir) {
+    return resolveStateFilePathForProject(activeRootDir);
+  }
+
+  return resolve(process.cwd(), DEFAULT_STATE_FILE);
+}
+
 async function loadOrInitializeState(engine: StateEngine, stateFilePath: string): Promise<{
   phaseCount: number;
   initialized: boolean;
@@ -254,7 +284,7 @@ async function runDefaultCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const telegram = resolveTelegramConfig(settings.telegram);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const stateEngine = new StateEngine(stateFilePath);
   const { control, agents } = createServices(stateFilePath, settings);
   const stateSummary = await loadOrInitializeState(stateEngine, stateFilePath);
@@ -330,6 +360,49 @@ async function runInitCommand(): Promise<void> {
   console.info(`Registered project '${projectName}' at ${currentDir} in global config.`);
 }
 
+async function runListCommand(): Promise<void> {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(globalSettingsFilePath);
+  const currentDir = process.cwd();
+
+  if (settings.projects.length === 0) {
+    console.info("No projects registered. Use `ixado init` to register the current directory.");
+    return;
+  }
+
+  console.info("Registered projects:");
+  for (const project of settings.projects) {
+    const isActive = settings.activeProject === project.name;
+    const isCwd = project.rootDir === currentDir;
+    const markers = [isActive ? "active" : "", isCwd ? "cwd" : ""]
+      .filter(Boolean)
+      .join(", ");
+    const suffix = markers ? ` (${markers})` : "";
+    console.info(`  ${project.name} -> ${project.rootDir}${suffix}`);
+  }
+}
+
+async function runSwitchCommand(args: string[]): Promise<void> {
+  const projectName = args[1]?.trim() ?? "";
+  if (!projectName) {
+    throw new Error("Usage: ixado switch <project-name>");
+  }
+
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(globalSettingsFilePath);
+  const project = settings.projects.find((p) => p.name === projectName);
+  if (!project) {
+    const available = settings.projects.map((p) => p.name).join(", ");
+    throw new Error(
+      `Project '${projectName}' not found. Registered projects: ${available || "none"}.`
+    );
+  }
+
+  settings.activeProject = project.name;
+  await saveCliSettings(globalSettingsFilePath, settings);
+  console.info(`Switched active project to '${project.name}' at ${project.rootDir}.`);
+}
+
 function printHelp(): void {
   console.info("IxADO CLI");
   console.info("");
@@ -337,6 +410,8 @@ function printHelp(): void {
   console.info("  ixado           Run IxADO with stored settings");
   console.info("  ixado status    Show project status and running agents");
   console.info("  ixado init      Register current directory as project in global config");
+  console.info("  ixado list      Show all registered projects");
+  console.info("  ixado switch <project-name>  Switch active project context");
   console.info("  ixado onboard   Configure local CLI settings");
   console.info(
     "  ixado task list  List tasks in active phase with numbers"
@@ -400,7 +475,7 @@ function resolveCliEntryScriptPath(): string {
 async function runWebStartCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const portFromArgs = parseWebPort(args[2]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
   const port = portFromArgs ?? portFromEnv;
@@ -445,7 +520,7 @@ async function runWebStopCommand(): Promise<void> {
 }
 
 async function runWebServeCommand(args: string[]): Promise<void> {
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const portFromArgs = parseWebPort(args[2]);
@@ -605,7 +680,7 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
 
@@ -648,7 +723,7 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
 async function runTaskListCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const tasksView = await control.listActivePhaseTasks();
@@ -672,7 +747,7 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
 
@@ -722,7 +797,7 @@ async function runTaskLogsCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
@@ -749,7 +824,7 @@ async function runTaskResetCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const { phase, task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
@@ -800,7 +875,7 @@ async function runTaskCommand(args: string[]): Promise<void> {
 async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
 
@@ -1128,7 +1203,7 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const state = await control.setActivePhase({ phaseId });
@@ -1176,7 +1251,7 @@ function resolveAssignedTaskLabel(agent: AgentView, state: Awaited<ReturnType<Co
 async function runStatusCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const stateFilePath = resolveStateFilePath();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
   const { control, agents } = createServices(stateFilePath, settings);
   await control.ensureInitialized("IxADO", process.cwd());
   const state = await control.getState();
@@ -1298,6 +1373,16 @@ async function runCli(args: string[]): Promise<void> {
 
   if (command === "init") {
     await runInitCommand();
+    return;
+  }
+
+  if (command === "list") {
+    await runListCommand();
+    return;
+  }
+
+  if (command === "switch") {
+    await runSwitchCommand(args);
     return;
   }
 
