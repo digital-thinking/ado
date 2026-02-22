@@ -68,6 +68,15 @@ export const CliSettingsSchema = z.object({
     botToken: z.string().min(1).optional(),
     ownerId: z.number().int().positive().optional(),
   }),
+  authorization: z.object({
+    roles: z.object({
+      telegramRoles: z.array(z.object({
+        userId: z.number().int().positive(),
+        role: z.string().min(1),
+      })).default([]),
+      cliRole: z.string().min(1).optional(),
+    }).default({}),
+  }).default({}),
   internalWork: z.object({
     assignee: CLIAdapterIdSchema.default("CODEX_CLI"),
   }).default({
@@ -150,6 +159,15 @@ export const CliSettingsOverrideSchema = z.object({
     enabled: z.boolean().optional(),
     botToken: z.string().min(1).optional(),
     ownerId: z.number().int().positive().optional(),
+  }).optional(),
+  authorization: z.object({
+    roles: z.object({
+      telegramRoles: z.array(z.object({
+        userId: z.number().int().positive(),
+        role: z.string().min(1),
+      })).optional(),
+      cliRole: z.string().min(1).optional(),
+    }).optional(),
   }).optional(),
   internalWork: z.object({
     assignee: CLIAdapterIdSchema.optional(),

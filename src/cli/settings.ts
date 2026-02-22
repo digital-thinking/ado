@@ -22,6 +22,11 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
   telegram: {
     enabled: false,
   },
+  authorization: {
+    roles: {
+      telegramRoles: [],
+    },
+  },
   internalWork: {
     assignee: "CODEX_CLI",
   },
@@ -116,6 +121,12 @@ function mergeCliSettings(base: CliSettings, override: CliSettingsOverride): Cli
     telegram: {
       ...base.telegram,
       ...override.telegram,
+    },
+    authorization: {
+      roles: {
+        ...base.authorization.roles,
+        ...override.authorization?.roles,
+      },
     },
     internalWork: {
       ...base.internalWork,
@@ -438,6 +449,7 @@ export async function runOnboard(
           botToken: existingSettings.telegram.botToken,
           ownerId: existingSettings.telegram.ownerId,
         },
+        authorization: existingSettings.authorization,
         internalWork: {
           assignee: internalWorkAssignee,
         },
@@ -453,6 +465,7 @@ export async function runOnboard(
         telegram: {
           enabled: false,
         },
+        authorization: existingSettings.authorization,
         internalWork: {
           assignee: internalWorkAssignee,
         },
@@ -503,6 +516,7 @@ export async function runOnboard(
         botToken,
         ownerId,
       },
+      authorization: existingSettings.authorization,
       internalWork: {
         assignee: internalWorkAssignee,
       },

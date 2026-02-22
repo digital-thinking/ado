@@ -21,7 +21,10 @@ import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
 import { GitManager } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
-import { loadAuthPolicy } from "../security/policy-loader";
+import { evaluate } from "../security/auth-evaluator";
+import { ACTIONS, type ActionName, type AuthPolicy } from "../security/policy";
+import { resolveRole, type RoleResolutionConfig } from "../security/role-resolver";
+import { loadAuthPolicy, loadRoleResolutionConfig } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
 import {
   getAvailableAgents,
@@ -99,6 +102,27 @@ async function resolveProjectAwareStateFilePath(): Promise<string> {
 async function resolveProjectRootDir(): Promise<string> {
   const activeRootDir = await resolveActiveProjectRootDir();
   return activeRootDir ?? process.cwd();
+}
+
+async function ensureAuthorized(
+  action: ActionName,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig
+): Promise<void> {
+  const role = resolveRole({ source: "cli" }, roleConfig);
+  const decision = evaluate(role, action, policy);
+
+  if (decision.decision === "allow") {
+    return;
+  }
+
+  if (decision.reason === "no-role") {
+    throw new Error("Unauthorized: no role assigned for CLI session.");
+  }
+
+  throw new Error(
+    `Access denied: role '${decision.role}' is not authorized for '${action}'.`
+  );
 }
 
 async function loadOrInitializeState(
@@ -298,6 +322,7 @@ async function runDefaultCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
   const telegram = resolveTelegramConfig(settings.telegram);
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
@@ -332,6 +357,8 @@ async function runDefaultCommand(): Promise<void> {
     const runtime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
+      policy,
+      roleConfig,
       readState: () => control.getState(),
       listAgents: () => agents.list(),
       availableAssignees: availableAgents,
@@ -700,6 +727,10 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.EXECUTION_START, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -744,6 +775,10 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
 async function runTaskListCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.TASKS_READ, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -769,6 +804,10 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.EXECUTION_START, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -820,6 +859,10 @@ async function runTaskLogsCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.LOGS_READ, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -848,6 +891,10 @@ async function runTaskResetCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.TASK_UPDATE, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -900,6 +947,10 @@ async function runTaskCommand(args: string[]): Promise<void> {
 async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.EXECUTION_START, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -919,6 +970,8 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
     runtime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
+      policy,
+      roleConfig,
       readState: () => control.getState(),
       listAgents: () => [],
       availableAssignees: getAvailableAgents(settings),
@@ -1229,6 +1282,10 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
 
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.PHASE_CREATE, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(stateFilePath, projectRootDir, settings);
@@ -1278,6 +1335,10 @@ function resolveAssignedTaskLabel(agent: AgentView, state: Awaited<ReturnType<Co
 async function runStatusCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.STATUS_READ, policy, roleConfig);
+
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const { control, agents } = createServices(stateFilePath, projectRootDir, settings);
@@ -1320,6 +1381,10 @@ function parseConfigMode(rawMode: string): boolean {
 async function runConfigShowCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.STATUS_READ, policy, roleConfig);
+
   console.info(`Settings: ${settingsFilePath}`);
   console.info(`Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`);
   console.info(`Default coding CLI: ${settings.internalWork.assignee}`);
@@ -1334,6 +1399,10 @@ async function runConfigModeCommand(args: string[]): Promise<void> {
   const autoMode = parseConfigMode(rawMode);
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.CONFIG_WRITE, policy, roleConfig);
+
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
     executionLoop: {
@@ -1354,6 +1423,10 @@ async function runConfigAssigneeCommand(args: string[]): Promise<void> {
   const assignee = CLIAdapterIdSchema.parse(rawAssignee);
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(settingsFilePath);
+  await ensureAuthorized(ACTIONS.CONFIG_WRITE, policy, roleConfig);
+
   if (!settings.agents[assignee].enabled) {
     throw new Error(`Agent '${assignee}' is disabled. Enable it before setting as default.`);
   }

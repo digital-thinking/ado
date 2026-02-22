@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createWebApp } from "./app";
+import { DEFAULT_AUTH_POLICY } from "../security/policy";
 import type { AgentView } from "./agent-supervisor";
 import type {
   CreatePhaseInput,
@@ -58,6 +59,8 @@ describe("web app api", () => {
 
     const app = createWebApp({
       defaultAgentCwd: "C:/repo",
+      policy: DEFAULT_AUTH_POLICY,
+      roleConfig: { cliRole: "owner" },
       control: {
         getState: async () => state as never,
         ensureInitialized: async () => state as never,
@@ -395,5 +398,48 @@ describe("web app api", () => {
     const internalPayload = await internalRunResponse.json();
     expect(internalPayload.assignee).toBe("CODEX_CLI");
     expect(internalPayload.command).toBe("codex");
+  });
+
+  test("enforces authorization for restricted roles", async () => {
+    const state = createInitialState();
+    const runtimeConfig = {
+      defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
+      autoMode: false,
+    };
+
+    const app = createWebApp({
+      defaultAgentCwd: "C:/repo",
+      policy: DEFAULT_AUTH_POLICY,
+      roleConfig: { cliRole: "viewer" }, // restricted role
+      control: {
+        getState: async () => state as never,
+      } as never,
+      agents: {} as never,
+      usage: {} as never,
+      defaultInternalWorkAssignee: "CODEX_CLI",
+      defaultAutoMode: false,
+      availableWorkerAssignees: ["CODEX_CLI"],
+      getRuntimeConfig: async () => runtimeConfig,
+      updateRuntimeConfig: async () => runtimeConfig,
+      webLogFilePath: "C:/repo/.ixado/web.log",
+      cliLogFilePath: "C:/repo/.ixado/cli.log",
+    });
+
+    // viewer should be allowed to read state
+    const stateResponse = await app.fetch(new Request("http://localhost/api/state"));
+    expect(stateResponse.status).toBe(200);
+
+    // viewer should NOT be allowed to create a phase
+    const createPhaseResponse = await app.fetch(
+      new Request("http://localhost/api/phases", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Phase 6", branchName: "phase-6-web-interface" }),
+      })
+    );
+    expect(createPhaseResponse.status).toBe(403);
+    const errorPayload = await createPhaseResponse.json();
+    expect(errorPayload.error).toContain("Access denied");
+    expect(errorPayload.error).toContain("role 'viewer' is not authorized");
   });
 });

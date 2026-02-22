@@ -88,6 +88,11 @@ describe("cli settings", () => {
         botToken: "abc",
         ownerId: 123,
       },
+      authorization: {
+        roles: {
+          telegramRoles: [],
+        },
+      },
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
@@ -211,6 +216,11 @@ describe("cli settings", () => {
         botToken: "my-token",
         ownerId: 123456,
       },
+      authorization: {
+        roles: {
+          telegramRoles: [],
+        },
+      },
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
@@ -260,6 +270,11 @@ describe("cli settings", () => {
     expect(settings).toEqual({
       projects: [],
       telegram: { enabled: false },
+      authorization: {
+        roles: {
+          telegramRoles: [],
+        },
+      },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: {
@@ -305,6 +320,11 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "token",
         ownerId: 42,
+      },
+      authorization: {
+        roles: {
+          telegramRoles: [],
+        },
       },
       internalWork: {
         assignee: "MOCK_CLI",
@@ -363,6 +383,11 @@ describe("cli settings", () => {
         botToken: "existing-token",
         ownerId: 999,
       },
+      authorization: {
+        roles: {
+          telegramRoles: [],
+        },
+      },
       internalWork: {
         assignee: "GEMINI_CLI",
       },
@@ -411,6 +436,11 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "token",
         ownerId: 123,
+      },
+      authorization: {
+        roles: {
+          telegramRoles: [],
+        },
       },
       internalWork: {
         assignee: "CODEX_CLI",

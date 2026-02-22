@@ -9,6 +9,7 @@ import {
   handleTasksCommand,
 } from "./telegram";
 import type { ProjectState } from "../types";
+import { DEFAULT_AUTH_POLICY } from "../security/policy";
 
 type FakeCtx = {
   from?: { id?: number };
@@ -56,12 +57,15 @@ function buildState(): ProjectState {
   };
 }
 
+const TEST_POLICY = DEFAULT_AUTH_POLICY;
+const TEST_ROLE_CONFIG = { telegramOwnerId: 123 };
+
 describe("telegram command handlers", () => {
   test("rejects unauthorized status call", async () => {
     const ctx = createCtx(999);
     let called = false;
 
-    await handleStatusCommand(ctx, 123, async () => {
+    await handleStatusCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, async () => {
       called = true;
       return buildState();
     }, () => [], ["CODEX_CLI"]);
@@ -75,7 +79,8 @@ describe("telegram command handlers", () => {
 
     await handleStatusCommand(
       ctx,
-      123,
+      TEST_POLICY,
+      TEST_ROLE_CONFIG,
       async () => buildState(),
       () => [
         {
@@ -98,7 +103,7 @@ describe("telegram command handlers", () => {
   test("returns tasks list for authorized user", async () => {
     const ctx = createCtx(123);
 
-    await handleTasksCommand(ctx, 123, async () => buildState());
+    await handleTasksCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, async () => buildState());
 
     expect(ctx.replies).toHaveLength(1);
     expect(ctx.replies[0]).toContain("Tasks for Phase 3:");
@@ -110,7 +115,7 @@ describe("telegram command handlers", () => {
     const state = buildState();
     state.activePhaseId = undefined;
 
-    await handleTasksCommand(ctx, 123, async () => state);
+    await handleTasksCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, async () => state);
 
     expect(ctx.replies).toEqual(["No active phase selected."]);
   });
@@ -118,7 +123,7 @@ describe("telegram command handlers", () => {
   test("returns unauthorized for tasks when owner id does not match", async () => {
     const ctx = createCtx(123);
 
-    await handleTasksCommand(ctx, 999, async () => buildState());
+    await handleTasksCommand(ctx, TEST_POLICY, { telegramOwnerId: 999 }, async () => buildState());
 
     expect(ctx.replies).toEqual(["Unauthorized user."]);
   });
@@ -128,7 +133,8 @@ describe("telegram command handlers", () => {
 
     await handleStartTaskCommand(
       ctx,
-      123,
+      TEST_POLICY,
+      TEST_ROLE_CONFIG,
       ["CODEX_CLI", "MOCK_CLI"],
       "MOCK_CLI",
       async (input) => {
@@ -149,7 +155,8 @@ describe("telegram command handlers", () => {
 
     await handleStartTaskCommand(
       ctx,
-      123,
+      TEST_POLICY,
+      TEST_ROLE_CONFIG,
       ["CODEX_CLI"],
       "CODEX_CLI",
       async () => buildState()
@@ -161,7 +168,7 @@ describe("telegram command handlers", () => {
   test("sets active phase through shared setter", async () => {
     const ctx = createCtx(123, "/setactivephase 11111111-1111-1111-1111-111111111111");
 
-    await handleSetActivePhaseCommand(ctx, 123, async (input) => {
+    await handleSetActivePhaseCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, async (input) => {
       expect(input.phaseId).toBe("11111111-1111-1111-1111-111111111111");
       const state = buildState();
       state.activePhaseId = input.phaseId;
@@ -174,7 +181,7 @@ describe("telegram command handlers", () => {
   test("returns usage for invalid setactivephase command", async () => {
     const ctx = createCtx(123, "/setactivephase");
 
-    await handleSetActivePhaseCommand(ctx, 123, async () => buildState());
+    await handleSetActivePhaseCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, async () => buildState());
 
     expect(ctx.replies).toEqual(["Usage: /setactivephase <phaseNumber|phaseId>"]);
   });
@@ -182,7 +189,7 @@ describe("telegram command handlers", () => {
   test("next command triggers loop advancement callback", async () => {
     const ctx = createCtx(123, "/next");
 
-    await handleNextCommand(ctx, 123, () => "Execution loop advanced.");
+    await handleNextCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, () => "Execution loop advanced.");
 
     expect(ctx.replies).toEqual(["Execution loop advanced."]);
   });
@@ -190,18 +197,18 @@ describe("telegram command handlers", () => {
   test("stop command triggers loop stop callback", async () => {
     const ctx = createCtx(123, "/stop");
 
-    await handleStopCommand(ctx, 123, () => "Execution loop stop requested.");
+    await handleStopCommand(ctx, TEST_POLICY, TEST_ROLE_CONFIG, () => "Execution loop stop requested.");
 
     expect(ctx.replies).toEqual(["Execution loop stop requested."]);
   });
 
   test("next/stop return no-loop message without callbacks", async () => {
     const nextCtx = createCtx(123, "/next");
-    await handleNextCommand(nextCtx, 123);
+    await handleNextCommand(nextCtx, TEST_POLICY, TEST_ROLE_CONFIG);
     expect(nextCtx.replies).toEqual(["No active execution loop."]);
 
     const stopCtx = createCtx(123, "/stop");
-    await handleStopCommand(stopCtx, 123);
+    await handleStopCommand(stopCtx, TEST_POLICY, TEST_ROLE_CONFIG);
     expect(stopCtx.replies).toEqual(["No active execution loop."]);
   });
 });

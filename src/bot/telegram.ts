@@ -1,6 +1,9 @@
 import { Bot } from "grammy";
 
 import { CLIAdapterIdSchema, type CLIAdapterId, type ProjectState } from "../types";
+import { evaluate } from "../security/auth-evaluator";
+import { ACTIONS, type AuthPolicy } from "../security/policy";
+import { resolveRole, type RoleResolutionConfig } from "../security/role-resolver";
 
 export type StateReader = () => Promise<ProjectState>;
 export type TaskStarter = (input: {
@@ -89,23 +92,43 @@ function parseCommandArgs(ctx: TelegramCtx): string[] {
   return raw.split(/\s+/).slice(1);
 }
 
-async function ensureOwner(ctx: TelegramCtx, ownerId: number): Promise<boolean> {
-  if (ctx.from?.id !== ownerId) {
-    await ctx.reply("Unauthorized user.");
+async function ensureAuthorized(
+  ctx: TelegramCtx,
+  action: string,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig
+): Promise<boolean> {
+  const userId = ctx.from?.id;
+  if (userId === undefined) {
+    await ctx.reply("Unable to identify Telegram user.");
     return false;
   }
 
-  return true;
+  const role = resolveRole({ source: "telegram", userId }, roleConfig);
+  const decision = evaluate(role, action, policy);
+
+  if (decision.decision === "allow") {
+    return true;
+  }
+
+  if (decision.reason === "no-role") {
+    await ctx.reply("Unauthorized user.");
+  } else {
+    await ctx.reply(`Access denied: role '${decision.role}' is not authorized for '${action}'.`);
+  }
+
+  return false;
 }
 
 export async function handleStatusCommand(
   ctx: TelegramCtx,
-  ownerId: number,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig,
   readState: StateReader,
   readAgents: AgentListReader,
   availableAssignees: CLIAdapterId[]
 ): Promise<void> {
-  if (!(await ensureOwner(ctx, ownerId))) {
+  if (!(await ensureAuthorized(ctx, ACTIONS.STATUS_READ, policy, roleConfig))) {
     return;
   }
 
@@ -115,10 +138,11 @@ export async function handleStatusCommand(
 
 export async function handleTasksCommand(
   ctx: TelegramCtx,
-  ownerId: number,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig,
   readState: StateReader
 ): Promise<void> {
-  if (!(await ensureOwner(ctx, ownerId))) {
+  if (!(await ensureAuthorized(ctx, ACTIONS.TASKS_READ, policy, roleConfig))) {
     return;
   }
 
@@ -128,12 +152,13 @@ export async function handleTasksCommand(
 
 export async function handleStartTaskCommand(
   ctx: TelegramCtx,
-  ownerId: number,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig,
   availableAssignees: CLIAdapterId[],
   defaultAssignee: CLIAdapterId,
   startTask: TaskStarter
 ): Promise<void> {
-  if (!(await ensureOwner(ctx, ownerId))) {
+  if (!(await ensureAuthorized(ctx, ACTIONS.EXECUTION_START, policy, roleConfig))) {
     return;
   }
 
@@ -174,10 +199,11 @@ export async function handleStartTaskCommand(
 
 export async function handleSetActivePhaseCommand(
   ctx: TelegramCtx,
-  ownerId: number,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig,
   setActivePhase: ActivePhaseSetter
 ): Promise<void> {
-  if (!(await ensureOwner(ctx, ownerId))) {
+  if (!(await ensureAuthorized(ctx, ACTIONS.PHASE_CREATE, policy, roleConfig))) {
     return;
   }
 
@@ -204,10 +230,11 @@ export async function handleSetActivePhaseCommand(
 
 export async function handleNextCommand(
   ctx: TelegramCtx,
-  ownerId: number,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig,
   requestNextLoop?: LoopNextRequester
 ): Promise<void> {
-  if (!(await ensureOwner(ctx, ownerId))) {
+  if (!(await ensureAuthorized(ctx, ACTIONS.EXECUTION_NEXT, policy, roleConfig))) {
     return;
   }
 
@@ -227,10 +254,11 @@ export async function handleNextCommand(
 
 export async function handleStopCommand(
   ctx: TelegramCtx,
-  ownerId: number,
+  policy: AuthPolicy,
+  roleConfig: RoleResolutionConfig,
   requestStopLoop?: LoopStopRequester
 ): Promise<void> {
-  if (!(await ensureOwner(ctx, ownerId))) {
+  if (!(await ensureAuthorized(ctx, ACTIONS.EXECUTION_STOP, policy, roleConfig))) {
     return;
   }
 
@@ -251,6 +279,8 @@ export async function handleStopCommand(
 type CreateTelegramRuntimeInput = {
   token: string;
   ownerId: number;
+  policy: AuthPolicy;
+  roleConfig: RoleResolutionConfig;
   readState: StateReader;
   listAgents: AgentListReader;
   availableAssignees: CLIAdapterId[];
@@ -267,7 +297,8 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
   bot.command("status", async (ctx) => {
     await handleStatusCommand(
       ctx,
-      input.ownerId,
+      input.policy,
+      input.roleConfig,
       input.readState,
       input.listAgents,
       input.availableAssignees
@@ -275,26 +306,27 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
   });
 
   bot.command("tasks", async (ctx) => {
-    await handleTasksCommand(ctx, input.ownerId, input.readState);
+    await handleTasksCommand(ctx, input.policy, input.roleConfig, input.readState);
   });
 
   bot.command("starttask", async (ctx) => {
     await handleStartTaskCommand(
       ctx,
-      input.ownerId,
+      input.policy,
+      input.roleConfig,
       input.availableAssignees,
       input.defaultAssignee,
       input.startTask
     );
   });
   bot.command("setactivephase", async (ctx) => {
-    await handleSetActivePhaseCommand(ctx, input.ownerId, input.setActivePhase);
+    await handleSetActivePhaseCommand(ctx, input.policy, input.roleConfig, input.setActivePhase);
   });
   bot.command("next", async (ctx) => {
-    await handleNextCommand(ctx, input.ownerId, input.requestNextLoop);
+    await handleNextCommand(ctx, input.policy, input.roleConfig, input.requestNextLoop);
   });
   bot.command("stop", async (ctx) => {
-    await handleStopCommand(ctx, input.ownerId, input.requestStopLoop);
+    await handleStopCommand(ctx, input.policy, input.roleConfig, input.requestStopLoop);
   });
 
   bot.catch((error) => {

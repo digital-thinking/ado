@@ -6,6 +6,7 @@ import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, CodexUsageTracker, createAdapter } from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
 import { loadCliSettings, saveCliSettings } from "../cli/settings";
+import { loadAuthPolicy, loadRoleResolutionConfig } from "../security/policy-loader";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLI_ADAPTER_IDS, type CLIAdapterId, type CliAgentSettings } from "../types";
@@ -204,10 +205,14 @@ export async function startWebControlCenter(
 
   const usage = new UsageService(new CodexUsageTracker(processManager), input.cwd);
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
+  const policy = await loadAuthPolicy(input.settingsFilePath);
+  const roleConfig = await loadRoleResolutionConfig(input.settingsFilePath);
   const app = createWebApp({
     control,
     agents,
     usage,
+    policy,
+    roleConfig,
     defaultAgentCwd: input.cwd,
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     defaultAutoMode: input.defaultAutoMode,

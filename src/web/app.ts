@@ -11,6 +11,9 @@ import type {
 } from "./control-center-service";
 import type { UsageService } from "./usage-service";
 import type { CLIAdapterId } from "../types";
+import { evaluate } from "../security/auth-evaluator";
+import { ACTIONS, type AuthPolicy } from "../security/policy";
+import { resolveRole, type RoleResolutionConfig } from "../security/role-resolver";
 
 type AgentControl = {
   list(): AgentView[];
@@ -44,6 +47,8 @@ export type WebAppDependencies = {
   control: ControlCenterControl;
   agents: AgentControl;
   usage: UsageService;
+  policy: AuthPolicy;
+  roleConfig: RoleResolutionConfig;
   defaultAgentCwd: string;
   defaultInternalWorkAssignee: CLIAdapterId;
   defaultAutoMode: boolean;
@@ -1002,20 +1007,34 @@ export function createWebApp(deps: WebAppDependencies): {
     fetch: async (request: Request): Promise<Response> => {
       const url = new URL(request.url);
 
+      function authorize(action: string): void {
+        const role = resolveRole({ source: "cli" }, deps.roleConfig);
+        const decision = evaluate(role, action, deps.policy);
+        if (decision.decision !== "allow") {
+          const reason = decision.reason === "no-role"
+            ? "Unauthorized session (no role assigned)."
+            : `Access denied: role '${decision.role}' is not authorized for '${action}'.`;
+          throw new Error(reason);
+        }
+      }
+
       try {
         if (request.method === "GET" && url.pathname === "/") {
           return text(html, 200, "text/html; charset=utf-8");
         }
 
         if (request.method === "GET" && url.pathname === "/api/state") {
+          authorize(ACTIONS.STATUS_READ);
           return json(await deps.control.getState());
         }
 
         if (request.method === "GET" && url.pathname === "/api/runtime-config") {
+          authorize(ACTIONS.STATUS_READ);
           return json(await deps.getRuntimeConfig());
         }
 
         if (request.method === "POST" && url.pathname === "/api/runtime-config") {
+          authorize(ACTIONS.CONFIG_WRITE);
           const body = await readJson(request);
           const candidateAssignee = asInternalAdapterAssignee(body.defaultInternalWorkAssignee);
           if (!candidateAssignee) {
@@ -1038,6 +1057,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/phases") {
+          authorize(ACTIONS.PHASE_CREATE);
           const body = await readJson(request);
           const state = await deps.control.createPhase({
             name: asString(body.name) ?? "",
@@ -1047,6 +1067,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/phases/active") {
+          authorize(ACTIONS.PHASE_CREATE);
           const body = await readJson(request);
           const state = await deps.control.setActivePhase({
             phaseId: asString(body.phaseId) ?? "",
@@ -1055,6 +1076,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/tasks") {
+          authorize(ACTIONS.TASK_CREATE);
           const body = await readJson(request);
           const dependenciesRaw = body.dependencies;
           const dependencies = Array.isArray(dependenciesRaw)
@@ -1078,6 +1100,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/tasks/start") {
+          authorize(ACTIONS.EXECUTION_START);
           const body = await readJson(request);
           const assignee = asInternalAdapterAssignee(body.assignee);
           if (!assignee) {
@@ -1094,6 +1117,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/tasks/reset") {
+          authorize(ACTIONS.TASK_UPDATE);
           const body = await readJson(request);
           const state = await deps.control.resetTaskToTodo({
             phaseId: asString(body.phaseId) ?? "",
@@ -1103,6 +1127,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/import/tasks-md") {
+          authorize(ACTIONS.PHASE_CREATE);
           const body = await readJson(request);
           const runtimeConfig = await deps.getRuntimeConfig();
           const assignee = asInternalAdapterAssignee(body.assignee) ?? runtimeConfig.defaultInternalWorkAssignee;
@@ -1115,6 +1140,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/internal-work/run") {
+          authorize(ACTIONS.EXECUTION_START);
           const body = await readJson(request);
           const runtimeConfig = await deps.getRuntimeConfig();
           const assignee = asInternalAdapterAssignee(body.assignee) ?? runtimeConfig.defaultInternalWorkAssignee;
@@ -1133,6 +1159,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "GET" && url.pathname === "/api/agents") {
+          authorize(ACTIONS.STATUS_READ);
           const agents = deps.agents.list();
           const latestByTask = new Map<string, AgentView>();
           for (const agent of agents) {
@@ -1164,6 +1191,7 @@ export function createWebApp(deps: WebAppDependencies): {
         }
 
         if (request.method === "POST" && url.pathname === "/api/agents/start") {
+          authorize(ACTIONS.EXECUTION_START);
           const body = await readJson(request);
           const args = Array.isArray(body.args)
             ? body.args.filter((value): value is string => typeof value === "string")
@@ -1183,6 +1211,7 @@ export function createWebApp(deps: WebAppDependencies): {
 
         const killMatch = /^\/api\/agents\/([^/]+)\/kill$/.exec(url.pathname);
         if (request.method === "POST" && killMatch) {
+          authorize(ACTIONS.AGENT_KILL);
           const killed = deps.agents.kill(killMatch[1]);
           if (killed.taskId) {
             try {
@@ -1199,6 +1228,7 @@ export function createWebApp(deps: WebAppDependencies): {
 
         const assignMatch = /^\/api\/agents\/([^/]+)\/assign$/.exec(url.pathname);
         if (request.method === "POST" && assignMatch) {
+          authorize(ACTIONS.TASK_UPDATE);
           const body = await readJson(request);
           return json(
             deps.agents.assign(assignMatch[1], {
@@ -1210,17 +1240,20 @@ export function createWebApp(deps: WebAppDependencies): {
 
         const restartMatch = /^\/api\/agents\/([^/]+)\/restart$/.exec(url.pathname);
         if (request.method === "POST" && restartMatch) {
+          authorize(ACTIONS.AGENT_RESTART);
           return json(deps.agents.restart(restartMatch[1]));
         }
 
         if (request.method === "GET" && url.pathname === "/api/usage") {
+          authorize(ACTIONS.USAGE_READ);
           return json(await deps.usage.getLatest());
         }
 
         return text("Not found", 404);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return json({ error: message }, 400);
+        const status = message.includes("Access denied") || message.includes("Unauthorized session") ? 403 : 400;
+        return json({ error: message }, status);
       }
     },
   };

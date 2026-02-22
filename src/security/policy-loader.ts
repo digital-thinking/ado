@@ -4,6 +4,7 @@ import { access, readFile } from "node:fs/promises";
 import { z } from "zod";
 
 import { resolveGlobalSettingsFilePath } from "../cli/settings";
+import { resolveRole, type RoleResolutionConfig } from "./role-resolver";
 import {
   AuthPolicySchema,
   DEFAULT_AUTH_POLICY,
@@ -14,6 +15,21 @@ const PolicyContainerSchema = z.object({
   authorization: z.object({
     policy: AuthPolicySchema,
   }),
+});
+
+const RoleConfigContainerSchema = z.object({
+  telegram: z.object({
+    ownerId: z.number().int().positive().optional(),
+  }).optional(),
+  authorization: z.object({
+    roles: z.object({
+      telegramRoles: z.array(z.object({
+        userId: z.number().int().positive(),
+        role: z.string().min(1),
+      })).default([]),
+      cliRole: z.string().min(1).optional(),
+    }).default({}),
+  }).default({}),
 });
 
 async function readOptionalJsonFile(filePath: string): Promise<unknown | null> {
@@ -71,4 +87,38 @@ export async function loadAuthPolicy(settingsFilePath: string): Promise<AuthPoli
     : null;
 
   return localPolicy ?? globalPolicy ?? DEFAULT_AUTH_POLICY;
+}
+
+function parseRoleConfigFromConfig(config: unknown): RoleResolutionConfig | null {
+  if (!config || typeof config !== "object") {
+    return null;
+  }
+
+  const parsed = RoleConfigContainerSchema.safeParse(config);
+  if (!parsed.success) {
+    return null;
+  }
+
+  return {
+    telegramOwnerId: parsed.data.telegram?.ownerId,
+    telegramRoles: (parsed.data.authorization as any)?.roles?.telegramRoles ?? [],
+    cliRole: (parsed.data.authorization as any)?.roles?.cliRole,
+  };
+}
+
+export async function loadRoleResolutionConfig(settingsFilePath: string): Promise<RoleResolutionConfig> {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const globalConfig = settingsFilePath === globalSettingsFilePath
+    ? null
+    : await readOptionalJsonFile(globalSettingsFilePath);
+  const localConfig = await readOptionalJsonFile(settingsFilePath);
+
+  const globalRoleConfig = globalConfig ? parseRoleConfigFromConfig(globalConfig) : null;
+  const localRoleConfig = localConfig ? parseRoleConfigFromConfig(localConfig) : null;
+
+  return {
+    telegramOwnerId: localRoleConfig?.telegramOwnerId ?? globalRoleConfig?.telegramOwnerId,
+    telegramRoles: localRoleConfig?.telegramRoles ?? globalRoleConfig?.telegramRoles ?? [],
+    cliRole: localRoleConfig?.cliRole ?? globalRoleConfig?.cliRole,
+  };
 }
