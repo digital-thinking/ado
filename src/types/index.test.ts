@@ -42,6 +42,11 @@ describe("type contracts", () => {
     expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
     expect(parsed.executionLoop.autoMode).toBe(false);
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
+    expect(parsed.executionLoop.testerCommand).toBe("npm");
+    expect(parsed.executionLoop.testerArgs).toEqual(["run", "test"]);
+    expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);
+    expect(parsed.executionLoop.ciEnabled).toBe(false);
+    expect(parsed.executionLoop.ciBaseBranch).toBe("main");
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
   });

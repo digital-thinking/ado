@@ -44,6 +44,11 @@ export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
 export const ExecutionLoopSettingsSchema = z.object({
   autoMode: z.boolean().default(false),
   countdownSeconds: z.number().int().min(1).max(3_600).default(10),
+  testerCommand: z.string().min(1).default("npm"),
+  testerArgs: z.array(z.string()).min(1).default(["run", "test"]),
+  testerTimeoutMs: z.number().int().positive().default(600_000),
+  ciEnabled: z.boolean().default(false),
+  ciBaseBranch: z.string().min(1).default("main"),
 });
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
@@ -62,6 +67,11 @@ export const CliSettingsSchema = z.object({
   executionLoop: ExecutionLoopSettingsSchema.default({
     autoMode: false,
     countdownSeconds: 10,
+    testerCommand: "npm",
+    testerArgs: ["run", "test"],
+    testerTimeoutMs: 600_000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
   }),
   agents: CliAgentSettingsSchema.default({
     CODEX_CLI: {

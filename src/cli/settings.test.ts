@@ -22,6 +22,11 @@ const DEFAULT_AGENT_SETTINGS = {
 const DEFAULT_LOOP_SETTINGS = {
   autoMode: false,
   countdownSeconds: 10,
+  testerCommand: "npm",
+  testerArgs: ["run", "test"],
+  testerTimeoutMs: 600000,
+  ciEnabled: false,
+  ciBaseBranch: "main",
 };
 
 describe("cli settings", () => {

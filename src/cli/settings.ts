@@ -18,6 +18,11 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
   executionLoop: {
     autoMode: false,
     countdownSeconds: 10,
+    testerCommand: "npm",
+    testerArgs: ["run", "test"],
+    testerTimeoutMs: 600_000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
   },
   agents: {
     CODEX_CLI: {

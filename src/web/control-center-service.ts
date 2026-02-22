@@ -89,15 +89,22 @@ export type StartTaskInput = {
   phaseId: string;
   taskId: string;
   assignee: CLIAdapterId;
+  resume?: boolean;
 };
 
 export type SetActivePhaseInput = {
   phaseId: string;
 };
 
+export type SetPhasePrUrlInput = {
+  phaseId: string;
+  prUrl: string;
+};
+
 export type StartActiveTaskInput = {
   taskNumber: number;
   assignee: CLIAdapterId;
+  resume?: boolean;
 };
 
 export type ResetTaskInput = {
@@ -416,6 +423,35 @@ export class ControlCenterService {
     });
   }
 
+  async setPhasePrUrl(input: SetPhasePrUrlInput): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const prUrl = input.prUrl.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!prUrl) {
+      throw new Error("prUrl must not be empty.");
+    }
+
+    const state = await this.state.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const nextPhases = [...state.phases];
+    nextPhases[phaseIndex] = PhaseSchema.parse({
+      ...phase,
+      prUrl,
+    });
+
+    return this.state.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
   async listActivePhaseTasks(): Promise<ActivePhaseTasksView> {
     const state = await this.state.readProjectState();
     const activePhase = resolveActivePhaseOrThrow(state);
@@ -451,6 +487,7 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resume: input.resume,
     });
   }
 
@@ -473,6 +510,7 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resume: input.resume,
     });
   }
 
@@ -577,12 +615,15 @@ export class ControlCenterService {
       phases: nextPhases,
     });
 
+    const shouldResume =
+      Boolean(input.resume) || (task.status === "FAILED" && task.assignee === assignee);
+
     const executionPromise = this.executeTaskRun({
       phaseId,
       taskId,
       assignee,
       prompt,
-      resume: task.status === "FAILED" && task.assignee === assignee,
+      resume: shouldResume,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });

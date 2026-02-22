@@ -8,7 +8,9 @@ import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
+import { runCiIntegration } from "../engine/ci-integration";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
+import { runTesterWorkflow } from "../engine/tester-workflow";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
@@ -805,6 +807,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   const countdownSeconds = resolveCountdownSeconds(args[3], settings.executionLoop.countdownSeconds);
   const loopControl = new PhaseLoopControl();
   const activeAssignee = settings.internalWork.assignee;
+  const testerRunner = new ProcessManager();
   const telegram = resolveTelegramConfig(settings.telegram);
 
   let runtime: ReturnType<typeof createTelegramRuntime> | undefined;
@@ -849,6 +852,10 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
 
   try {
     let iteration = 0;
+    let resumeSession = false;
+    let completedPhase:
+      | Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number]
+      | undefined;
     while (true) {
       if (loopControl.isStopRequested()) {
         console.info("Execution loop stopped.");
@@ -860,6 +867,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
       const nextTaskIndex = phase.tasks.findIndex((task) => task.status === "TODO");
       if (nextTaskIndex < 0) {
         console.info(`Execution loop finished. No TODO tasks in active phase ${phase.name}.`);
+        completedPhase = phase;
         break;
       }
 
@@ -884,6 +892,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
       const updatedState = await control.startActiveTaskAndWait({
         taskNumber: nextTaskNumber,
         assignee: activeAssignee,
+        resume: resumeSession,
       });
       const updatedPhase = resolveActivePhaseFromState(updatedState);
       const resultTask = updatedPhase.tasks[nextTaskNumber - 1];
@@ -893,6 +902,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
 
       console.info(`Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`);
       if (resultTask.status === "FAILED") {
+        resumeSession = false;
         if (resultTask.errorLogs) {
           console.info(`Failure details: ${resultTask.errorLogs}`);
         }
@@ -900,6 +910,56 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
           `Execution loop stopped after FAILED task #${nextTaskNumber}. Resolve it or reset the task before continuing.`
         );
       }
+
+      const testerResult = await runTesterWorkflow({
+        phaseId: updatedPhase.id,
+        phaseName: updatedPhase.name,
+        completedTask: {
+          id: resultTask.id,
+          title: resultTask.title,
+        },
+        cwd: process.cwd(),
+        testerCommand: settings.executionLoop.testerCommand,
+        testerArgs: settings.executionLoop.testerArgs,
+        testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+        runner: testerRunner,
+        createFixTask: async (input) => {
+          await control.createTask({
+            phaseId: input.phaseId,
+            title: input.title,
+            description: input.description,
+            assignee: activeAssignee,
+            dependencies: input.dependencies,
+          });
+        },
+      });
+      if (testerResult.status === "FAILED") {
+        resumeSession = false;
+        console.info(
+          `Tester workflow failed after ${nextTaskLabel}. Created fix task: ${testerResult.fixTaskTitle}.`
+        );
+        throw new Error("Execution loop stopped after tester failure. Fix task has been created.");
+      }
+
+      console.info(`Tester workflow passed after ${nextTaskLabel}.`);
+      resumeSession = true;
+    }
+
+    if (completedPhase && settings.executionLoop.ciEnabled) {
+      console.info("Optional CI integration enabled. Pushing branch and creating PR via gh.");
+      const ciResult = await runCiIntegration({
+        phaseId: completedPhase.id,
+        phaseName: completedPhase.name,
+        cwd: process.cwd(),
+        baseBranch: settings.executionLoop.ciBaseBranch,
+        runner: testerRunner,
+        setPhasePrUrl: async (input) => {
+          await control.setPhasePrUrl(input);
+        },
+      });
+      console.info(
+        `Optional CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`
+      );
     }
   } finally {
     rl.close();
