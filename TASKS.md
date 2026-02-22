@@ -76,3 +76,8 @@ Status markers:
 - [ ] `P8-005` Update State Engine to respect the currently selected project context from global config. Deps: `P8-004`.
 - [ ] `P8-006` Add unit/integration tests for multi-project switching and global config persistence. Deps: `P8-005`.
 - [ ] `P8-007` Create PR Task: open Phase 8 PR after coding tasks are done. Deps: `P8-006`.
+
+## Phase 9: Shell Integration
+- [ ] `P9-001` Implement `ixado completion` command to generate shell completion scripts (Bash, Zsh, Fish). Deps: `P8-007`.
+- [ ] `P9-002` Add installation instructions for shell completion to `README.md`. Deps: `P9-001`.
+- [ ] `P9-003` Create PR Task: open Phase 9 PR after coding tasks are done. Deps: `P9-002`.
