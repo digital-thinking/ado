@@ -21,6 +21,7 @@ import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
 import { GitManager } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
+import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
 import {
   getAvailableAgents,
@@ -296,6 +297,7 @@ function createServices(
 async function runDefaultCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
   const telegram = resolveTelegramConfig(settings.telegram);
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
@@ -307,6 +309,7 @@ async function runDefaultCommand(): Promise<void> {
   console.info("IxADO bootstrap checks passed.");
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}.`);
   console.info(`Settings loaded from ${settingsFilePath}.`);
+  console.info(`Authorization policy loaded (version: ${policy.version}).`);
 
   if (telegram.enabled) {
     console.info(

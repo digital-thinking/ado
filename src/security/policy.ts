@@ -41,7 +41,7 @@ export const ActionPatternSchema = z
   .string()
   .min(1)
   .regex(
-    /^[a-z][a-z0-9]*(?::[a-z][a-z0-9:]*)?(?:\*)?$/,
+    /^\*$|^[a-z][a-z0-9]*(?::[a-z][a-z0-9]*)*(?::\*)?$/,
     "Action pattern must be lower-kebab identifiers separated by ':' with an optional trailing '*'"
   );
 export type ActionPattern = z.infer<typeof ActionPatternSchema>;
