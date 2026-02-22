@@ -81,3 +81,24 @@ Status markers:
 - [ ] `P9-001` Implement `ixado completion` command to generate shell completion scripts (Bash, Zsh, Fish). Deps: `P8-007`.
 - [ ] `P9-002` Add installation instructions for shell completion to `README.md`. Deps: `P9-001`.
 - [ ] `P9-003` Create PR Task: open Phase 9 PR after coding tasks are done. Deps: `P9-002`.
+
+## Phase 10: Authorization & Security Hardening
+- [ ] `P10-001` Define auth policy schema in `src/security/policy.ts` with: role-based generous allowlist rules, explicit denylist rules, and default-deny fallback semantics. Deps: `P9-003`.
+- [ ] `P10-002` Implement policy loader/validator from config (`~/.ixado/config.json` + project override) and reject startup on invalid or missing required policy fields. Deps: `P10-001`.
+- [ ] `P10-003` Add role resolution pipeline (owner/admin/operator/viewer) from Telegram user + CLI session context, with tests for precedence and unknown-role handling. Deps: `P10-002`.
+- [ ] `P10-004` Implement authorization evaluator: allow only when command matches allowlist and does not match denylist; denylist always wins. Deps: `P10-003`.
+- [ ] `P10-005` Add task-scoped allowlist profiles for common workflows (status/tasks/read-only, planning, execution, privileged) and map each orchestrator action to one profile. Deps: `P10-004`.
+- [ ] `P10-006` Add unit tests for evaluator matrix (role x action x allowlist/denylist) including conflict cases and wildcard patterns. Deps: `P10-004`.
+- [ ] `P10-007` Create PR Task: open Phase 10 PR after coding tasks are done. Deps: `P10-005`, `P10-006`.
+
+## Phase 11: Command Gating, Privileged Git Actions, and Auditability
+- [ ] `P11-001` Enforce non-interactive execution for Claude/Codex/Gemini adapters (`--print`/batch mode equivalents) and fail if interactive mode is requested or detected. Deps: `P10-007`.
+- [ ] `P11-002` Add runtime guard to block raw shell execution paths that bypass adapter command templates; only approved adapter command builders may spawn child processes. Deps: `P11-001`.
+- [ ] `P11-003` Implement ixado-owned privileged git action wrapper (branch creation, rebase, push, PR open/merge) requiring explicit policy permission `git:privileged:*`. Deps: `P10-007`.
+- [ ] `P11-004` Wire authorization checks before every privileged GitManager/GitHubManager operation and return structured `AuthorizationDenied` errors. Deps: `P11-003`.
+- [ ] `P11-005` Implement fail-closed behavior across orchestration: on policy load failure, role resolution failure, evaluator error, or missing action mapping, block execution and emit denial reason. Deps: `P11-002`, `P11-004`.
+- [ ] `P11-006` Add append-only audit logging (`.ixado/audit.log`) for all authorization decisions and privileged git actions with timestamp, actor, role, action, target, decision, reason, and command hash. Deps: `P11-005`.
+- [ ] `P11-007` Add audit-log rotation/redaction policy and tests to ensure secrets/tokens are never logged in clear text. Deps: `P11-006`.
+- [ ] `P11-008` Add integration tests covering: non-interactive enforcement, denylist precedence, privileged git action authorization, and fail-closed startup/runtime paths. Deps: `P11-005`, `P11-007`.
+- [ ] `P11-009` Create PR Task: open Phase 11 PR after coding tasks are done. Deps: `P11-008`.
+
