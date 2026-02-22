@@ -75,7 +75,7 @@ Status markers:
 - [x] `P8-004` Implement `ixado switch <project-name>` or interactive selector to change active context. Deps: `P8-003`.
 - [x] `P8-005` Update State Engine to respect the currently selected project context from global config. Deps: `P8-004`.
 - [x] `P8-006` Add unit/integration tests for multi-project switching and global config persistence. Deps: `P8-005`.
-- [ ] `P8-007` Create PR Task: open Phase 8 PR after coding tasks are done. Deps: `P8-006`.
+- [x] `P8-007` Create PR Task: open Phase 8 PR after coding tasks are done. Deps: `P8-006`.
 
 ## Phase 9: Shell Integration
 - [ ] `P9-001` Implement `ixado completion` command to generate shell completion scripts (Bash, Zsh, Fish). Deps: `P8-007`.
