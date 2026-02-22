@@ -69,7 +69,7 @@ Status markers:
 - [x] `P7-005` Fix CI failures for Phase 7 until all checks are green. Deps: `P7-004`.
 
 ## Phase 8: Multi-Project Management
-- [ ] `P8-001` Refactor configuration loading to support a global user config file (e.g., `~/.ixado/config.json`) in addition to local project config. Deps: `P7-005`.
+- [x] `P8-001` Refactor configuration loading to support a global user config file (e.g., `~/.ixado/config.json`) in addition to local project config. Deps: `P7-005`.
 - [ ] `P8-002` Implement `ixado init` to register the current directory as a project in the global config. Deps: `P8-001`.
 - [ ] `P8-003` Implement `ixado list` to show all registered projects. Deps: `P8-002`.
 - [ ] `P8-004` Implement `ixado switch <project-name>` or interactive selector to change active context. Deps: `P8-003`.

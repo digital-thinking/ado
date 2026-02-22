@@ -33,15 +33,31 @@ const DEFAULT_LOOP_SETTINGS = {
 describe("cli settings", () => {
   let sandboxDir: string;
   let settingsFilePath: string;
+  let globalSettingsFilePath: string;
   let soulFilePath: string;
+  const originalHome = process.env.HOME;
+  const originalGlobalConfigPath = process.env.IXADO_GLOBAL_CONFIG_FILE;
 
   beforeEach(async () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-cli-settings-"));
     settingsFilePath = join(sandboxDir, "settings.json");
+    globalSettingsFilePath = join(sandboxDir, "global-config.json");
     soulFilePath = join(sandboxDir, "SOUL.md");
+    process.env.HOME = sandboxDir;
+    process.env.IXADO_GLOBAL_CONFIG_FILE = globalSettingsFilePath;
   });
 
   afterEach(async () => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalGlobalConfigPath === undefined) {
+      delete process.env.IXADO_GLOBAL_CONFIG_FILE;
+    } else {
+      process.env.IXADO_GLOBAL_CONFIG_FILE = originalGlobalConfigPath;
+    }
     await rm(sandboxDir, { recursive: true, force: true });
   });
 
@@ -66,6 +82,7 @@ describe("cli settings", () => {
 
     const settings = await loadCliSettings(settingsFilePath);
     expect(settings).toEqual({
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "abc",
@@ -77,6 +94,71 @@ describe("cli settings", () => {
       executionLoop: DEFAULT_LOOP_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
+  });
+
+  test("loads settings from global config when local file is missing", async () => {
+    await Bun.write(
+      globalSettingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          autoMode: true,
+          countdownSeconds: 42,
+        },
+        internalWork: {
+          assignee: "CLAUDE_CLI",
+        },
+      })
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings).toEqual({
+      ...DEFAULT_CLI_SETTINGS,
+      internalWork: {
+        assignee: "CLAUDE_CLI",
+      },
+      executionLoop: {
+        ...DEFAULT_CLI_SETTINGS.executionLoop,
+        autoMode: true,
+        countdownSeconds: 42,
+      },
+    });
+  });
+
+  test("local settings override global config values", async () => {
+    await Bun.write(
+      globalSettingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          testerCommand: "bun",
+          testerArgs: ["test"],
+          countdownSeconds: 99,
+        },
+        agents: {
+          CODEX_CLI: {
+            timeoutMs: 5000,
+          },
+        },
+      })
+    );
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          countdownSeconds: 3,
+        },
+        agents: {
+          CODEX_CLI: {
+            timeoutMs: 7000,
+          },
+        },
+      })
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.testerCommand).toBe("bun");
+    expect(settings.executionLoop.testerArgs).toEqual(["test"]);
+    expect(settings.executionLoop.countdownSeconds).toBe(3);
+    expect(settings.agents.CODEX_CLI.timeoutMs).toBe(7000);
   });
 
   test("fails for invalid settings json", async () => {
@@ -123,6 +205,7 @@ describe("cli settings", () => {
     );
 
     expect(settings).toEqual({
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "my-token",
@@ -175,6 +258,7 @@ describe("cli settings", () => {
     );
 
     expect(settings).toEqual({
+      projects: [],
       telegram: { enabled: false },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
@@ -216,6 +300,7 @@ describe("cli settings", () => {
     );
 
     expect(settings).toEqual({
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "token",
@@ -272,6 +357,7 @@ describe("cli settings", () => {
     );
 
     expect(settings).toEqual({
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "existing-token",
@@ -320,6 +406,7 @@ describe("cli settings", () => {
     );
 
     expect(settings).toEqual({
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "token",

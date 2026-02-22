@@ -35,13 +35,24 @@ type ControlCenterControl = {
   runInternalWork(input: RunInternalWorkInput): Promise<RunInternalWorkResult>;
 };
 
+export type RuntimeConfig = {
+  defaultInternalWorkAssignee: CLIAdapterId;
+  autoMode: boolean;
+};
+
 export type WebAppDependencies = {
   control: ControlCenterControl;
   agents: AgentControl;
   usage: UsageService;
   defaultAgentCwd: string;
   defaultInternalWorkAssignee: CLIAdapterId;
+  defaultAutoMode: boolean;
   availableWorkerAssignees: CLIAdapterId[];
+  getRuntimeConfig: () => Promise<RuntimeConfig>;
+  updateRuntimeConfig: (input: {
+    defaultInternalWorkAssignee?: CLIAdapterId;
+    autoMode?: boolean;
+  }) => Promise<RuntimeConfig>;
   webLogFilePath: string;
   cliLogFilePath: string;
 };
@@ -294,6 +305,22 @@ function controlCenterHtml(): string {
       <pre id="usageRaw" class="mono small"></pre>
     </section>
 
+    <section class="card">
+      <h2>Execution Settings</h2>
+      <form id="runtimeSettingsForm">
+        <label class="small" for="runtimeMode">Phase Loop Mode</label>
+        <select id="runtimeMode" required>
+          <option value="manual">Manual</option>
+          <option value="auto">Auto</option>
+        </select>
+        <label class="small" for="runtimeDefaultAssignee">Default Coding CLI</label>
+        <select id="runtimeDefaultAssignee" required></select>
+        <button type="submit">Save Settings</button>
+      </form>
+      <div id="runtimeSettingsStatus" class="small"></div>
+      <div id="runtimeSettingsError" class="error"></div>
+    </section>
+
     <section class="card wide">
       <h2>Phase Kanban</h2>
       <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED). Dependencies are shown on each task.</div>
@@ -353,6 +380,10 @@ function controlCenterHtml(): string {
     const cliLogPath = document.getElementById("cliLogPath");
     const usageStatus = document.getElementById("usageStatus");
     const usageRaw = document.getElementById("usageRaw");
+    const runtimeSettingsForm = document.getElementById("runtimeSettingsForm");
+    const runtimeMode = document.getElementById("runtimeMode");
+    const runtimeDefaultAssignee = document.getElementById("runtimeDefaultAssignee");
+    const runtimeSettingsStatus = document.getElementById("runtimeSettingsStatus");
     const kanbanBoard = document.getElementById("kanbanBoard");
     const taskPhase = document.getElementById("taskPhase");
     const taskDependencies = document.getElementById("taskDependencies");
@@ -361,11 +392,16 @@ function controlCenterHtml(): string {
     const importTasksStatus = document.getElementById("importTasksStatus");
     const importTasksButton = document.getElementById("importTasksButton");
     const defaultInternalWorkAssignee = ${JSON.stringify("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}")};
+    const defaultAutoMode = {{DEFAULT_AUTO_MODE}};
     const defaultWebLogFilePath = ${JSON.stringify("{{DEFAULT_WEB_LOG_FILE_PATH}}")};
     const defaultCliLogFilePath = ${JSON.stringify("{{DEFAULT_CLI_LOG_FILE_PATH}}")};
     const WORKER_ASSIGNEES = {{AVAILABLE_WORKER_ASSIGNEES_JSON}};
     let latestAgents = [];
     let latestState = null;
+    let latestRuntimeConfig = {
+      defaultInternalWorkAssignee,
+      autoMode: Boolean(defaultAutoMode),
+    };
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
 
@@ -429,6 +465,28 @@ function controlCenterHtml(): string {
         taskPhase.appendChild(option);
       });
       renderTaskDependenciesOptions();
+    }
+
+    function renderRuntimeConfig(config) {
+      latestRuntimeConfig = config;
+      if (!(runtimeDefaultAssignee instanceof HTMLSelectElement)) {
+        return;
+      }
+      runtimeDefaultAssignee.innerHTML = "";
+      WORKER_ASSIGNEES.forEach((assignee) => {
+        const option = document.createElement("option");
+        option.value = assignee;
+        option.textContent = assignee;
+        option.selected = config.defaultInternalWorkAssignee === assignee;
+        runtimeDefaultAssignee.appendChild(option);
+      });
+      if (runtimeMode instanceof HTMLSelectElement) {
+        runtimeMode.value = config.autoMode ? "auto" : "manual";
+      }
+      if (runtimeSettingsStatus) {
+        runtimeSettingsStatus.textContent =
+          "Mode: " + (config.autoMode ? "Auto" : "Manual") + " | Default CLI: " + config.defaultInternalWorkAssignee;
+      }
     }
 
     function renderTaskDependenciesOptions() {
@@ -646,14 +704,16 @@ function controlCenterHtml(): string {
     }
 
     async function refresh() {
-      const [state, agents, usage] = await Promise.all([
+      const [state, agents, usage, runtimeConfig] = await Promise.all([
         api("/api/state"),
         api("/api/agents"),
         api("/api/usage"),
+        api("/api/runtime-config"),
       ]);
       renderState(state);
       renderKanban(state);
       renderAgents(agents);
+      renderRuntimeConfig(runtimeConfig);
       usageStatus.textContent = usage.available ? "Available" : ("Unavailable: " + (usage.message || "unknown"));
       usageRaw.textContent = usage.snapshot ? JSON.stringify(usage.snapshot.payload, null, 2) : "";
     }
@@ -677,6 +737,38 @@ function controlCenterHtml(): string {
         await refresh();
       } catch (error) {
         setError("phaseError", error.message);
+      }
+    });
+
+    runtimeSettingsForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setError("runtimeSettingsError", "");
+      if (runtimeSettingsStatus) {
+        runtimeSettingsStatus.textContent = "Saving...";
+      }
+      try {
+        const modeValue =
+          runtimeMode instanceof HTMLSelectElement && runtimeMode.value === "auto"
+            ? "auto"
+            : "manual";
+        const assigneeValue =
+          runtimeDefaultAssignee instanceof HTMLSelectElement
+            ? runtimeDefaultAssignee.value
+            : latestRuntimeConfig.defaultInternalWorkAssignee;
+        const updated = await api("/api/runtime-config", {
+          method: "POST",
+          body: JSON.stringify({
+            autoMode: modeValue === "auto",
+            defaultInternalWorkAssignee: assigneeValue,
+          }),
+        });
+        renderRuntimeConfig(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setError("runtimeSettingsError", message);
+        if (runtimeSettingsStatus) {
+          runtimeSettingsStatus.textContent = "";
+        }
       }
     });
 
@@ -898,6 +990,7 @@ export function createWebApp(deps: WebAppDependencies): {
   const html = controlCenterHtml()
     .replace("{{DEFAULT_AGENT_CWD}}", deps.defaultAgentCwd.replace(/\\/g, "\\\\"))
     .replace("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}", deps.defaultInternalWorkAssignee)
+    .replace("{{DEFAULT_AUTO_MODE}}", deps.defaultAutoMode ? "true" : "false")
     .replace("{{DEFAULT_WEB_LOG_FILE_PATH}}", deps.webLogFilePath.replace(/\\/g, "\\\\"))
     .replace("{{DEFAULT_CLI_LOG_FILE_PATH}}", deps.cliLogFilePath.replace(/\\/g, "\\\\"))
     .replace(
@@ -916,6 +1009,32 @@ export function createWebApp(deps: WebAppDependencies): {
 
         if (request.method === "GET" && url.pathname === "/api/state") {
           return json(await deps.control.getState());
+        }
+
+        if (request.method === "GET" && url.pathname === "/api/runtime-config") {
+          return json(await deps.getRuntimeConfig());
+        }
+
+        if (request.method === "POST" && url.pathname === "/api/runtime-config") {
+          const body = await readJson(request);
+          const candidateAssignee = asInternalAdapterAssignee(body.defaultInternalWorkAssignee);
+          if (!candidateAssignee) {
+            throw new Error(
+              `defaultInternalWorkAssignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`
+            );
+          }
+          ensureAllowedAssignee(candidateAssignee, deps.availableWorkerAssignees);
+          if (typeof body.autoMode !== "boolean") {
+            throw new Error("autoMode must be a boolean.");
+          }
+
+          return json(
+            await deps.updateRuntimeConfig({
+              autoMode: body.autoMode,
+              defaultInternalWorkAssignee: candidateAssignee,
+            }),
+            200
+          );
         }
 
         if (request.method === "POST" && url.pathname === "/api/phases") {
@@ -985,7 +1104,8 @@ export function createWebApp(deps: WebAppDependencies): {
 
         if (request.method === "POST" && url.pathname === "/api/import/tasks-md") {
           const body = await readJson(request);
-          const assignee = asInternalAdapterAssignee(body.assignee) ?? deps.defaultInternalWorkAssignee;
+          const runtimeConfig = await deps.getRuntimeConfig();
+          const assignee = asInternalAdapterAssignee(body.assignee) ?? runtimeConfig.defaultInternalWorkAssignee;
           if (!assignee) {
             throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
           }
@@ -996,7 +1116,8 @@ export function createWebApp(deps: WebAppDependencies): {
 
         if (request.method === "POST" && url.pathname === "/api/internal-work/run") {
           const body = await readJson(request);
-          const assignee = asInternalAdapterAssignee(body.assignee) ?? deps.defaultInternalWorkAssignee;
+          const runtimeConfig = await deps.getRuntimeConfig();
+          const assignee = asInternalAdapterAssignee(body.assignee) ?? runtimeConfig.defaultInternalWorkAssignee;
           if (!assignee) {
             throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
           }

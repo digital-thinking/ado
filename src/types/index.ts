@@ -54,7 +54,14 @@ export const ExecutionLoopSettingsSchema = z.object({
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
 // 2. CLI Settings
+export const ProjectRecordSchema = z.object({
+  name: z.string().min(1),
+  rootDir: z.string().min(1),
+});
+export type ProjectRecord = z.infer<typeof ProjectRecordSchema>;
+
 export const CliSettingsSchema = z.object({
+  projects: z.array(ProjectRecordSchema).default([]),
   telegram: z.object({
     enabled: z.boolean().default(false),
     botToken: z.string().min(1).optional(),
@@ -111,6 +118,44 @@ export const CliSettingsSchema = z.object({
   }
 });
 export type CliSettings = z.infer<typeof CliSettingsSchema>;
+
+const CliAgentSettingsItemOverrideSchema = z.object({
+  enabled: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+
+const CliAgentSettingsOverrideSchema = z.object({
+  CODEX_CLI: CliAgentSettingsItemOverrideSchema.optional(),
+  CLAUDE_CLI: CliAgentSettingsItemOverrideSchema.optional(),
+  GEMINI_CLI: CliAgentSettingsItemOverrideSchema.optional(),
+  MOCK_CLI: CliAgentSettingsItemOverrideSchema.optional(),
+});
+
+const ExecutionLoopSettingsOverrideSchema = z.object({
+  autoMode: z.boolean().optional(),
+  countdownSeconds: z.number().int().min(1).max(3_600).optional(),
+  testerCommand: z.string().min(1).optional(),
+  testerArgs: z.array(z.string()).min(1).optional(),
+  testerTimeoutMs: z.number().int().positive().optional(),
+  ciEnabled: z.boolean().optional(),
+  ciBaseBranch: z.string().min(1).optional(),
+  validationMaxRetries: z.number().int().min(0).max(20).optional(),
+});
+
+export const CliSettingsOverrideSchema = z.object({
+  projects: z.array(ProjectRecordSchema).optional(),
+  telegram: z.object({
+    enabled: z.boolean().optional(),
+    botToken: z.string().min(1).optional(),
+    ownerId: z.number().int().positive().optional(),
+  }).optional(),
+  internalWork: z.object({
+    assignee: CLIAdapterIdSchema.optional(),
+  }).optional(),
+  executionLoop: ExecutionLoopSettingsOverrideSchema.optional(),
+  agents: CliAgentSettingsOverrideSchema.optional(),
+});
+export type CliSettingsOverride = z.infer<typeof CliSettingsOverrideSchema>;
 
 // 3. Worker Assignments
 export const WorkerAssigneeSchema = z.enum([

@@ -106,6 +106,38 @@ describe("web-control helpers", () => {
     }
   });
 
+  test("stopWebDaemon reports permission denied when pid cannot be signaled", async () => {
+    const runtimeFilePath = resolveWebRuntimeFilePath(sandboxDir);
+    await writeWebRuntimeRecord(runtimeFilePath, {
+      pid: 999999,
+      port: 8787,
+      url: "http://127.0.0.1:8787",
+      logFilePath: resolveWebLogFilePath(sandboxDir),
+      startedAt: new Date().toISOString(),
+    });
+
+    const originalKill = process.kill;
+    (process as unknown as { kill: typeof process.kill }).kill = ((pid: number, signal?: number | NodeJS.Signals) => {
+      if (pid === 999999) {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+
+      return originalKill(pid, signal as never);
+    }) as typeof process.kill;
+
+    try {
+      const result = await stopWebDaemon(sandboxDir);
+      expect(result.status).toBe("permission_denied");
+      if (result.status === "permission_denied") {
+        expect(result.record.pid).toBe(999999);
+      }
+    } finally {
+      (process as unknown as { kill: typeof process.kill }).kill = originalKill;
+    }
+  });
+
   test("buildWebDaemonSpawnArgs includes script path when it exists", async () => {
     const entryScriptPath = join(sandboxDir, "bin", "ixado.ts");
     await mkdir(dirname(entryScriptPath), { recursive: true });

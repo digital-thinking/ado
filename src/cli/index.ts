@@ -2,7 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
-import { resolve } from "node:path";
+import { resolve, basename } from "node:path";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
@@ -25,9 +25,11 @@ import { initializeCliLogging } from "./logging";
 import {
   getAvailableAgents,
   loadCliSettings,
+  resolveGlobalSettingsFilePath,
   resolveSettingsFilePath,
   resolveSoulFilePath,
   runOnboard,
+  saveCliSettings,
 } from "./settings";
 import {
   parseWebPort,
@@ -307,12 +309,34 @@ async function runDefaultCommand(): Promise<void> {
   console.info("Telegram command center not started.");
 }
 
+async function runInitCommand(): Promise<void> {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(globalSettingsFilePath);
+  const currentDir = process.cwd();
+  const projectName = basename(currentDir);
+
+  const existingProject = settings.projects.find((p) => p.rootDir === currentDir);
+  if (existingProject) {
+    console.info(`Project '${existingProject.name}' is already registered at ${currentDir}.`);
+    return;
+  }
+
+  settings.projects.push({
+    name: projectName,
+    rootDir: currentDir,
+  });
+
+  await saveCliSettings(globalSettingsFilePath, settings);
+  console.info(`Registered project '${projectName}' at ${currentDir} in global config.`);
+}
+
 function printHelp(): void {
   console.info("IxADO CLI");
   console.info("");
   console.info("Usage:");
   console.info("  ixado           Run IxADO with stored settings");
   console.info("  ixado status    Show project status and running agents");
+  console.info("  ixado init      Register current directory as project in global config");
   console.info("  ixado onboard   Configure local CLI settings");
   console.info(
     "  ixado task list  List tasks in active phase with numbers"
@@ -325,6 +349,9 @@ function printHelp(): void {
   console.info(
     "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO tasks in active phase sequentially"
   );
+  console.info("  ixado config                 Show execution mode and default coding CLI");
+  console.info("  ixado config mode <auto|manual>      Set default phase-loop mode");
+  console.info("  ixado config assignee <CLI_ADAPTER>  Set default coding CLI");
   console.info("  ixado web start [port]   Start local web control center in background");
   console.info("  ixado web stop           Stop local web control center");
   console.info("  ixado help      Show this help");
@@ -402,6 +429,13 @@ async function runWebStopCommand(): Promise<void> {
     return;
   }
 
+  if (result.status === "permission_denied") {
+    console.info(
+      `Web control center is running at ${result.record.url} (pid: ${result.record.pid}), but this user cannot stop it (permission denied).`
+    );
+    return;
+  }
+
   if (result.reason === "stale_runtime_file") {
     console.info("Web control center was not running. Removed stale runtime metadata.");
     return;
@@ -421,8 +455,10 @@ async function runWebServeCommand(args: string[]): Promise<void> {
   const runtime = await serveWebControlCenter({
     cwd: process.cwd(),
     stateFilePath,
+    settingsFilePath,
     projectName: "IxADO",
     defaultInternalWorkAssignee: settings.internalWork.assignee,
+    defaultAutoMode: settings.executionLoop.autoMode,
     agentSettings: settings.agents,
     port,
   });
@@ -1166,11 +1202,102 @@ async function runStatusCommand(): Promise<void> {
   }
 }
 
+function parseConfigMode(rawMode: string): boolean {
+  const normalized = rawMode.trim().toLowerCase();
+  if (normalized === "auto") {
+    return true;
+  }
+  if (normalized === "manual") {
+    return false;
+  }
+
+  throw new Error("Usage: ixado config mode <auto|manual>");
+}
+
+async function runConfigShowCommand(): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  console.info(`Settings: ${settingsFilePath}`);
+  console.info(`Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`);
+  console.info(`Default coding CLI: ${settings.internalWork.assignee}`);
+}
+
+async function runConfigModeCommand(args: string[]): Promise<void> {
+  const rawMode = args[2]?.trim() ?? "";
+  if (!rawMode) {
+    throw new Error("Usage: ixado config mode <auto|manual>");
+  }
+
+  const autoMode = parseConfigMode(rawMode);
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    executionLoop: {
+      ...settings.executionLoop,
+      autoMode,
+    },
+  });
+  console.info(`Execution loop mode set to ${saved.executionLoop.autoMode ? "AUTO" : "MANUAL"}.`);
+  console.info(`Settings saved to ${settingsFilePath}.`);
+}
+
+async function runConfigAssigneeCommand(args: string[]): Promise<void> {
+  const rawAssignee = args[2]?.trim() ?? "";
+  if (!rawAssignee) {
+    throw new Error("Usage: ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>");
+  }
+
+  const assignee = CLIAdapterIdSchema.parse(rawAssignee);
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  if (!settings.agents[assignee].enabled) {
+    throw new Error(`Agent '${assignee}' is disabled. Enable it before setting as default.`);
+  }
+
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    internalWork: {
+      ...settings.internalWork,
+      assignee,
+    },
+  });
+  console.info(`Default coding CLI set to ${saved.internalWork.assignee}.`);
+  console.info(`Settings saved to ${settingsFilePath}.`);
+}
+
+async function runConfigCommand(args: string[]): Promise<void> {
+  const subcommand = args[1];
+  if (!subcommand || subcommand === "show") {
+    await runConfigShowCommand();
+    return;
+  }
+
+  if (subcommand === "mode") {
+    await runConfigModeCommand(args);
+    return;
+  }
+
+  if (subcommand === "assignee") {
+    await runConfigAssigneeCommand(args);
+    return;
+  }
+
+  throw new Error(
+    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, or `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`."
+  );
+}
+
 async function runCli(args: string[]): Promise<void> {
   const command = args[0];
 
   if (!command) {
     await runDefaultCommand();
+    return;
+  }
+
+  if (command === "init") {
+    await runInitCommand();
     return;
   }
 
@@ -1196,6 +1323,11 @@ async function runCli(args: string[]): Promise<void> {
 
   if (command === "phase") {
     await runPhaseCommand(args);
+    return;
+  }
+
+  if (command === "config") {
+    await runConfigCommand(args);
     return;
   }
 

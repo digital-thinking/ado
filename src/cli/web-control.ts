@@ -30,6 +30,11 @@ type StopWebDaemonResult =
       status: "not_running";
       runtimeFilePath: string;
       reason: "missing_runtime_file" | "stale_runtime_file";
+    }
+  | {
+      status: "permission_denied";
+      runtimeFilePath: string;
+      record: WebRuntimeRecord;
     };
 
 export type StartWebDaemonInput = {
@@ -43,8 +48,10 @@ export type StartWebDaemonInput = {
 export type ServeWebControlCenterInput = {
   cwd: string;
   stateFilePath: string;
+  settingsFilePath: string;
   projectName: string;
   defaultInternalWorkAssignee: CLIAdapterId;
+  defaultAutoMode: boolean;
   agentSettings: CliAgentSettings;
   port?: number;
 };
@@ -311,12 +318,20 @@ export async function stopWebDaemon(cwd: string): Promise<StopWebDaemonResult> {
   try {
     process.kill(runtime.pid);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") {
       await rm(runtimeFilePath, { force: true });
       return {
         status: "not_running",
         runtimeFilePath,
         reason: "stale_runtime_file",
+      };
+    }
+    if (code === "EPERM") {
+      return {
+        status: "permission_denied",
+        runtimeFilePath,
+        record: runtime,
       };
     }
 
@@ -336,6 +351,9 @@ export async function stopWebDaemon(cwd: string): Promise<StopWebDaemonResult> {
 export async function serveWebControlCenter(
   input: ServeWebControlCenterInput
 ): Promise<WebRuntimeRecord> {
+  if (!input.settingsFilePath.trim()) {
+    throw new Error("settingsFilePath must not be empty.");
+  }
   const logFilePath = resolveWebLogFilePath(input.cwd);
   const runtime = await startWebControlCenter({
     ...input,

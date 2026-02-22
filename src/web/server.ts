@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
+import { createServer } from "node:net";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, CodexUsageTracker, createAdapter } from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
+import { loadCliSettings, saveCliSettings } from "../cli/settings";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLI_ADAPTER_IDS, type CLIAdapterId, type CliAgentSettings } from "../types";
@@ -15,9 +17,11 @@ import { UsageService } from "./usage-service";
 export type StartWebControlCenterInput = {
   cwd: string;
   stateFilePath: string;
+  settingsFilePath: string;
   projectName: string;
   port?: number;
   defaultInternalWorkAssignee: CLIAdapterId;
+  defaultAutoMode: boolean;
   agentSettings: CliAgentSettings;
   webLogFilePath: string;
 };
@@ -27,6 +31,40 @@ export type WebControlCenterRuntime = {
   url: string;
   stop: () => void;
 };
+
+const WEB_SERVER_HOST = "127.0.0.1";
+
+async function resolveWebPort(requestedPort: number | undefined): Promise<number> {
+  if (requestedPort !== 0) {
+    return requestedPort ?? 8787;
+  }
+
+  return new Promise<number>((resolvePort, rejectPort) => {
+    const probe = createServer();
+    probe.once("error", (error) => {
+      rejectPort(error);
+    });
+    probe.listen(0, WEB_SERVER_HOST, () => {
+      const address = probe.address();
+      if (!address || typeof address === "string") {
+        probe.close(() => {
+          rejectPort(new Error("Failed to resolve ephemeral web port."));
+        });
+        return;
+      }
+
+      const { port } = address;
+      probe.close((error) => {
+        if (error) {
+          rejectPort(error);
+          return;
+        }
+
+        resolvePort(port);
+      });
+    });
+  });
+}
 
 function isMissingCommandError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
@@ -51,6 +89,9 @@ export async function startWebControlCenter(
   if (!input.stateFilePath.trim()) {
     throw new Error("stateFilePath must not be empty.");
   }
+  if (!input.settingsFilePath.trim()) {
+    throw new Error("settingsFilePath must not be empty.");
+  }
   if (!input.projectName.trim()) {
     throw new Error("projectName must not be empty.");
   }
@@ -61,6 +102,10 @@ export async function startWebControlCenter(
   }
 
   const processManager = new ProcessManager();
+  let runtimeConfig = {
+    defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
+    autoMode: input.defaultAutoMode,
+  };
   const agents = new AgentSupervisor({
     registryFilePath: resolveAgentRegistryFilePath(input.cwd),
   });
@@ -165,22 +210,57 @@ export async function startWebControlCenter(
     usage,
     defaultAgentCwd: input.cwd,
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
+    defaultAutoMode: input.defaultAutoMode,
     availableWorkerAssignees: CLI_ADAPTER_IDS.filter(
       (adapterId) => input.agentSettings[adapterId].enabled
     ),
+    getRuntimeConfig: async () => runtimeConfig,
+    updateRuntimeConfig: async (next) => {
+      const currentSettings = await loadCliSettings(input.settingsFilePath);
+      const assignee = next.defaultInternalWorkAssignee ?? currentSettings.internalWork.assignee;
+      if (!input.agentSettings[assignee].enabled) {
+        throw new Error(
+          `defaultInternalWorkAssignee '${assignee}' must be enabled in agent settings.`
+        );
+      }
+      const autoMode =
+        typeof next.autoMode === "boolean"
+          ? next.autoMode
+          : currentSettings.executionLoop.autoMode;
+
+      const saved = await saveCliSettings(input.settingsFilePath, {
+        ...currentSettings,
+        internalWork: {
+          ...currentSettings.internalWork,
+          assignee,
+        },
+        executionLoop: {
+          ...currentSettings.executionLoop,
+          autoMode,
+        },
+      });
+
+      runtimeConfig = {
+        defaultInternalWorkAssignee: saved.internalWork.assignee,
+        autoMode: saved.executionLoop.autoMode,
+      };
+      return runtimeConfig;
+    },
     webLogFilePath: input.webLogFilePath,
     cliLogFilePath,
   });
 
+  const requestedPort = await resolveWebPort(input.port);
   const server = Bun.serve({
-    port: input.port ?? 8787,
+    port: requestedPort,
+    hostname: WEB_SERVER_HOST,
     fetch: app.fetch,
   });
-  const resolvedPort = server.port ?? input.port ?? 8787;
+  const resolvedPort = server.port ?? requestedPort;
 
   return {
     port: resolvedPort,
-    url: `http://localhost:${resolvedPort}`,
+    url: `http://${WEB_SERVER_HOST}:${resolvedPort}`,
     stop: () => {
       server.stop(true);
     },
