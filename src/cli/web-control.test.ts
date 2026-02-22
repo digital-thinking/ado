@@ -128,4 +128,12 @@ describe("web-control helpers", () => {
       "8787",
     ]);
   });
+
+  test("buildWebDaemonSpawnArgs omits virtual Bun entry path", () => {
+    expect(buildWebDaemonSpawnArgs("/$bunfs/root/ixado", 8787)).toEqual([
+      "web",
+      "serve",
+      "8787",
+    ]);
+  });
 });

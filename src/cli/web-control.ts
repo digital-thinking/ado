@@ -272,8 +272,9 @@ export function buildWebDaemonSpawnArgs(entryScriptPath: string, port?: number):
   const spawnArgs: string[] = [];
   const trimmedEntryScriptPath = entryScriptPath.trim();
   if (trimmedEntryScriptPath) {
+    const isVirtualBunFsPath = trimmedEntryScriptPath.startsWith("/$bunfs/");
     const resolvedEntryScriptPath = resolve(trimmedEntryScriptPath);
-    if (existsSync(resolvedEntryScriptPath)) {
+    if (!isVirtualBunFsPath && existsSync(resolvedEntryScriptPath)) {
       spawnArgs.push(resolvedEntryScriptPath);
     }
   }
