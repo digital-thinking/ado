@@ -444,6 +444,7 @@ function printHelp(): void {
   console.info("  ixado config                 Show execution mode and default coding CLI");
   console.info("  ixado config mode <auto|manual>      Set default phase-loop mode");
   console.info("  ixado config assignee <CLI_ADAPTER>  Set default coding CLI");
+  console.info("  ixado config usage <on|off>          Enable/disable codexbar usage telemetry");
   console.info("  ixado web start [port]   Start local web control center in background");
   console.info("  ixado web stop           Stop local web control center");
   console.info("  ixado help      Show this help");
@@ -1317,12 +1318,25 @@ function parseConfigMode(rawMode: string): boolean {
   throw new Error("Usage: ixado config mode <auto|manual>");
 }
 
+function parseConfigToggle(rawValue: string, usage: string): boolean {
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === "on") {
+    return true;
+  }
+  if (normalized === "off") {
+    return false;
+  }
+
+  throw new Error(usage);
+}
+
 async function runConfigShowCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   console.info(`Settings: ${settingsFilePath}`);
   console.info(`Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`);
   console.info(`Default coding CLI: ${settings.internalWork.assignee}`);
+  console.info(`Codexbar usage telemetry: ${settings.usage.codexbarEnabled ? "ON" : "OFF"}`);
 }
 
 async function runConfigModeCommand(args: string[]): Promise<void> {
@@ -1369,6 +1383,29 @@ async function runConfigAssigneeCommand(args: string[]): Promise<void> {
   console.info(`Settings saved to ${settingsFilePath}.`);
 }
 
+async function runConfigUsageCommand(args: string[]): Promise<void> {
+  const rawValue = args[2]?.trim() ?? "";
+  if (!rawValue) {
+    throw new Error("Usage: ixado config usage <on|off>");
+  }
+
+  const codexbarEnabled = parseConfigToggle(rawValue, "Usage: ixado config usage <on|off>");
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    usage: {
+      ...settings.usage,
+      codexbarEnabled,
+    },
+  });
+
+  console.info(
+    `Codexbar usage telemetry set to ${saved.usage.codexbarEnabled ? "ON" : "OFF"}.`
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+}
+
 async function runConfigCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
   if (!subcommand || subcommand === "show") {
@@ -1386,8 +1423,13 @@ async function runConfigCommand(args: string[]): Promise<void> {
     return;
   }
 
+  if (subcommand === "usage") {
+    await runConfigUsageCommand(args);
+    return;
+  }
+
   throw new Error(
-    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, or `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`."
+    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`, or `ixado config usage <on|off>`."
   );
 }
 

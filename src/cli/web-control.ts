@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 import { startWebControlCenter } from "../web";
 import type { CLIAdapterId, CliAgentSettings } from "../types";
 
-const DEFAULT_WEB_RUNTIME_FILE = ".ixado/web-runtime.json";
-const DEFAULT_WEB_LOG_FILE = ".ixado/web.log";
 const WEB_READY_TIMEOUT_MS = 10_000;
 const WEB_STOP_TIMEOUT_MS = 10_000;
 const WEB_POLL_INTERVAL_MS = 100;
@@ -100,22 +99,32 @@ function parseWebRuntimeRecord(raw: unknown, runtimeFilePath: string): WebRuntim
   };
 }
 
-export function resolveWebRuntimeFilePath(cwd: string): string {
+export function resolveWebRuntimeFilePath(_cwd: string): string {
   const configuredRuntimePath = process.env.IXADO_WEB_RUNTIME_FILE?.trim();
   if (configuredRuntimePath) {
     return resolve(configuredRuntimePath);
   }
 
-  return resolve(cwd, DEFAULT_WEB_RUNTIME_FILE);
+  return resolve(resolveGlobalIxadoDir(), "web-runtime.json");
 }
 
-export function resolveWebLogFilePath(cwd: string): string {
+export function resolveWebLogFilePath(_cwd: string): string {
   const configuredLogPath = process.env.IXADO_WEB_LOG_FILE?.trim();
   if (configuredLogPath) {
     return resolve(configuredLogPath);
   }
 
-  return resolve(cwd, DEFAULT_WEB_LOG_FILE);
+  return resolve(resolveGlobalIxadoDir(), "web.log");
+}
+
+function resolveGlobalIxadoDir(): string {
+  const configuredHome = process.env.HOME?.trim();
+  const homeDirectory = configuredHome || homedir().trim();
+  if (!homeDirectory) {
+    throw new Error("Could not resolve home directory for global web runtime path.");
+  }
+
+  return resolve(homeDirectory, ".ixado");
 }
 
 export function parseWebPort(raw: string | undefined): number | undefined {

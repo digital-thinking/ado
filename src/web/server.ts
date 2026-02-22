@@ -102,6 +102,7 @@ export async function startWebControlCenter(
   }
 
   const processManager = new ProcessManager();
+  const settings = await loadCliSettings(input.settingsFilePath);
   let runtimeConfig = {
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     autoMode: input.defaultAutoMode,
@@ -202,7 +203,9 @@ export async function startWebControlCenter(
   );
   await control.ensureInitialized(input.projectName, input.cwd);
 
-  const usage = new UsageService(new CodexUsageTracker(processManager), input.cwd);
+  const usage = new UsageService(new CodexUsageTracker(processManager), input.cwd, {
+    codexbarEnabled: settings.usage.codexbarEnabled,
+  });
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
   const app = createWebApp({
     control,

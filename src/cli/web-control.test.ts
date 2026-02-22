@@ -19,9 +19,11 @@ describe("web-control helpers", () => {
   let sandboxDir: string;
   const originalRuntimeFileEnv = process.env.IXADO_WEB_RUNTIME_FILE;
   const originalLogFileEnv = process.env.IXADO_WEB_LOG_FILE;
+  const originalHome = process.env.HOME;
 
   beforeEach(async () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-web-control-"));
+    process.env.HOME = sandboxDir;
     delete process.env.IXADO_WEB_RUNTIME_FILE;
     delete process.env.IXADO_WEB_LOG_FILE;
   });
@@ -36,6 +38,11 @@ describe("web-control helpers", () => {
       delete process.env.IXADO_WEB_LOG_FILE;
     } else {
       process.env.IXADO_WEB_LOG_FILE = originalLogFileEnv;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
     }
 
     await rm(sandboxDir, { recursive: true, force: true });
@@ -54,6 +61,7 @@ describe("web-control helpers", () => {
     const defaultPath = resolveWebRuntimeFilePath(sandboxDir);
     expect(defaultPath).toContain(".ixado");
     expect(defaultPath).toContain("web-runtime.json");
+    expect(defaultPath).toContain(sandboxDir);
 
     const configuredPath = join(sandboxDir, "custom", "runtime.json");
     process.env.IXADO_WEB_RUNTIME_FILE = configuredPath;
@@ -65,6 +73,7 @@ describe("web-control helpers", () => {
     const defaultPath = resolveWebLogFilePath(sandboxDir);
     expect(defaultPath).toContain(".ixado");
     expect(defaultPath).toContain("web.log");
+    expect(defaultPath).toContain(sandboxDir);
 
     const configuredPath = join(sandboxDir, "custom", "web.log");
     process.env.IXADO_WEB_LOG_FILE = configuredPath;
@@ -77,7 +86,7 @@ describe("web-control helpers", () => {
       pid: 12345,
       port: 8787,
       url: "http://localhost:8787",
-      logFilePath: join(sandboxDir, ".ixado", "web.log"),
+      logFilePath: resolveWebLogFilePath(sandboxDir),
       startedAt: new Date().toISOString(),
     };
 

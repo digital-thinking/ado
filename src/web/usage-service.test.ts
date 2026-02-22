@@ -38,4 +38,22 @@ describe("UsageService", () => {
     expect(result.available).toBe(false);
     expect(result.message).toContain("codexbar not installed");
   });
+
+  test("returns unavailable when codexbar usage telemetry is disabled", async () => {
+    const service = new UsageService(
+      {
+        collect: async () => {
+          throw new Error("tracker should not be called when disabled");
+        },
+      },
+      "C:/repo",
+      {
+        codexbarEnabled: false,
+      }
+    );
+
+    const result = await service.getLatest();
+    expect(result.available).toBe(false);
+    expect(result.message).toBe("codexbar usage telemetry is disabled by config.");
+  });
 });

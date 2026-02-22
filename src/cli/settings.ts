@@ -35,6 +35,9 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     ciBaseBranch: "main",
     validationMaxRetries: 3,
   },
+  usage: {
+    codexbarEnabled: true,
+  },
   agents: {
     CODEX_CLI: {
       enabled: true,
@@ -125,6 +128,10 @@ function mergeCliSettings(base: CliSettings, override: CliSettingsOverride): Cli
       ...base.executionLoop,
       ...override.executionLoop,
     },
+    usage: {
+      ...base.usage,
+      ...override.usage,
+    },
     agents: {
       CODEX_CLI: {
         ...base.agents.CODEX_CLI,
@@ -195,18 +202,21 @@ type TelegramOnboardChoice = {
   enabled: boolean;
 };
 
-function parseTelegramOnboardChoice(rawAnswer: string): TelegramOnboardChoice | null {
+function parseTelegramOnboardChoice(
+  rawAnswer: string,
+  currentEnabled: boolean
+): TelegramOnboardChoice | null {
   const normalized = rawAnswer.trim().toLowerCase();
 
-  if (normalized === ONBOARD_SKIP_KEY) {
-    return { skip: true, enabled: false };
+  if (normalized === "" || normalized === ONBOARD_SKIP_KEY) {
+    return { skip: true, enabled: currentEnabled };
   }
 
   if (normalized === "y" || normalized === "yes") {
     return { skip: false, enabled: true };
   }
 
-  if (normalized === "" || normalized === "n" || normalized === "no") {
+  if (normalized === "n" || normalized === "no") {
     return { skip: false, enabled: false };
   }
 
@@ -226,7 +236,8 @@ function parseOwnerId(rawOwnerId: string): number | null {
 }
 
 function isSkipAnswer(rawAnswer: string): boolean {
-  return rawAnswer.trim().toLowerCase() === ONBOARD_SKIP_KEY;
+  const normalized = rawAnswer.trim().toLowerCase();
+  return normalized === "" || normalized === ONBOARD_SKIP_KEY;
 }
 
 async function loadSoulPersonality(soulFilePath: string): Promise<string | null> {
@@ -332,7 +343,7 @@ export async function runOnboard(
   await output("Setup: Internal work adapter is used by the web UI for AI-assisted transformations.");
   await output("Setup: configure which agents are available and set per-agent timeout (milliseconds).");
   await output("Setup: make sure the selected internal-work CLI command is installed and available in PATH.");
-  await output("Setup: press 'S' to keep the current value for a field.");
+  await output("Setup: press Enter to keep the current value for a field (S also works).");
 
   const configuredAgents = {
     CODEX_CLI: { ...existingSettings.agents.CODEX_CLI },
@@ -346,7 +357,7 @@ export async function runOnboard(
       let enabledChoice: { skip: boolean; enabled: boolean } | null = null;
       while (!enabledChoice) {
         const answer = await prompt(
-          `Enable ${agentId}? [y/n/S=keep ${configuredAgents[agentId].enabled ? "enabled" : "disabled"}]: `
+          `Enable ${agentId}? [y/n/Enter=keep ${configuredAgents[agentId].enabled ? "enabled" : "disabled"}]: `
         );
         enabledChoice = parseEnabledChoice(answer, configuredAgents[agentId].enabled);
       }
@@ -359,7 +370,7 @@ export async function runOnboard(
       let timeoutMs: number | null = null;
       while (timeoutMs === null) {
         const answer = await prompt(
-          `Timeout for ${agentId} in ms [S=keep ${configuredAgents[agentId].timeoutMs}]: `
+          `Timeout for ${agentId} in ms [Enter=keep ${configuredAgents[agentId].timeoutMs}]: `
         );
         if (isSkipAnswer(answer)) {
           timeoutMs = configuredAgents[agentId].timeoutMs;
@@ -382,7 +393,7 @@ export async function runOnboard(
   while (internalWorkAssignee === null) {
     const availableAgents = CLI_ADAPTER_IDS.filter((agentId) => configuredAgents[agentId].enabled);
     const answer = await prompt(
-      `Select internal-work CLI [${availableAgents.map((agentId, index) => `${index + 1}=${agentId}`).join(", ")}, S=keep ${existingSettings.internalWork.assignee}]: `
+      `Select internal-work CLI [${availableAgents.map((agentId, index) => `${index + 1}=${agentId}`).join(", ")}, Enter=keep ${existingSettings.internalWork.assignee}]: `
     );
     if (isSkipAnswer(answer)) {
       if (!configuredAgents[existingSettings.internalWork.assignee].enabled) {
@@ -400,7 +411,7 @@ export async function runOnboard(
 
   let personality: string | null = null;
   while (!personality) {
-    const answer = await prompt("Short personality description for IxADO [S=keep current]: ");
+    const answer = await prompt("Short personality description for IxADO [Enter=keep current]: ");
     if (isSkipAnswer(answer)) {
       if (!existingSoulPersonality) {
         await output("No existing SOUL profile found. Enter a new personality description.");
@@ -423,9 +434,9 @@ export async function runOnboard(
 
   while (true) {
     const answer = await prompt(
-      `Enable Telegram integration? [y/N/S=keep ${existingSettings.telegram.enabled ? "enabled" : "disabled"}]: `
+      `Enable Telegram integration? [y/n/Enter=keep ${existingSettings.telegram.enabled ? "enabled" : "disabled"}]: `
     );
-    const choice = parseTelegramOnboardChoice(answer);
+    const choice = parseTelegramOnboardChoice(answer, existingSettings.telegram.enabled);
 
     if (!choice) {
       continue;
@@ -442,6 +453,7 @@ export async function runOnboard(
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        usage: existingSettings.usage,
         agents: configuredAgents,
       };
 
@@ -457,6 +469,7 @@ export async function runOnboard(
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        usage: existingSettings.usage,
         agents: configuredAgents,
       };
 
@@ -466,7 +479,7 @@ export async function runOnboard(
     await output("Enter your Telegram bot token from BotFather.");
     let botToken = "";
     while (!botToken) {
-      const tokenAnswer = await prompt("Telegram bot token [S=keep current]: ");
+      const tokenAnswer = await prompt("Telegram bot token [Enter=keep current]: ");
       if (isSkipAnswer(tokenAnswer)) {
         if (existingSettings.telegram.botToken?.trim()) {
           botToken = existingSettings.telegram.botToken.trim();
@@ -483,7 +496,7 @@ export async function runOnboard(
     await output("Enter your Telegram owner user ID (only this account can use bot commands).");
     let ownerId: number | null = null;
     while (ownerId === null) {
-      const ownerAnswer = await prompt("Telegram owner ID [S=keep current]: ");
+      const ownerAnswer = await prompt("Telegram owner ID [Enter=keep current]: ");
       if (isSkipAnswer(ownerAnswer)) {
         if (existingSettings.telegram.ownerId !== undefined) {
           ownerId = existingSettings.telegram.ownerId;
@@ -507,6 +520,7 @@ export async function runOnboard(
         assignee: internalWorkAssignee,
       },
       executionLoop: existingSettings.executionLoop,
+      usage: existingSettings.usage,
       agents: configuredAgents,
     };
 

@@ -13,13 +13,22 @@ export type UsageResponse = {
 export class UsageService {
   private readonly tracker: UsageTrackerLike;
   private readonly cwd: string;
+  private readonly codexbarEnabled: boolean;
 
-  constructor(tracker: UsageTrackerLike, cwd: string) {
+  constructor(tracker: UsageTrackerLike, cwd: string, options: { codexbarEnabled?: boolean } = {}) {
     this.tracker = tracker;
     this.cwd = cwd;
+    this.codexbarEnabled = options.codexbarEnabled ?? true;
   }
 
   async getLatest(): Promise<UsageResponse> {
+    if (!this.codexbarEnabled) {
+      return {
+        available: false,
+        message: "codexbar usage telemetry is disabled by config.",
+      };
+    }
+
     try {
       const snapshot = await this.tracker.collect(this.cwd);
       return {

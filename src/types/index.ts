@@ -83,6 +83,11 @@ export const CliSettingsSchema = z.object({
     ciBaseBranch: "main",
     validationMaxRetries: 3,
   }),
+  usage: z.object({
+    codexbarEnabled: z.boolean().default(true),
+  }).default({
+    codexbarEnabled: true,
+  }),
   agents: CliAgentSettingsSchema.default({
     CODEX_CLI: {
       enabled: true,
@@ -155,6 +160,9 @@ export const CliSettingsOverrideSchema = z.object({
     assignee: CLIAdapterIdSchema.optional(),
   }).optional(),
   executionLoop: ExecutionLoopSettingsOverrideSchema.optional(),
+  usage: z.object({
+    codexbarEnabled: z.boolean().optional(),
+  }).optional(),
   agents: CliAgentSettingsOverrideSchema.optional(),
 });
 export type CliSettingsOverride = z.infer<typeof CliSettingsOverrideSchema>;

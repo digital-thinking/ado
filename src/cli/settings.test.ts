@@ -29,6 +29,9 @@ const DEFAULT_LOOP_SETTINGS = {
   ciBaseBranch: "main",
   validationMaxRetries: 3,
 };
+const DEFAULT_USAGE_SETTINGS = {
+  codexbarEnabled: true,
+};
 
 describe("cli settings", () => {
   let sandboxDir: string;
@@ -77,6 +80,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
 
@@ -92,6 +96,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
   });
@@ -161,6 +166,28 @@ describe("cli settings", () => {
     expect(settings.agents.CODEX_CLI.timeoutMs).toBe(7000);
   });
 
+  test("supports overriding codexbar usage telemetry from global and local config", async () => {
+    await Bun.write(
+      globalSettingsFilePath,
+      JSON.stringify({
+        usage: {
+          codexbarEnabled: false,
+        },
+      })
+    );
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        usage: {
+          codexbarEnabled: true,
+        },
+      })
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.usage.codexbarEnabled).toBe(true);
+  });
+
   test("fails for invalid settings json", async () => {
     await Bun.write(settingsFilePath, "{invalid");
     await expect(loadCliSettings(settingsFilePath)).rejects.toThrow(
@@ -215,6 +242,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 600000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 600000 },
@@ -226,7 +254,7 @@ describe("cli settings", () => {
     expect(output[1]).toContain("Setup: SOUL.md stores IxADO");
     expect(output.some((line) => line.includes("Setup: Internal work adapter"))).toBe(true);
     expect(output.some((line) => line.includes("installed and available in PATH"))).toBe(true);
-    expect(output.some((line) => line.includes("press 'S' to keep"))).toBe(true);
+    expect(output.some((line) => line.includes("press Enter to keep"))).toBe(true);
     await expect(loadCliSettings(settingsFilePath)).resolves.toEqual(settings);
     const soul = await Bun.file(soulFilePath).text();
     expect(soul).toContain("Personality: Concise and pragmatic");
@@ -262,6 +290,7 @@ describe("cli settings", () => {
       telegram: { enabled: false },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 700000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 700000 },
@@ -310,6 +339,7 @@ describe("cli settings", () => {
         assignee: "MOCK_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 800000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 800000 },
@@ -319,7 +349,7 @@ describe("cli settings", () => {
     });
   });
 
-  test("onboard supports skip key to keep existing values", async () => {
+  test("onboard supports pressing enter to keep existing values", async () => {
     await saveCliSettings(settingsFilePath, {
       telegram: {
         enabled: true,
@@ -330,22 +360,23 @@ describe("cli settings", () => {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
     await saveSoulFile(soulFilePath, "Existing soul");
 
     const answers = [
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
     ];
     let idx = 0;
 
@@ -367,6 +398,7 @@ describe("cli settings", () => {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
 
@@ -374,23 +406,23 @@ describe("cli settings", () => {
     expect(soul).toContain("Personality: Existing soul");
   });
 
-  test("onboard skip on missing existing value asks again", async () => {
+  test("onboard pressing enter on missing existing value asks again", async () => {
     const answers = [
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
-      "s",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
       "New personality",
       "y",
-      "s",
+      "",
       "token",
-      "s",
+      "",
       "123",
     ];
     let idx = 0;
@@ -416,6 +448,7 @@ describe("cli settings", () => {
         assignee: "CODEX_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
     expect(output.some((line) => line.includes("No existing SOUL profile found"))).toBe(true);

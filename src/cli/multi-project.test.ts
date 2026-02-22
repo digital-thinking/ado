@@ -28,6 +28,9 @@ const DEFAULT_LOOP_SETTINGS = {
   ciBaseBranch: "main",
   validationMaxRetries: 3,
 };
+const DEFAULT_USAGE_SETTINGS = {
+  codexbarEnabled: true,
+};
 
 function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
   return {
@@ -35,6 +38,7 @@ function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
     telegram: { enabled: false },
     internalWork: { assignee: "CODEX_CLI" },
     executionLoop: DEFAULT_LOOP_SETTINGS,
+    usage: DEFAULT_USAGE_SETTINGS,
     agents: DEFAULT_AGENT_SETTINGS,
     ...overrides,
   };
