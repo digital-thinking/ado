@@ -9,10 +9,12 @@ import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
   PhaseSchema,
+  PhaseStatusSchema,
   TaskSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
   type Phase,
+  type PhaseStatus,
   type ProjectState,
   type Task,
   type WorkerAssignee,
@@ -99,6 +101,12 @@ export type SetActivePhaseInput = {
 export type SetPhasePrUrlInput = {
   phaseId: string;
   prUrl: string;
+};
+
+export type SetPhaseStatusInput = {
+  phaseId: string;
+  status: PhaseStatus;
+  ciStatusContext?: string;
 };
 
 export type StartActiveTaskInput = {
@@ -444,6 +452,38 @@ export class ControlCenterService {
     nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
       prUrl,
+    });
+
+    return this.state.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
+  async setPhaseStatus(input: SetPhaseStatusInput): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const status = PhaseStatusSchema.parse(input.status);
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+
+    const state = await this.state.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const normalizedContext = input.ciStatusContext?.trim();
+    const ciStatusContext =
+      status === "CI_FAILED"
+        ? normalizedContext || phase.ciStatusContext
+        : undefined;
+    const nextPhases = [...state.phases];
+    nextPhases[phaseIndex] = PhaseSchema.parse({
+      ...phase,
+      status,
+      ciStatusContext,
     });
 
     return this.state.writeProjectState({

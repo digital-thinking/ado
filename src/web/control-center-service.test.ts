@@ -348,6 +348,29 @@ describe("ControlCenterService", () => {
     expect(updated.phases[0].prUrl).toBe("https://github.com/org/repo/pull/999");
   });
 
+  test("updates phase status and CI context", async () => {
+    const created = await service.createPhase({
+      name: "Phase Status",
+      branchName: "phase-status",
+    });
+    const phaseId = created.phases[0].id;
+
+    const failed = await service.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      ciStatusContext: "Validation loop exceeded retries.",
+    });
+    expect(failed.phases[0].status).toBe("CI_FAILED");
+    expect(failed.phases[0].ciStatusContext).toBe("Validation loop exceeded retries.");
+
+    const recovered = await service.setPhaseStatus({
+      phaseId,
+      status: "READY_FOR_REVIEW",
+    });
+    expect(recovered.phases[0].status).toBe("READY_FOR_REVIEW");
+    expect(recovered.phases[0].ciStatusContext).toBeUndefined();
+  });
+
   test("lists active phase tasks with 1-based numbers", async () => {
     const created = await service.createPhase({
       name: "Phase Numbers",

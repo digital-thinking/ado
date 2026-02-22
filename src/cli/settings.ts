@@ -23,6 +23,7 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     testerTimeoutMs: 600_000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    validationMaxRetries: 3,
   },
   agents: {
     CODEX_CLI: {

@@ -47,6 +47,7 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);
     expect(parsed.executionLoop.ciEnabled).toBe(false);
     expect(parsed.executionLoop.ciBaseBranch).toBe("main");
+    expect(parsed.executionLoop.validationMaxRetries).toBe(3);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
   });

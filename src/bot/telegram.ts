@@ -29,6 +29,7 @@ type TelegramCtx = {
 export type TelegramRuntime = {
   start: () => Promise<void>;
   stop: () => void;
+  notifyOwner: (text: string) => Promise<void>;
 };
 
 function formatStatus(
@@ -318,6 +319,19 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
     },
     stop: () => {
       bot.stop();
+    },
+    notifyOwner: async (text) => {
+      const message = text.trim();
+      if (!message) {
+        return;
+      }
+
+      try {
+        await bot.api.sendMessage(input.ownerId, message);
+      } catch (error) {
+        const err = error instanceof Error ? error.message : String(error);
+        console.warn(`Unable to send Telegram loop notification: ${err}`);
+      }
     },
   };
 }

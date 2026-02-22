@@ -49,6 +49,7 @@ export const ExecutionLoopSettingsSchema = z.object({
   testerTimeoutMs: z.number().int().positive().default(600_000),
   ciEnabled: z.boolean().default(false),
   ciBaseBranch: z.string().min(1).default("main"),
+  validationMaxRetries: z.number().int().min(0).max(20).default(3),
 });
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
@@ -72,6 +73,7 @@ export const CliSettingsSchema = z.object({
     testerTimeoutMs: 600_000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    validationMaxRetries: 3,
   }),
   agents: CliAgentSettingsSchema.default({
     CODEX_CLI: {

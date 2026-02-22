@@ -47,10 +47,10 @@ Status markers:
 - [x] `P5-003` Implement Session Persistence: Reuse Coder agent context/process across sequential tasks; reset on failure. Deps: `P5-002`.
 - [x] `P5-004` Implement "Tester" workflow: runs after tasks, executes tests, creates fix tasks on failure. Deps: `P5-003`.
 - [x] `P5-005` Implement Optional CI Integration: Programmatic PR creation via `gh` CLI. Deps: `P5-004`.
-- [ ] `P5-006` Implement CI Validation Loop: `Reviewer` (comments) and `Fixer` (addresses comments) with `max_retries` safety valve. Deps: `P5-005`.
-- [ ] `P5-007` Integrate loops into State Engine: Phase Start -> Branch -> Task Loop -> Tester -> PR -> Validation. Deps: `P5-006`.
-- [ ] `P5-008` Add Telegram notifications for loop events (Task Done, Test Fail, PR Created, Review). Deps: `P5-007`.
-- [ ] `P5-009` Add integration tests for Auto/Manual modes and Tester/CI loops. Deps: `P5-008`.
+- [x] `P5-006` Implement CI Validation Loop: `Reviewer` (comments) and `Fixer` (addresses comments) with `max_retries` safety valve. Deps: `P5-005`.
+- [x] `P5-007` Integrate loops into State Engine: Phase Start -> Branch -> Task Loop -> Tester -> PR -> Validation. Deps: `P5-006`.
+- [x] `P5-008` Add Telegram notifications for loop events (Task Done, Test Fail, PR Created, Review). Deps: `P5-007`.
+- [x] `P5-009` Add integration tests for Auto/Manual modes and Tester/CI loops. Deps: `P5-008`.
 - [ ] `P5-010` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-009`.
 
 ## Phase 6: Web Interface

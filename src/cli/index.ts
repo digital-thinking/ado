@@ -9,11 +9,17 @@ import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
 import { runCiIntegration } from "../engine/ci-integration";
+import { runCiValidationLoop } from "../engine/ci-validation-loop";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
+import {
+  waitForAutoAdvance as waitForAutoAdvanceGate,
+  waitForManualAdvance as waitForManualAdvanceGate,
+} from "../engine/phase-loop-wait";
 import { runTesterWorkflow } from "../engine/tester-workflow";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
+import { GitManager } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { initializeCliLogging } from "./logging";
 import {
@@ -494,44 +500,28 @@ async function waitForManualAdvance(
   loopControl: PhaseLoopControl,
   nextTaskLabel: string
 ): Promise<"NEXT" | "STOP"> {
-  if (loopControl.isStopRequested()) {
-    return "STOP";
-  }
-
-  console.info(
-    `Manual mode: press Enter to start ${nextTaskLabel}, type 'stop' to halt (Telegram: /next or /stop).`
-  );
-  const waitHandle = loopControl.waitForSignal();
   const abortController = new AbortController();
+  return waitForManualAdvanceGate({
+    loopControl,
+    nextTaskLabel,
+    askLocal: async () =>
+      rl
+        .question("> ", { signal: abortController.signal })
+        .then((answer) => (answer.trim().toLowerCase() === "stop" ? "STOP" : "NEXT"))
+        .catch((error) => {
+          if ((error as { name?: string }).name === "AbortError") {
+            return new Promise<"NEXT" | "STOP">(() => {});
+          }
 
-  const localPromise = rl
-    .question("> ", { signal: abortController.signal })
-    .then((answer) => (answer.trim().toLowerCase() === "stop" ? "STOP" : "NEXT"))
-    .catch((error) => {
-      if ((error as { name?: string }).name === "AbortError") {
-        return new Promise<"NEXT" | "STOP">(() => {});
-      }
-
-      throw error;
-    });
-
-  const remotePromise = waitHandle.promise.then((signal) => ({
-    source: "remote" as const,
-    signal,
-  }));
-  const localDecisionPromise = localPromise.then((signal) => ({
-    source: "local" as const,
-    signal,
-  }));
-
-  const outcome = await Promise.race([remotePromise, localDecisionPromise]);
-  if (outcome.source === "remote") {
-    abortController.abort();
-  } else {
-    loopControl.cancelWait(waitHandle.id);
-  }
-
-  return outcome.signal;
+          throw error;
+        }),
+    cancelLocal: () => {
+      abortController.abort();
+    },
+    onInfo: (line) => {
+      console.info(line);
+    },
+  });
 }
 
 async function waitForAutoAdvance(
@@ -539,39 +529,14 @@ async function waitForAutoAdvance(
   countdownSeconds: number,
   nextTaskLabel: string
 ): Promise<"NEXT" | "STOP"> {
-  if (loopControl.isStopRequested()) {
-    return "STOP";
-  }
-
-  console.info(
-    `Auto mode: starting ${nextTaskLabel} in ${countdownSeconds}s (Telegram: /next to start now, /stop to halt).`
-  );
-  for (let remaining = countdownSeconds; remaining > 0; remaining -= 1) {
-    if (loopControl.isStopRequested()) {
-      return "STOP";
-    }
-
-    const waitHandle = loopControl.waitForSignal();
-    const tickPromise = new Promise<"TICK">((resolve) => {
-      setTimeout(() => resolve("TICK"), 1_000);
-    });
-    const outcome = await Promise.race([waitHandle.promise, tickPromise]);
-
-    if (outcome === "STOP") {
-      return "STOP";
-    }
-    if (outcome === "NEXT") {
-      return "NEXT";
-    }
-
-    loopControl.cancelWait(waitHandle.id);
-    const nextRemaining = remaining - 1;
-    if (nextRemaining > 0) {
-      console.info(`Auto mode: ${nextRemaining}s remaining before ${nextTaskLabel}.`);
-    }
-  }
-
-  return "NEXT";
+  return waitForAutoAdvanceGate({
+    loopControl,
+    countdownSeconds,
+    nextTaskLabel,
+    onInfo: (line) => {
+      console.info(line);
+    },
+  });
 }
 
 async function resolveActivePhaseTaskForNumber(
@@ -808,6 +773,8 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   const loopControl = new PhaseLoopControl();
   const activeAssignee = settings.internalWork.assignee;
   const testerRunner = new ProcessManager();
+  const git = new GitManager(testerRunner);
+  const cwd = process.cwd();
   const telegram = resolveTelegramConfig(settings.telegram);
 
   let runtime: ReturnType<typeof createTelegramRuntime> | undefined;
@@ -841,6 +808,14 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
     console.info("Telegram loop controls enabled: /next and /stop.");
   }
 
+  const notifyLoopEvent = async (message: string): Promise<void> => {
+    if (!runtime) {
+      return;
+    }
+
+    await runtime.notifyOwner(message);
+  };
+
   const rl = createInterface({
     input: stdin,
     output: stdout,
@@ -851,6 +826,46 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   );
 
   try {
+    const startingState = await control.getState();
+    const startingPhase = resolveActivePhaseFromState(startingState);
+    await control.setPhaseStatus({
+      phaseId: startingPhase.id,
+      status: "BRANCHING",
+    });
+    console.info(`Execution loop: preparing branch ${startingPhase.branchName}.`);
+    try {
+      await git.ensureCleanWorkingTree(cwd);
+      const currentBranch = await git.getCurrentBranch(cwd);
+      if (currentBranch === startingPhase.branchName) {
+        console.info(`Execution loop: already on branch ${startingPhase.branchName}.`);
+      } else {
+        try {
+          await git.checkout(startingPhase.branchName, cwd);
+          console.info(`Execution loop: checked out existing branch ${startingPhase.branchName}.`);
+        } catch {
+          await git.createBranch({
+            branchName: startingPhase.branchName,
+            cwd,
+            fromRef: "HEAD",
+          });
+          console.info(`Execution loop: created and checked out branch ${startingPhase.branchName}.`);
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await control.setPhaseStatus({
+        phaseId: startingPhase.id,
+        status: "CI_FAILED",
+        ciStatusContext: `Branching failed: ${message}`,
+      });
+      throw error;
+    }
+
+    await control.setPhaseStatus({
+      phaseId: startingPhase.id,
+      status: "CODING",
+    });
+
     let iteration = 0;
     let resumeSession = false;
     let completedPhase:
@@ -906,10 +921,21 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
         if (resultTask.errorLogs) {
           console.info(`Failure details: ${resultTask.errorLogs}`);
         }
+        await control.setPhaseStatus({
+          phaseId: updatedPhase.id,
+          status: "CI_FAILED",
+          ciStatusContext:
+            resultTask.errorLogs ??
+            `Execution failed for task #${nextTaskNumber} ${resultTask.title}.`,
+        });
         throw new Error(
           `Execution loop stopped after FAILED task #${nextTaskNumber}. Resolve it or reset the task before continuing.`
         );
       }
+
+      await notifyLoopEvent(
+        `Task Done: ${updatedPhase.name} #${nextTaskNumber} ${resultTask.title} (${resultTask.status}).`
+      );
 
       const testerResult = await runTesterWorkflow({
         phaseId: updatedPhase.id,
@@ -938,6 +964,15 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
         console.info(
           `Tester workflow failed after ${nextTaskLabel}. Created fix task: ${testerResult.fixTaskTitle}.`
         );
+        await notifyLoopEvent(
+          `Test Fail: ${updatedPhase.name} after ${resultTask.title}. Created fix task: ${testerResult.fixTaskTitle}.`
+        );
+        await control.setPhaseStatus({
+          phaseId: updatedPhase.id,
+          status: "CI_FAILED",
+          ciStatusContext:
+            `${testerResult.errorMessage}\n\n${testerResult.fixTaskDescription}`.trim(),
+        });
         throw new Error("Execution loop stopped after tester failure. Fix task has been created.");
       }
 
@@ -946,20 +981,102 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
     }
 
     if (completedPhase && settings.executionLoop.ciEnabled) {
+      await control.setPhaseStatus({
+        phaseId: completedPhase.id,
+        status: "CREATING_PR",
+      });
       console.info("Optional CI integration enabled. Pushing branch and creating PR via gh.");
       const ciResult = await runCiIntegration({
         phaseId: completedPhase.id,
         phaseName: completedPhase.name,
-        cwd: process.cwd(),
+        cwd,
         baseBranch: settings.executionLoop.ciBaseBranch,
         runner: testerRunner,
         setPhasePrUrl: async (input) => {
           await control.setPhasePrUrl(input);
         },
       });
+      await control.setPhaseStatus({
+        phaseId: completedPhase.id,
+        status: "AWAITING_CI",
+      });
       console.info(
         `Optional CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`
       );
+      await notifyLoopEvent(
+        `PR Created: ${completedPhase.name} -> ${ciResult.prUrl}`
+      );
+
+      const latestState = await control.getState();
+      const validationPhase = latestState.phases.find((phase) => phase.id === completedPhase.id);
+      if (!validationPhase) {
+        throw new Error(`Completed phase not found for CI validation: ${completedPhase.id}`);
+      }
+
+      console.info(
+        `Starting CI validation loop (max retries: ${settings.executionLoop.validationMaxRetries}).`
+      );
+      const validationResult = await runCiValidationLoop({
+        projectName: latestState.projectName,
+        rootDir: latestState.rootDir,
+        phase: validationPhase,
+        assignee: activeAssignee,
+        maxRetries: settings.executionLoop.validationMaxRetries,
+        readGitDiff: async () => {
+          const diff = await testerRunner.run({
+            command: "git",
+            args: ["diff", "--no-color"],
+            cwd,
+          });
+
+          return diff.stdout;
+        },
+        runInternalWork: async (input) => {
+          const result = await control.runInternalWork({
+            assignee: input.assignee,
+            prompt: input.prompt,
+            phaseId: input.phaseId,
+            resume: input.resume,
+          });
+
+          return {
+            stdout: result.stdout,
+            stderr: result.stderr,
+          };
+        },
+      });
+
+      if (validationResult.status === "MAX_RETRIES_EXCEEDED") {
+        await control.setPhaseStatus({
+          phaseId: completedPhase.id,
+          status: "CI_FAILED",
+          ciStatusContext: validationResult.pendingComments.join("\n"),
+        });
+        console.info(
+          `CI validation loop reached max retries (${validationResult.maxRetries}). Pending comments: ${validationResult.pendingComments.join(" | ")}`
+        );
+        await notifyLoopEvent(
+          `Review: ${completedPhase.name} needs fixes after ${validationResult.fixAttempts} attempts. Pending: ${validationResult.pendingComments.join(" | ")}`
+        );
+        throw new Error("Execution loop stopped after CI validation max retries.");
+      }
+
+      await control.setPhaseStatus({
+        phaseId: completedPhase.id,
+        status: "READY_FOR_REVIEW",
+      });
+
+      console.info(
+        `CI validation loop approved after ${validationResult.reviews.length} review round(s) and ${validationResult.fixAttempts} fix attempt(s).`
+      );
+      await notifyLoopEvent(
+        `Review: ${completedPhase.name} approved after ${validationResult.reviews.length} round(s).`
+      );
+    } else if (completedPhase) {
+      await control.setPhaseStatus({
+        phaseId: completedPhase.id,
+        status: "DONE",
+      });
     }
   } finally {
     rl.close();

@@ -27,6 +27,7 @@ const DEFAULT_LOOP_SETTINGS = {
   testerTimeoutMs: 600000,
   ciEnabled: false,
   ciBaseBranch: "main",
+  validationMaxRetries: 3,
 };
 
 describe("cli settings", () => {
