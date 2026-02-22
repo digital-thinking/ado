@@ -1,14 +1,24 @@
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
-import { CLI_ADAPTER_IDS, CliSettingsSchema, type CLIAdapterId, type CliSettings } from "../types";
+import {
+  CLI_ADAPTER_IDS,
+  CliSettingsOverrideSchema,
+  CliSettingsSchema,
+  type CLIAdapterId,
+  type CliSettings,
+  type CliSettingsOverride,
+} from "../types";
 
 const DEFAULT_SETTINGS_FILE = ".ixado/settings.json";
+const DEFAULT_GLOBAL_SETTINGS_FILE = ".ixado/config.json";
 const DEFAULT_SOUL_FILE = ".ixado/SOUL.md";
 const ONBOARD_SKIP_KEY = "s";
 
 export const DEFAULT_CLI_SETTINGS: CliSettings = {
+  projects: [],
   telegram: {
     enabled: false,
   },
@@ -54,6 +64,20 @@ export function resolveSettingsFilePath(): string {
   return resolve(process.cwd(), DEFAULT_SETTINGS_FILE);
 }
 
+export function resolveGlobalSettingsFilePath(): string {
+  const configuredGlobalSettingsPath = process.env.IXADO_GLOBAL_CONFIG_FILE?.trim();
+  if (configuredGlobalSettingsPath) {
+    return resolve(configuredGlobalSettingsPath);
+  }
+
+  const homeDirectory = homedir().trim();
+  if (!homeDirectory) {
+    throw new Error("Could not resolve home directory for global settings path.");
+  }
+
+  return resolve(homeDirectory, DEFAULT_GLOBAL_SETTINGS_FILE);
+}
+
 export function resolveSoulFilePath(): string {
   const configuredSoulPath = process.env.IXADO_SOUL_FILE?.trim();
   if (configuredSoulPath) {
@@ -63,12 +87,12 @@ export function resolveSoulFilePath(): string {
   return resolve(process.cwd(), DEFAULT_SOUL_FILE);
 }
 
-export async function loadCliSettings(settingsFilePath: string): Promise<CliSettings> {
+async function readSettingsOverrideFile(settingsFilePath: string): Promise<CliSettingsOverride | null> {
   try {
     await access(settingsFilePath, fsConstants.F_OK);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return DEFAULT_CLI_SETTINGS;
+      return null;
     }
 
     throw error;
@@ -82,7 +106,62 @@ export async function loadCliSettings(settingsFilePath: string): Promise<CliSett
     throw new Error(`Settings file contains invalid JSON: ${settingsFilePath}`);
   }
 
-  return CliSettingsSchema.parse(parsed);
+  return CliSettingsOverrideSchema.parse(parsed);
+}
+
+function mergeCliSettings(base: CliSettings, override: CliSettingsOverride): CliSettings {
+  return CliSettingsSchema.parse({
+    projects: override.projects ?? base.projects,
+    activeProject: override.activeProject ?? base.activeProject,
+    telegram: {
+      ...base.telegram,
+      ...override.telegram,
+    },
+    internalWork: {
+      ...base.internalWork,
+      ...override.internalWork,
+    },
+    executionLoop: {
+      ...base.executionLoop,
+      ...override.executionLoop,
+    },
+    agents: {
+      CODEX_CLI: {
+        ...base.agents.CODEX_CLI,
+        ...override.agents?.CODEX_CLI,
+      },
+      CLAUDE_CLI: {
+        ...base.agents.CLAUDE_CLI,
+        ...override.agents?.CLAUDE_CLI,
+      },
+      GEMINI_CLI: {
+        ...base.agents.GEMINI_CLI,
+        ...override.agents?.GEMINI_CLI,
+      },
+      MOCK_CLI: {
+        ...base.agents.MOCK_CLI,
+        ...override.agents?.MOCK_CLI,
+      },
+    },
+  });
+}
+
+export async function loadCliSettings(settingsFilePath: string): Promise<CliSettings> {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const globalOverride = settingsFilePath === globalSettingsFilePath
+    ? null
+    : await readSettingsOverrideFile(globalSettingsFilePath);
+  const localOverride = await readSettingsOverrideFile(settingsFilePath);
+
+  let settings = DEFAULT_CLI_SETTINGS;
+  if (globalOverride) {
+    settings = mergeCliSettings(settings, globalOverride);
+  }
+  if (localOverride) {
+    settings = mergeCliSettings(settings, localOverride);
+  }
+
+  return settings;
 }
 
 export async function saveCliSettings(

@@ -51,6 +51,10 @@ describe("web app api", () => {
   test("supports phase and task creation flow", async () => {
     const state = createInitialState();
     const agents: AgentView[] = [];
+    const runtimeConfig = {
+      defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
+      autoMode: false,
+    };
 
     const app = createWebApp({
       defaultAgentCwd: "C:/repo",
@@ -223,7 +227,18 @@ describe("web app api", () => {
         }),
       } as never,
       defaultInternalWorkAssignee: "CODEX_CLI",
+      defaultAutoMode: false,
       availableWorkerAssignees: ["CODEX_CLI", "CLAUDE_CLI", "GEMINI_CLI", "MOCK_CLI"],
+      getRuntimeConfig: async () => runtimeConfig,
+      updateRuntimeConfig: async (input) => {
+        if (input.defaultInternalWorkAssignee) {
+          runtimeConfig.defaultInternalWorkAssignee = input.defaultInternalWorkAssignee;
+        }
+        if (typeof input.autoMode === "boolean") {
+          runtimeConfig.autoMode = input.autoMode;
+        }
+        return runtimeConfig;
+      },
       webLogFilePath: "C:/repo/.ixado/web.log",
       cliLogFilePath: "C:/repo/.ixado/cli.log",
     });
@@ -260,6 +275,27 @@ describe("web app api", () => {
     const statePayload = (await stateResponse.json()) as TestState;
     expect(statePayload.phases).toHaveLength(1);
     expect(statePayload.phases[0].tasks).toHaveLength(1);
+
+    const runtimeConfigResponse = await app.fetch(new Request("http://localhost/api/runtime-config"));
+    expect(runtimeConfigResponse.status).toBe(200);
+    const runtimeConfigPayload = await runtimeConfigResponse.json();
+    expect(runtimeConfigPayload.defaultInternalWorkAssignee).toBe("CODEX_CLI");
+    expect(runtimeConfigPayload.autoMode).toBe(false);
+
+    const runtimeConfigUpdateResponse = await app.fetch(
+      new Request("http://localhost/api/runtime-config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          defaultInternalWorkAssignee: "GEMINI_CLI",
+          autoMode: true,
+        }),
+      })
+    );
+    expect(runtimeConfigUpdateResponse.status).toBe(200);
+    const runtimeConfigUpdatePayload = await runtimeConfigUpdateResponse.json();
+    expect(runtimeConfigUpdatePayload.defaultInternalWorkAssignee).toBe("GEMINI_CLI");
+    expect(runtimeConfigUpdatePayload.autoMode).toBe(true);
 
     const setActiveResponse = await app.fetch(
       new Request("http://localhost/api/phases/active", {

@@ -23,8 +23,10 @@ describe("web server runtime", () => {
     const runtime = await startWebControlCenter({
       cwd: sandboxDir,
       stateFilePath,
+      settingsFilePath: join(sandboxDir, "settings.json"),
       projectName: "IxADO",
       defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
       agentSettings: {
         CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
         CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
