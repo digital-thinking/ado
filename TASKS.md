@@ -51,7 +51,7 @@ Status markers:
 - [x] `P5-007` Integrate loops into State Engine: Phase Start -> Branch -> Task Loop -> Tester -> PR -> Validation. Deps: `P5-006`.
 - [x] `P5-008` Add Telegram notifications for loop events (Task Done, Test Fail, PR Created, Review). Deps: `P5-007`.
 - [x] `P5-009` Add integration tests for Auto/Manual modes and Tester/CI loops. Deps: `P5-008`.
-- [ ] `P5-010` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-009`.
+- [x] `P5-010` Create PR Task: open Phase 5 PR after coding tasks are done. Deps: `P5-009`.
 
 ## Phase 6: Web Interface
 - [x] `P6-001` Create local web control center for phase/task creation and tracking. Deps: `P5-010`.
