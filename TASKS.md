@@ -85,7 +85,7 @@ Status markers:
 ## Phase 10: Authorization & Security Hardening
 - [x] `P10-001` Define auth policy schema in `src/security/policy.ts` with: role-based generous allowlist rules, explicit denylist rules, and default-deny fallback semantics. Deps: `P9-003`.
 - [ ] `P10-002` Implement policy loader/validator from config (`~/.ixado/config.json` + project override) and reject startup on invalid or missing required policy fields. Deps: `P10-001`.
-- [ ] `P10-003` Add role resolution pipeline (owner/admin/operator/viewer) from Telegram user + CLI session context, with tests for precedence and unknown-role handling. Deps: `P10-002`.
+- [x] `P10-003` Add role resolution pipeline (owner/admin/operator/viewer) from Telegram user + CLI session context, with tests for precedence and unknown-role handling. Deps: `P10-002`.
 - [ ] `P10-004` Implement authorization evaluator: allow only when command matches allowlist and does not match denylist; denylist always wins. Deps: `P10-003`.
 - [ ] `P10-005` Add task-scoped allowlist profiles for common workflows (status/tasks/read-only, planning, execution, privileged) and map each orchestrator action to one profile. Deps: `P10-004`.
 - [ ] `P10-006` Add unit tests for evaluator matrix (role x action x allowlist/denylist) including conflict cases and wildcard patterns. Deps: `P10-004`.
