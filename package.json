@@ -19,9 +19,13 @@
     "package:smoke": "node scripts/package-smoke.mjs",
     "package:verify": "npm run package:validate && npm run package:smoke",
     "prepack": "npm run build:binary && npm run package:verify",
-    "test": "bun test",
+    "test": "bun run test:unit && bun run test:integration",
+    "test:unit": "node scripts/run-tests.mjs unit",
+    "test:integration": "node scripts/run-tests.mjs integration",
+    "coverage": "bun test --coverage --coverage-reporter=lcov && node scripts/coverage-summary.mjs coverage/lcov.info",
+    "lint": "bun run typecheck",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun run test"
+    "check": "bun run lint && bun run test"
   },
   "dependencies": {
     "grammy": "^1.40.0",
