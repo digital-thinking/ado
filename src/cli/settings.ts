@@ -15,6 +15,16 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
   internalWork: {
     assignee: "CODEX_CLI",
   },
+  executionLoop: {
+    autoMode: false,
+    countdownSeconds: 10,
+    testerCommand: "npm",
+    testerArgs: ["run", "test"],
+    testerTimeoutMs: 600_000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    validationMaxRetries: 3,
+  },
   agents: {
     CODEX_CLI: {
       enabled: true,
@@ -352,6 +362,7 @@ export async function runOnboard(
         internalWork: {
           assignee: internalWorkAssignee,
         },
+        executionLoop: existingSettings.executionLoop,
         agents: configuredAgents,
       };
 
@@ -366,6 +377,7 @@ export async function runOnboard(
         internalWork: {
           assignee: internalWorkAssignee,
         },
+        executionLoop: existingSettings.executionLoop,
         agents: configuredAgents,
       };
 
@@ -415,6 +427,7 @@ export async function runOnboard(
       internalWork: {
         assignee: internalWorkAssignee,
       },
+      executionLoop: existingSettings.executionLoop,
       agents: configuredAgents,
     };
 

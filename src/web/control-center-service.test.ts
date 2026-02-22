@@ -333,6 +333,44 @@ describe("ControlCenterService", () => {
     await expect(service.setActivePhase({ phaseId: "5" })).rejects.toThrow("Phase not found: 5");
   });
 
+  test("stores phase pull request URL", async () => {
+    const created = await service.createPhase({
+      name: "Phase PR",
+      branchName: "phase-pr",
+    });
+    const phaseId = created.phases[0].id;
+
+    const updated = await service.setPhasePrUrl({
+      phaseId,
+      prUrl: "https://github.com/org/repo/pull/999",
+    });
+
+    expect(updated.phases[0].prUrl).toBe("https://github.com/org/repo/pull/999");
+  });
+
+  test("updates phase status and CI context", async () => {
+    const created = await service.createPhase({
+      name: "Phase Status",
+      branchName: "phase-status",
+    });
+    const phaseId = created.phases[0].id;
+
+    const failed = await service.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      ciStatusContext: "Validation loop exceeded retries.",
+    });
+    expect(failed.phases[0].status).toBe("CI_FAILED");
+    expect(failed.phases[0].ciStatusContext).toBe("Validation loop exceeded retries.");
+
+    const recovered = await service.setPhaseStatus({
+      phaseId,
+      status: "READY_FOR_REVIEW",
+    });
+    expect(recovered.phases[0].status).toBe("READY_FOR_REVIEW");
+    expect(recovered.phases[0].ciStatusContext).toBeUndefined();
+  });
+
   test("lists active phase tasks with 1-based numbers", async () => {
     const created = await service.createPhase({
       name: "Phase Numbers",
@@ -399,6 +437,53 @@ describe("ControlCenterService", () => {
     expect(activePhase.tasks[0].status).toBe("TODO");
     expect(activePhase.tasks[1].status).toBe("DONE");
     expect(activePhase.tasks[1].assignee).toBe("CODEX_CLI");
+  });
+
+  test("supports explicit resume for sequential active tasks", async () => {
+    const resumeFlags: boolean[] = [];
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async (input) => {
+        resumeFlags.push(Boolean(input.resume));
+        return {
+          command: "codex",
+          args: ["run"],
+          stdout: "ok",
+          stderr: "",
+          durationMs: 10,
+        };
+      }
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Session",
+      branchName: "phase-session",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "One",
+      description: "First",
+    });
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "Two",
+      description: "Second",
+    });
+
+    await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 1,
+      assignee: "CODEX_CLI",
+    });
+    await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 2,
+      assignee: "CODEX_CLI",
+      resume: true,
+    });
+
+    expect(resumeFlags).toEqual([false, true]);
   });
 
   test("allows cross-phase dependency when dependency task is DONE", async () => {

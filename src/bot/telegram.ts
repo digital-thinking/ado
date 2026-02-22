@@ -9,6 +9,8 @@ export type TaskStarter = (input: {
 }) => Promise<ProjectState>;
 export type ActivePhaseSetter = (input: { phaseId: string }) => Promise<ProjectState>;
 export type AgentListReader = () => Promise<StatusAgent[]> | StatusAgent[];
+export type LoopNextRequester = () => Promise<string> | string;
+export type LoopStopRequester = () => Promise<string> | string;
 
 export type StatusAgent = {
   id?: string;
@@ -27,6 +29,7 @@ type TelegramCtx = {
 export type TelegramRuntime = {
   start: () => Promise<void>;
   stop: () => void;
+  notifyOwner: (text: string) => Promise<void>;
 };
 
 function formatStatus(
@@ -181,7 +184,7 @@ export async function handleSetActivePhaseCommand(
   const args = parseCommandArgs(ctx);
   const phaseId = args[0]?.trim() ?? "";
   if (!phaseId) {
-    await ctx.reply("Usage: /setactivephase <phaseId>");
+    await ctx.reply("Usage: /setactivephase <phaseNumber|phaseId>");
     return;
   }
 
@@ -199,6 +202,52 @@ export async function handleSetActivePhaseCommand(
   }
 }
 
+export async function handleNextCommand(
+  ctx: TelegramCtx,
+  ownerId: number,
+  requestNextLoop?: LoopNextRequester
+): Promise<void> {
+  if (!(await ensureOwner(ctx, ownerId))) {
+    return;
+  }
+
+  if (!requestNextLoop) {
+    await ctx.reply("No active execution loop.");
+    return;
+  }
+
+  try {
+    const response = await Promise.resolve(requestNextLoop());
+    await ctx.reply(response || "Advancing execution loop.");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`Failed to advance loop: ${message}`);
+  }
+}
+
+export async function handleStopCommand(
+  ctx: TelegramCtx,
+  ownerId: number,
+  requestStopLoop?: LoopStopRequester
+): Promise<void> {
+  if (!(await ensureOwner(ctx, ownerId))) {
+    return;
+  }
+
+  if (!requestStopLoop) {
+    await ctx.reply("No active execution loop.");
+    return;
+  }
+
+  try {
+    const response = await Promise.resolve(requestStopLoop());
+    await ctx.reply(response || "Stopping execution loop.");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`Failed to stop loop: ${message}`);
+  }
+}
+
 type CreateTelegramRuntimeInput = {
   token: string;
   ownerId: number;
@@ -208,6 +257,8 @@ type CreateTelegramRuntimeInput = {
   defaultAssignee: CLIAdapterId;
   startTask: TaskStarter;
   setActivePhase: ActivePhaseSetter;
+  requestNextLoop?: LoopNextRequester;
+  requestStopLoop?: LoopStopRequester;
 };
 
 export function createTelegramRuntime(input: CreateTelegramRuntimeInput): TelegramRuntime {
@@ -239,6 +290,12 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
   bot.command("setactivephase", async (ctx) => {
     await handleSetActivePhaseCommand(ctx, input.ownerId, input.setActivePhase);
   });
+  bot.command("next", async (ctx) => {
+    await handleNextCommand(ctx, input.ownerId, input.requestNextLoop);
+  });
+  bot.command("stop", async (ctx) => {
+    await handleStopCommand(ctx, input.ownerId, input.requestStopLoop);
+  });
 
   bot.catch((error) => {
     const err = error.error;
@@ -251,7 +308,7 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
       try {
         await bot.api.sendMessage(
           input.ownerId,
-          "IxADO is online. Send /status, /tasks, /starttask <taskNumber> [assignee], or /setactivephase <phaseId>. Press Ctrl+C in CLI to stop."
+          "IxADO is online. Send /status, /tasks, /starttask <taskNumber> [assignee], /setactivephase <phaseNumber|phaseId>, /next, or /stop. Press Ctrl+C in CLI to stop."
         );
       } catch (error) {
         const err = error instanceof Error ? error.message : String(error);
@@ -262,6 +319,19 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
     },
     stop: () => {
       bot.stop();
+    },
+    notifyOwner: async (text) => {
+      const message = text.trim();
+      if (!message) {
+        return;
+      }
+
+      try {
+        await bot.api.sendMessage(input.ownerId, message);
+      } catch (error) {
+        const err = error instanceof Error ? error.message : String(error);
+        console.warn(`Unable to send Telegram loop notification: ${err}`);
+      }
     },
   };
 }

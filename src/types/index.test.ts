@@ -5,6 +5,7 @@ import {
   CLIAdapterSchema,
   ProjectStateSchema,
   TaskStatusSchema,
+  WorkerArchetypeSchema,
   WorkerAssigneeSchema,
 } from "./index";
 
@@ -12,6 +13,7 @@ describe("type contracts", () => {
   test("supports expected assignees and task statuses", () => {
     expect(WorkerAssigneeSchema.parse("CODEX_CLI")).toBe("CODEX_CLI");
     expect(TaskStatusSchema.parse("CI_FIX")).toBe("CI_FIX");
+    expect(WorkerArchetypeSchema.parse("REVIEWER")).toBe("REVIEWER");
   });
 
   test("validates CLI adapter shape", () => {
@@ -38,6 +40,14 @@ describe("type contracts", () => {
     expect(parsed.telegram.botToken).toBe("token");
     expect(parsed.telegram.ownerId).toBe(123);
     expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
+    expect(parsed.executionLoop.autoMode).toBe(false);
+    expect(parsed.executionLoop.countdownSeconds).toBe(10);
+    expect(parsed.executionLoop.testerCommand).toBe("npm");
+    expect(parsed.executionLoop.testerArgs).toEqual(["run", "test"]);
+    expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);
+    expect(parsed.executionLoop.ciEnabled).toBe(false);
+    expect(parsed.executionLoop.ciBaseBranch).toBe("main");
+    expect(parsed.executionLoop.validationMaxRetries).toBe(3);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
   });

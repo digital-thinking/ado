@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, test } from "bun:test";
 
+import { resolveCommandForSpawn } from "./command-resolver";
 import { ProcessExecutionError, ProcessManager } from "./manager";
 import type { SpawnFn } from "./types";
 
@@ -57,7 +58,7 @@ describe("ProcessManager", () => {
     const result = await manager.run({ command: "git", args: ["status"] });
 
     expect(spawnCalls).toHaveLength(1);
-    expect(spawnCalls[0]?.command).toBe("git");
+    expect(spawnCalls[0]?.command).toBe(resolveCommandForSpawn("git", process.env));
     expect(spawnCalls[0]?.args).toEqual(["status"]);
     expect(result.stdout).toBe("ok");
     expect(result.stderr).toBe("warn");

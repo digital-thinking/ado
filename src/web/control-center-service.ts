@@ -4,14 +4,17 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import { buildWorkerPrompt } from "../engine/worker-prompts";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
   PhaseSchema,
+  PhaseStatusSchema,
   TaskSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
   type Phase,
+  type PhaseStatus,
   type ProjectState,
   type Task,
   type WorkerAssignee,
@@ -88,15 +91,28 @@ export type StartTaskInput = {
   phaseId: string;
   taskId: string;
   assignee: CLIAdapterId;
+  resume?: boolean;
 };
 
 export type SetActivePhaseInput = {
   phaseId: string;
 };
 
+export type SetPhasePrUrlInput = {
+  phaseId: string;
+  prUrl: string;
+};
+
+export type SetPhaseStatusInput = {
+  phaseId: string;
+  status: PhaseStatus;
+  ciStatusContext?: string;
+};
+
 export type StartActiveTaskInput = {
   taskNumber: number;
   assignee: CLIAdapterId;
+  resume?: boolean;
 };
 
 export type ResetTaskInput = {
@@ -269,21 +285,6 @@ function truncateForState(value: string): string {
   return value.slice(0, MAX_STORED_CONTEXT_LENGTH);
 }
 
-function buildTaskExecutionPrompt(projectName: string, rootDir: string, phase: Phase, task: Task): string {
-  return [
-    `You are implementing a coding task for the ${projectName} project.`,
-    `Repository root: ${rootDir}`,
-    `Phase: ${phase.name}`,
-    `Task: ${task.title}`,
-    `Task description:`,
-    task.description,
-    "Requirements:",
-    "- Implement the task in this repository.",
-    "- Run relevant validations/tests.",
-    "- Return a concise summary of concrete changes and validation commands.",
-  ].join("\n\n");
-}
-
 function resolveActivePhaseOrThrow(state: ProjectState): Phase {
   const explicitActive = state.activePhaseId
     ? state.phases.find((phase) => phase.id === state.activePhaseId)
@@ -430,6 +431,67 @@ export class ControlCenterService {
     });
   }
 
+  async setPhasePrUrl(input: SetPhasePrUrlInput): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const prUrl = input.prUrl.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!prUrl) {
+      throw new Error("prUrl must not be empty.");
+    }
+
+    const state = await this.state.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const nextPhases = [...state.phases];
+    nextPhases[phaseIndex] = PhaseSchema.parse({
+      ...phase,
+      prUrl,
+    });
+
+    return this.state.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
+  async setPhaseStatus(input: SetPhaseStatusInput): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const status = PhaseStatusSchema.parse(input.status);
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+
+    const state = await this.state.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const normalizedContext = input.ciStatusContext?.trim();
+    const ciStatusContext =
+      status === "CI_FAILED"
+        ? normalizedContext || phase.ciStatusContext
+        : undefined;
+    const nextPhases = [...state.phases];
+    nextPhases[phaseIndex] = PhaseSchema.parse({
+      ...phase,
+      status,
+      ciStatusContext,
+    });
+
+    return this.state.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
   async listActivePhaseTasks(): Promise<ActivePhaseTasksView> {
     const state = await this.state.readProjectState();
     const activePhase = resolveActivePhaseOrThrow(state);
@@ -465,6 +527,7 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resume: input.resume,
     });
   }
 
@@ -487,6 +550,7 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resume: input.resume,
     });
   }
 
@@ -562,7 +626,13 @@ export class ControlCenterService {
       );
     }
 
-    const prompt = buildTaskExecutionPrompt(state.projectName, state.rootDir, phase, task);
+    const prompt = buildWorkerPrompt({
+      archetype: "CODER",
+      projectName: state.projectName,
+      rootDir: state.rootDir,
+      phase,
+      task,
+    });
 
     const updatedTask = TaskSchema.parse({
       ...task,
@@ -585,12 +655,15 @@ export class ControlCenterService {
       phases: nextPhases,
     });
 
+    const shouldResume =
+      Boolean(input.resume) || (task.status === "FAILED" && task.assignee === assignee);
+
     const executionPromise = this.executeTaskRun({
       phaseId,
       taskId,
       assignee,
       prompt,
-      resume: task.status === "FAILED" && task.assignee === assignee,
+      resume: shouldResume,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });

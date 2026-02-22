@@ -41,6 +41,18 @@ export const CliAgentSettingsSchema = z.object({
 });
 export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
 
+export const ExecutionLoopSettingsSchema = z.object({
+  autoMode: z.boolean().default(false),
+  countdownSeconds: z.number().int().min(1).max(3_600).default(10),
+  testerCommand: z.string().min(1).default("npm"),
+  testerArgs: z.array(z.string()).min(1).default(["run", "test"]),
+  testerTimeoutMs: z.number().int().positive().default(600_000),
+  ciEnabled: z.boolean().default(false),
+  ciBaseBranch: z.string().min(1).default("main"),
+  validationMaxRetries: z.number().int().min(0).max(20).default(3),
+});
+export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
+
 // 2. CLI Settings
 export const CliSettingsSchema = z.object({
   telegram: z.object({
@@ -52,6 +64,16 @@ export const CliSettingsSchema = z.object({
     assignee: CLIAdapterIdSchema.default("CODEX_CLI"),
   }).default({
     assignee: "CODEX_CLI",
+  }),
+  executionLoop: ExecutionLoopSettingsSchema.default({
+    autoMode: false,
+    countdownSeconds: 10,
+    testerCommand: "npm",
+    testerArgs: ["run", "test"],
+    testerTimeoutMs: 600_000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    validationMaxRetries: 3,
   }),
   agents: CliAgentSettingsSchema.default({
     CODEX_CLI: {
@@ -99,6 +121,14 @@ export const WorkerAssigneeSchema = z.enum([
   "UNASSIGNED"
 ]);
 export type WorkerAssignee = z.infer<typeof WorkerAssigneeSchema>;
+
+export const WorkerArchetypeSchema = z.enum([
+  "CODER",
+  "TESTER",
+  "REVIEWER",
+  "FIXER",
+]);
+export type WorkerArchetype = z.infer<typeof WorkerArchetypeSchema>;
 
 // 4. CLI Adapter Contract
 export const CLIAdapterSchema = z.object({
