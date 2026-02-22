@@ -31,7 +31,26 @@ Any of the coding agents
 * Claude Code CLI (authenticated)
 * Gemini CLI (authenticated)
 
-## Binary Build and Distribution
+## Installation
+
+### Linux / macOS
+You can install IxADO directly from the repository using the provided script. This will install Bun (if missing), build the binary, and install it to `~/.local/bin`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/digital-thinking/ado/main/scripts/install_linux.sh | bash
+```
+
+Or manually:
+```bash
+git clone https://github.com/digital-thinking/ado.git
+cd ado
+chmod +x scripts/install_linux.sh
+./scripts/install_linux.sh
+```
+
+Ensure `~/.local/bin` is in your PATH.
+
+### Windows
 IxADO is packaged as a single compiled executable at `dist/ixado.exe`.
 
 Build the binary:
@@ -59,4 +78,3 @@ Release checklist:
 1. Run `npm run build:binary`.
 2. Run `npm run package:verify`.
 3. Publish/upload `dist/ixado.exe` as the release artifact.
-
