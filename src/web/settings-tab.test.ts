@@ -14,6 +14,7 @@ describe("settings tab frontend (P12-008)", () => {
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
         failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
@@ -69,6 +70,7 @@ describe("settings tab frontend (P12-008)", () => {
     expect(html).toContain('id="globalDefaultsForm"');
     expect(html).toContain('id="globalAutoMode"');
     expect(html).toContain('id="globalDefaultAssignee"');
+    expect(html).toContain('id="globalRecoveryMaxAttempts"');
   });
 
   test("HTML includes refreshSettings function to populate fields", async () => {
@@ -88,5 +90,12 @@ describe("settings tab frontend (P12-008)", () => {
     expect(html).toContain(
       'document.getElementById("saveAdaptersButton").addEventListener("click"',
     );
+  });
+
+  test("HTML wires recovery max attempts in refresh and save flows", async () => {
+    const html = await getHtml();
+    expect(html).toContain("settings.exceptionRecovery?.maxAttempts");
+    expect(html).toContain("exceptionRecovery:");
+    expect(html).toContain("maxAttempts: recoveryMaxAttempts");
   });
 });

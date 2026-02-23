@@ -11,6 +11,7 @@ import type {
   ImportTasksMarkdownResult,
   RunInternalWorkInput,
   RunInternalWorkResult,
+  RecordRecoveryAttemptInput,
   SetActivePhaseInput,
   StartTaskInput,
 } from "./control-center-service";
@@ -58,6 +59,9 @@ type ControlCenterControl = {
       reason: string;
     } & { projectName?: string },
   ): ReturnType<ControlCenterService["failTaskIfInProgress"]>;
+  recordRecoveryAttempt(
+    input: RecordRecoveryAttemptInput & { projectName?: string },
+  ): ReturnType<ControlCenterService["recordRecoveryAttempt"]>;
   importFromTasksMarkdown(
     assignee: CLIAdapterId,
     projectName?: string,
@@ -571,6 +575,8 @@ function controlCenterHtml(): string {
             </label>
             <label class="small" for="globalDefaultAssignee">Default CLI Assignee</label>
             <select id="globalDefaultAssignee"></select>
+            <label class="small" for="globalRecoveryMaxAttempts">Exception Recovery Max Attempts</label>
+            <input id="globalRecoveryMaxAttempts" type="number" min="0" max="10" step="1" required />
             <button type="submit">Save Global Defaults</button>
           </form>
           <div id="globalDefaultsStatus" class="small"></div>
@@ -800,6 +806,10 @@ function controlCenterHtml(): string {
           option.selected = settings.internalWork?.assignee === assignee;
           globalAssigneeSelect.appendChild(option);
         });
+        const globalRecoveryMaxAttemptsInput = document.getElementById("globalRecoveryMaxAttempts");
+        globalRecoveryMaxAttemptsInput.value = String(
+          settings.exceptionRecovery?.maxAttempts ?? 1,
+        );
 
         // Adapters
         const adaptersList = document.getElementById("adaptersSettingsList");
@@ -1012,6 +1022,13 @@ function controlCenterHtml(): string {
                   )
                   .join("");
 
+                const recoveryAttempts = Array.isArray(task.recoveryAttempts)
+                  ? task.recoveryAttempts
+                  : [];
+                const latestRecovery =
+                  recoveryAttempts.length > 0
+                    ? recoveryAttempts[recoveryAttempts.length - 1]
+                    : null;
                 const assigneeControl = (() => {
                   if (task.status === "TODO") {
                     return (
@@ -1055,7 +1072,14 @@ function controlCenterHtml(): string {
                   '<div class="task-card">' +
                     '<div><strong>' + escapeHtml(task.title) + '</strong></div>' +
                     '<div class="small">' + escapeHtml(task.description) + '</div>' +
-                    '<div class="small">Status: <span class="mono">' + escapeHtml(task.status) + '</span> | Worker: <span class="mono">' + escapeHtml(task.assignee) + "</span></div>" +
+                    '<div class="small">Status: <span class="mono">' + escapeHtml(task.status) + '</span> | Worker: <span class="mono">' + escapeHtml(task.assignee) + "</span>" +
+                      (latestRecovery
+                        ? ' <span class="pill" title="' + escapeHtml(latestRecovery.result.reasoning || "") + '">! recovery ' + escapeHtml(latestRecovery.result.status || "unknown") + '</span>'
+                        : "") +
+                    "</div>" +
+                    (latestRecovery
+                      ? '<div class="small">Recovery: <span class="mono">' + escapeHtml(latestRecovery.result.status || "unknown") + '</span> - ' + escapeHtml(latestRecovery.result.reasoning || "") + "</div>"
+                      : "") +
                     '<div class="small">Dependencies:</div>' +
                     '<div class="dep-list">' + depsHtml + '</div>' +
                     assigneeControl +
@@ -1102,7 +1126,7 @@ function controlCenterHtml(): string {
         row.innerHTML = \`
           <td>\${escapeHtml(projectName)}</td>
           <td>\${escapeHtml(agent.name)}<div class="small mono">\${escapeHtml(agent.command)} \${escapeHtml(agent.args.join(" "))}</div></td>
-          <td>\${escapeHtml(agent.status)}</td>
+          <td>\${escapeHtml(agent.status)}\${agent.recoveryAttempted ? ' <span class="pill" title="' + escapeHtml(agent.recoveryReasoning || "") + '">!</span>' : ''}</td>
           <td>\${escapeHtml(String(pid))}</td>
           <td class="mono">\${escapeHtml(String(taskName))}</td>
           <td>
@@ -1121,7 +1145,7 @@ function controlCenterHtml(): string {
           <td>\${escapeHtml(projectName)}</td>
           <td title="\${escapeHtml(agent.command)} \${escapeHtml(agent.args.join(" "))}">\${escapeHtml(agent.name)}</td>
           <td class="mono">\${escapeHtml(String(taskName))}</td>
-          <td>\${escapeHtml(agent.status)}</td>
+          <td>\${escapeHtml(agent.status)}\${agent.recoveryAttempted ? ' <span class="pill" title="' + escapeHtml(agent.recoveryReasoning || "") + '">!</span>' : ''}</td>
           <td>\${escapeHtml(String(pid))}</td>
           <td>
             <div class="row">
@@ -1461,6 +1485,20 @@ function controlCenterHtml(): string {
       status.textContent = "Saving...";
       error.textContent = "";
       try {
+        const recoveryMaxAttempts = Number.parseInt(
+          document.getElementById("globalRecoveryMaxAttempts").value,
+          10,
+        );
+        if (
+          !Number.isInteger(recoveryMaxAttempts) ||
+          recoveryMaxAttempts < 0 ||
+          recoveryMaxAttempts > 10
+        ) {
+          throw new Error(
+            "Exception recovery max attempts must be an integer between 0 and 10.",
+          );
+        }
+
         await api("/api/settings", {
           method: "PATCH",
           body: JSON.stringify({
@@ -1469,6 +1507,9 @@ function controlCenterHtml(): string {
             },
             internalWork: {
               assignee: document.getElementById("globalDefaultAssignee").value
+            },
+            exceptionRecovery: {
+              maxAttempts: recoveryMaxAttempts,
             }
           })
         });
@@ -1729,6 +1770,35 @@ export function createWebApp(deps: WebAppDependencies): {
 
         if (request.method === "GET" && url.pathname === "/api/agents") {
           const agents = deps.agents.list();
+          const recoveryByTask = new Map<
+            string,
+            { status: string; reasoning: string }
+          >();
+          const projects = await deps.getProjects();
+          for (const project of projects) {
+            let projectState: ProjectState;
+            try {
+              projectState = await deps.getProjectState(project.name);
+            } catch {
+              continue;
+            }
+
+            for (const phase of projectState.phases) {
+              for (const task of phase.tasks) {
+                const attempts = Array.isArray(task.recoveryAttempts)
+                  ? task.recoveryAttempts
+                  : [];
+                if (attempts.length === 0) {
+                  continue;
+                }
+                const latest = attempts[attempts.length - 1];
+                recoveryByTask.set(task.id, {
+                  status: latest.result.status,
+                  reasoning: latest.result.reasoning,
+                });
+              }
+            }
+          }
           const latestByTask = new Map<string, AgentView>();
           for (const agent of agents) {
             if (!agent.taskId) {
@@ -1755,7 +1825,21 @@ export function createWebApp(deps: WebAppDependencies): {
               }
             }
           }
-          return json(agents);
+          return json(
+            agents.map((agent) => {
+              const recovery =
+                agent.taskId && recoveryByTask.has(agent.taskId)
+                  ? recoveryByTask.get(agent.taskId)
+                  : undefined;
+
+              return {
+                ...agent,
+                recoveryAttempted: Boolean(recovery),
+                recoveryStatus: recovery?.status,
+                recoveryReasoning: recovery?.reasoning,
+              };
+            }),
+          );
         }
 
         if (request.method === "POST" && url.pathname === "/api/agents/start") {

@@ -31,6 +31,9 @@ const DEFAULT_LOOP_SETTINGS = {
   ciBaseBranch: "main",
   validationMaxRetries: 3,
 };
+const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
+  maxAttempts: 1,
+};
 const DEFAULT_USAGE_SETTINGS = {
   codexbarEnabled: true,
 };
@@ -117,6 +120,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -133,6 +137,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -175,6 +180,9 @@ describe("cli settings", () => {
           testerArgs: ["test"],
           countdownSeconds: 99,
         },
+        exceptionRecovery: {
+          maxAttempts: 2,
+        },
         agents: {
           CODEX_CLI: {
             timeoutMs: 5000,
@@ -188,6 +196,9 @@ describe("cli settings", () => {
         executionLoop: {
           countdownSeconds: 3,
         },
+        exceptionRecovery: {
+          maxAttempts: 4,
+        },
         agents: {
           CODEX_CLI: {
             timeoutMs: 7000,
@@ -200,6 +211,7 @@ describe("cli settings", () => {
     expect(settings.executionLoop.testerCommand).toBe("bun");
     expect(settings.executionLoop.testerArgs).toEqual(["test"]);
     expect(settings.executionLoop.countdownSeconds).toBe(3);
+    expect(settings.exceptionRecovery.maxAttempts).toBe(4);
     expect(settings.agents.CODEX_CLI.timeoutMs).toBe(7000);
   });
 
@@ -279,6 +291,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 600000 },
@@ -333,6 +346,7 @@ describe("cli settings", () => {
       telegram: { enabled: false },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 700000 },
@@ -382,6 +396,7 @@ describe("cli settings", () => {
         assignee: "MOCK_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
         CODEX_CLI: { enabled: true, timeoutMs: 800000 },
@@ -404,6 +419,7 @@ describe("cli settings", () => {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -430,6 +446,7 @@ describe("cli settings", () => {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -480,6 +497,7 @@ describe("cli settings", () => {
         assignee: "CODEX_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });

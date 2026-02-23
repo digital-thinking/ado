@@ -150,6 +150,7 @@ describe("web app api", () => {
           }
           return state as never;
         },
+        recordRecoveryAttempt: async () => state as never,
         importFromTasksMarkdown: async (
           assignee: CLIAdapterId,
           _name?: string,
@@ -521,6 +522,7 @@ describe("multi-project api", () => {
         startTask: async (_input: unknown) => ({}) as never,
         resetTaskToTodo: async (_input: unknown) => ({}) as never,
         failTaskIfInProgress: async (_input: unknown) => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async (_assignee: unknown, _name?: string) =>
           ({}) as never,
         runInternalWork: async (_input: unknown) => ({}) as never,
@@ -793,6 +795,7 @@ describe("project tabs frontend (P12-006)", () => {
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
         failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
@@ -881,6 +884,7 @@ describe("agent top bar frontend (P12-007)", () => {
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
         failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
@@ -946,6 +950,13 @@ describe("agent top bar frontend (P12-007)", () => {
       'agentTopTableBody.addEventListener("click", handleAgentAction)',
     );
   });
+
+  test("HTML includes recovery indicators for tasks and agent status", async () => {
+    const html = await getHtml();
+    expect(html).toContain("! recovery");
+    expect(html).toContain("agent.recoveryAttempted");
+    expect(html).toContain("agent.recoveryReasoning");
+  });
 });
 
 describe("SSE log viewer frontend (P12-010)", () => {
@@ -1009,5 +1020,108 @@ describe("SSE log viewer frontend (P12-010)", () => {
     expect(html).toContain("function closeLogs");
     expect(html).toContain("currentEventSource.close()");
     expect(html).toContain('logOverlay.classList.add("hidden")');
+  });
+});
+
+describe("phase14 recovery surfacing", () => {
+  test("GET /api/agents includes recovery enrichment", async () => {
+    const app = createWebApp({
+      defaultAgentCwd: "/tmp",
+      control: {
+        failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
+      } as never,
+      agents: {
+        list: () =>
+          [
+            {
+              id: "agent-1",
+              name: "worker",
+              command: "mock",
+              args: [],
+              cwd: "/tmp/alpha",
+              phaseId: "11111111-1111-4111-8111-111111111111",
+              taskId: "22222222-2222-4222-8222-222222222222",
+              projectName: "alpha",
+              status: "RUNNING",
+              outputTail: [],
+              startedAt: "2026-02-23T00:00:00.000Z",
+            },
+          ] as any,
+        start: () => ({}) as any,
+        assign: () => ({}) as any,
+        kill: () => ({}) as any,
+        restart: () => ({}) as any,
+        subscribe: () => () => {},
+      },
+      usage: { getLatest: async () => ({ available: false }) } as never,
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      availableWorkerAssignees: ["MOCK_CLI"],
+      projectName: "alpha",
+      getRuntimeConfig: async () => ({}) as never,
+      updateRuntimeConfig: async () => ({}) as never,
+      getProjects: async () => [{ name: "alpha", rootDir: "/tmp/alpha" }],
+      getProjectState: async () =>
+        ({
+          projectName: "alpha",
+          rootDir: "/tmp/alpha",
+          phases: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              name: "Phase",
+              branchName: "phase",
+              status: "CODING",
+              recoveryAttempts: [],
+              tasks: [
+                {
+                  id: "22222222-2222-4222-8222-222222222222",
+                  title: "Task",
+                  description: "desc",
+                  status: "FAILED",
+                  assignee: "MOCK_CLI",
+                  dependencies: [],
+                  recoveryAttempts: [
+                    {
+                      id: "33333333-3333-4333-8333-333333333333",
+                      occurredAt: "2026-02-23T00:00:00.000Z",
+                      attemptNumber: 1,
+                      exception: {
+                        category: "AGENT_FAILURE",
+                        message: "worker failed",
+                      },
+                      result: {
+                        status: "fixed",
+                        reasoning: "retried successfully",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          activePhaseId: "11111111-1111-4111-8111-111111111111",
+          createdAt: "2026-02-23T00:00:00.000Z",
+          updatedAt: "2026-02-23T00:00:00.000Z",
+        }) as any,
+      updateProjectSettings: async () => ({}) as never,
+      getGlobalSettings: async () => ({}) as never,
+      updateGlobalSettings: async () => ({}) as never,
+      webLogFilePath: "/tmp/web.log",
+      cliLogFilePath: "/tmp/cli.log",
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/agents"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as Array<{
+      recoveryAttempted?: boolean;
+      recoveryStatus?: string;
+      recoveryReasoning?: string;
+    }>;
+    expect(payload[0]?.recoveryAttempted).toBe(true);
+    expect(payload[0]?.recoveryStatus).toBe("fixed");
+    expect(payload[0]?.recoveryReasoning).toBe("retried successfully");
   });
 });

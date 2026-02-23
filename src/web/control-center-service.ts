@@ -8,14 +8,20 @@ import { buildWorkerPrompt } from "../engine/worker-prompts";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
+  ExceptionMetadataSchema,
+  ExceptionRecoveryResultSchema,
   PhaseSchema,
   PhaseStatusSchema,
+  RecoveryAttemptRecordSchema,
   TaskSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
+  type ExceptionMetadata,
+  type ExceptionRecoveryResult,
   type Phase,
   type PhaseStatus,
   type ProjectState,
+  type RecoveryAttemptRecord,
   type Task,
   type WorkerAssignee,
 } from "../types";
@@ -108,6 +114,14 @@ export type SetPhaseStatusInput = {
   phaseId: string;
   status: PhaseStatus;
   ciStatusContext?: string;
+};
+
+export type RecordRecoveryAttemptInput = {
+  phaseId: string;
+  taskId?: string;
+  attemptNumber: number;
+  exception: ExceptionMetadata;
+  result: ExceptionRecoveryResult;
 };
 
 export type StartActiveTaskInput = {
@@ -568,6 +582,70 @@ export class ControlCenterService {
         assignee: task.assignee,
       })),
     };
+  }
+
+  async recordRecoveryAttempt(
+    input: RecordRecoveryAttemptInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId?.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+
+    const attemptNumber = Number(input.attemptNumber);
+    if (!Number.isInteger(attemptNumber) || attemptNumber <= 0) {
+      throw new Error("attemptNumber must be a positive integer.");
+    }
+
+    const exception = ExceptionMetadataSchema.parse(input.exception);
+    const result = ExceptionRecoveryResultSchema.parse(input.result);
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const record = RecoveryAttemptRecordSchema.parse({
+      id: randomUUID(),
+      occurredAt: new Date().toISOString(),
+      attemptNumber,
+      exception,
+      result,
+    });
+
+    const nextPhases = [...state.phases];
+    if (taskId) {
+      const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+      if (taskIndex < 0) {
+        throw new Error(`Task not found: ${taskId}`);
+      }
+      const nextTasks = [...phase.tasks];
+      nextTasks[taskIndex] = TaskSchema.parse({
+        ...nextTasks[taskIndex],
+        recoveryAttempts: [
+          ...(nextTasks[taskIndex].recoveryAttempts ?? []),
+          record,
+        ],
+      });
+      nextPhases[phaseIndex] = PhaseSchema.parse({
+        ...phase,
+        tasks: nextTasks,
+      });
+    } else {
+      nextPhases[phaseIndex] = PhaseSchema.parse({
+        ...phase,
+        recoveryAttempts: [...(phase.recoveryAttempts ?? []), record],
+      });
+    }
+
+    return engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
   }
 
   async startActiveTask(

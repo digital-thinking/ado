@@ -53,6 +53,13 @@ export const ExecutionLoopSettingsSchema = z.object({
 });
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
+export const ExceptionRecoverySettingsSchema = z.object({
+  maxAttempts: z.number().int().min(0).max(10).default(1),
+});
+export type ExceptionRecoverySettings = z.infer<
+  typeof ExceptionRecoverySettingsSchema
+>;
+
 export const ProjectExecutionSettingsSchema = z.object({
   autoMode: z.boolean(),
   defaultAssignee: CLIAdapterIdSchema,
@@ -94,6 +101,9 @@ export const CliSettingsSchema = z
       ciEnabled: false,
       ciBaseBranch: "main",
       validationMaxRetries: 3,
+    }),
+    exceptionRecovery: ExceptionRecoverySettingsSchema.default({
+      maxAttempts: 1,
     }),
     usage: z
       .object({
@@ -165,6 +175,10 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   validationMaxRetries: z.number().int().min(0).max(20).optional(),
 });
 
+const ExceptionRecoverySettingsOverrideSchema = z.object({
+  maxAttempts: z.number().int().min(0).max(10).optional(),
+});
+
 export const CliSettingsOverrideSchema = z.object({
   projects: z.array(ProjectRecordSchema).optional(),
   activeProject: z.string().min(1).optional(),
@@ -181,6 +195,7 @@ export const CliSettingsOverrideSchema = z.object({
     })
     .optional(),
   executionLoop: ExecutionLoopSettingsOverrideSchema.optional(),
+  exceptionRecovery: ExceptionRecoverySettingsOverrideSchema.optional(),
   usage: z
     .object({
       codexbarEnabled: z.boolean().optional(),
@@ -226,6 +241,40 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+export const ExceptionRecoveryResultSchema = z
+  .object({
+    status: z.enum(["fixed", "unfixable"]),
+    reasoning: z.string().min(1),
+    actionsTaken: z.array(z.string().min(1)).optional(),
+    filesTouched: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type ExceptionRecoveryResult = z.infer<
+  typeof ExceptionRecoveryResultSchema
+>;
+
+export const ExceptionMetadataSchema = z.object({
+  category: z.enum([
+    "DIRTY_WORKTREE",
+    "MISSING_COMMIT",
+    "AGENT_FAILURE",
+    "UNKNOWN",
+  ]),
+  message: z.string().min(1),
+  phaseId: z.string().uuid().optional(),
+  taskId: z.string().uuid().optional(),
+});
+export type ExceptionMetadata = z.infer<typeof ExceptionMetadataSchema>;
+
+export const RecoveryAttemptRecordSchema = z.object({
+  id: z.string().uuid(),
+  occurredAt: z.string().datetime(),
+  attemptNumber: z.number().int().positive(),
+  exception: ExceptionMetadataSchema,
+  result: ExceptionRecoveryResultSchema,
+});
+export type RecoveryAttemptRecord = z.infer<typeof RecoveryAttemptRecordSchema>;
+
 // 6. A Single Coding Task
 export const TaskSchema = z.object({
   id: z.string().uuid(),
@@ -236,6 +285,7 @@ export const TaskSchema = z.object({
   dependencies: z.array(z.string().uuid()).default([]),
   resultContext: z.string().optional(),
   errorLogs: z.string().optional(),
+  recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -261,6 +311,7 @@ export const PhaseSchema = z.object({
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
   ciStatusContext: z.string().optional(), // Stores the GH CLI output if CI fails
+  recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Phase = z.infer<typeof PhaseSchema>;
 

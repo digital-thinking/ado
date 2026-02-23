@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import {
   CliSettingsSchema,
   CLIAdapterSchema,
+  ExceptionRecoveryResultSchema,
+  RecoveryAttemptRecordSchema,
   ProjectStateSchema,
   TaskStatusSchema,
   WorkerArchetypeSchema,
@@ -48,9 +50,45 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.ciEnabled).toBe(false);
     expect(parsed.executionLoop.ciBaseBranch).toBe("main");
     expect(parsed.executionLoop.validationMaxRetries).toBe(3);
+    expect(parsed.exceptionRecovery.maxAttempts).toBe(1);
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
+  });
+
+  test("validates strict exception recovery result contract", () => {
+    const parsed = ExceptionRecoveryResultSchema.parse({
+      status: "fixed",
+      reasoning: "Applied local cleanup commit.",
+      actionsTaken: ["git add --all", 'git commit -m "fix"'],
+      filesTouched: ["src/cli/index.ts"],
+    });
+    expect(parsed.status).toBe("fixed");
+    expect(() =>
+      ExceptionRecoveryResultSchema.parse({
+        status: "fixed",
+        reasoning: "x",
+        extra: "not-allowed",
+      }),
+    ).toThrow();
+  });
+
+  test("validates persisted recovery-attempt record schema", () => {
+    const parsed = RecoveryAttemptRecordSchema.parse({
+      id: "11111111-1111-4111-8111-111111111111",
+      occurredAt: "2026-02-23T00:00:00.000Z",
+      attemptNumber: 1,
+      exception: {
+        category: "MISSING_COMMIT",
+        message: "Missing commit before PR.",
+        phaseId: "22222222-2222-4222-8222-222222222222",
+      },
+      result: {
+        status: "unfixable",
+        reasoning: "Manual review required.",
+      },
+    });
+    expect(parsed.result.status).toBe("unfixable");
   });
 
   test("supports optional per-project execution settings", () => {

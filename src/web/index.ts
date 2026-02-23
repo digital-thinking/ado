@@ -18,6 +18,10 @@ export {
   type StartTaskInput,
   type RunInternalWorkInput,
   type RunInternalWorkResult,
+  type RecordRecoveryAttemptInput,
 } from "./control-center-service";
-export { startWebControlCenter, type StartWebControlCenterInput } from "./server";
+export {
+  startWebControlCenter,
+  type StartWebControlCenterInput,
+} from "./server";
 export { UsageService, type UsageResponse } from "./usage-service";
