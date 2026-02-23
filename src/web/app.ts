@@ -415,6 +415,51 @@ function controlCenterHtml(): string {
     details[open] summary .arrow {
       transform: rotate(90deg);
     }
+    .overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: var(--surface);
+      width: 90%;
+      height: 80%;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    .modal-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-body {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      background: #121514;
+      color: #d2f5e4;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+    }
+    .modal-footer {
+      padding: 8px 16px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: flex-end;
+    }
   </style>
 </head>
 <body>
@@ -561,9 +606,20 @@ function controlCenterHtml(): string {
         </thead>
         <tbody></tbody>
       </table>
-      <div class="small" style="margin-top: 10px;">Selected Agent Logs</div>
-      <pre id="agentLogs" class="mono small">Select an agent and click Logs.</pre>
     </section>
+
+    <div id="logOverlay" class="overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 style="margin:0;">Agent Logs: <span id="logModalTitle"></span></h3>
+          <button id="closeLogModal" class="secondary">Close</button>
+        </div>
+        <div id="logModalBody" class="modal-body"></div>
+        <div class="modal-footer">
+          <div id="logModalStatus" class="small muted">Streaming...</div>
+        </div>
+      </div>
+    </div>
   </main>
   <script>
     const webLogPath = document.getElementById("webLogPath");
@@ -579,7 +635,6 @@ function controlCenterHtml(): string {
     const taskDependencies = document.getElementById("taskDependencies");
     const agentTopTableBody = document.querySelector("#agentTopTable tbody");
     const agentTableBody = document.querySelector("#agentTable tbody");
-    const agentLogs = document.getElementById("agentLogs");
     const importTasksStatus = document.getElementById("importTasksStatus");
     const importTasksButton = document.getElementById("importTasksButton");
     const tabStrip = document.getElementById("tabStrip");
@@ -603,9 +658,29 @@ function controlCenterHtml(): string {
     let activeProjectName = INITIAL_PROJECT_NAME;
     let isSettingsActive = false;
     const projectStateCache = new Map();
+    let currentEventSource = null;
 
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
+
+    const logOverlay = document.getElementById("logOverlay");
+    const logModalTitle = document.getElementById("logModalTitle");
+    const logModalBody = document.getElementById("logModalBody");
+    const logModalStatus = document.getElementById("logModalStatus");
+    const closeLogModal = document.getElementById("closeLogModal");
+
+    function closeLogs() {
+      if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+      }
+      logOverlay.classList.add("hidden");
+    }
+
+    closeLogModal.onclick = closeLogs;
+    logOverlay.onclick = (e) => {
+      if (e.target === logOverlay) closeLogs();
+    };
 
     async function api(path, options = {}, timeoutMs = 0) {
       const controller = timeoutMs > 0 ? new AbortController() : undefined;
@@ -1319,13 +1394,41 @@ function controlCenterHtml(): string {
 
       if (action === "show-logs") {
         const agent = latestAgents.find((candidate) => candidate.id === id);
-        if (!agentLogs) {
-          return;
+        if (!agent) return;
+
+        if (currentEventSource) {
+          currentEventSource.close();
         }
 
-        const header = "Agent: " + (agent && agent.name ? agent.name : id);
-        const body = (agent && Array.isArray(agent.outputTail) ? agent.outputTail : []).join("\\n");
-        agentLogs.textContent = body ? header + "\\n\\n" + body : header + "\\n\\nNo logs captured yet.";
+        logModalTitle.textContent = agent.name || id;
+        logModalBody.textContent = "";
+        logModalStatus.textContent = "Connecting...";
+        logOverlay.classList.remove("hidden");
+
+        const source = new EventSource("/api/agents/" + id + "/logs/stream");
+        currentEventSource = source;
+
+        source.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === "output") {
+            const span = document.createElement("span");
+            span.textContent = data.line + "\\n";
+            logModalBody.appendChild(span);
+            logModalBody.scrollTop = logModalBody.scrollHeight;
+          } else if (data.type === "status") {
+            logModalStatus.textContent = "Agent status: " + data.status + ". Stream ended.";
+            source.close();
+            currentEventSource = null;
+          }
+        };
+
+        source.onerror = (err) => {
+          console.error("SSE error:", err);
+          logModalStatus.textContent = "Stream error or ended.";
+          source.close();
+          currentEventSource = null;
+        };
+
         return;
       }
 

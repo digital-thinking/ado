@@ -947,3 +947,67 @@ describe("agent top bar frontend (P12-007)", () => {
     );
   });
 });
+
+describe("SSE log viewer frontend (P12-010)", () => {
+  async function getHtml(): Promise<string> {
+    const app = createWebApp({
+      defaultAgentCwd: "/tmp",
+      control: {} as any,
+      agents: {
+        list: () => [],
+        subscribe: () => () => {},
+      } as any,
+      usage: { getLatest: async () => ({ available: false }) } as any,
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      availableWorkerAssignees: ["MOCK_CLI"],
+      projectName: "TestProject",
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [],
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+      webLogFilePath: "/tmp/web.log",
+      cliLogFilePath: "/tmp/cli.log",
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    return response.text();
+  }
+
+  test("HTML contains log overlay and modal elements", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="logOverlay"');
+    expect(html).toContain('id="logModalTitle"');
+    expect(html).toContain('id="logModalBody"');
+    expect(html).toContain('id="logModalStatus"');
+    expect(html).toContain('id="closeLogModal"');
+  });
+
+  test("HTML includes CSS for overlay and modal", async () => {
+    const html = await getHtml();
+    expect(html).toContain(".overlay");
+    expect(html).toContain(".modal");
+    expect(html).toContain(".modal-header");
+    expect(html).toContain(".modal-body");
+  });
+
+  test("HTML includes logic to open SSE stream and handle messages", async () => {
+    const html = await getHtml();
+    expect(html).toContain("new EventSource");
+    expect(html).toContain("source.onmessage");
+    expect(html).toContain('data.type === "output"');
+    expect(html).toContain('data.type === "status"');
+    expect(html).toContain(
+      "logModalBody.scrollTop = logModalBody.scrollHeight",
+    );
+  });
+
+  test("HTML includes logic to close stream and overlay", async () => {
+    const html = await getHtml();
+    expect(html).toContain("function closeLogs");
+    expect(html).toContain("currentEventSource.close()");
+    expect(html).toContain('logOverlay.classList.add("hidden")');
+  });
+});
