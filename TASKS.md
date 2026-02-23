@@ -164,7 +164,7 @@ Restructure the web UI around multi-project navigation: a persistent **Control C
 - [x] `P15-006` Refactor `/api/agents` enrichment path to be side-effect free and scalable: remove task-state mutation from the GET handler, move failure reconciliation to explicit orchestration/update hooks, and avoid loading every project state on each poll by using cached/indexed recovery metadata updated on state writes. Validate response parity. **Status: Done**. Deps: `P15-005`.
 - [x] `P15-007` Extract repeated CLI integration-test harness utilities (spawn wrapper, temp project/bootstrap helpers) into shared test helpers and migrate existing CLI command tests to those helpers. **Status: Done**. Deps: `P15-004`.
 - [x] `P15-008` Add targeted non-regression tests for refactors: phase-run happy path + recovery fallback, typed error classification coverage, JSON-parser utility coverage, command help/usage snapshots, and `/api/agents` enrichment behavior under multi-project polling. **Status: Done**. Deps: `P15-002`, `P15-003`, `P15-004`, `P15-006`, `P15-007`.
-- [ ] `P15-009` Create PR Task: open Phase 15 PR after coding tasks are done. Deps: `P15-008`.
+- [ ] `P15-009` Create PR Task: open Phase 15 PR after coding tasks are done. **Status: InProgress**. Deps: `P15-008`.
 
 ## Phase 16: Runtime Stability Refactor (BUGS.md)
 
