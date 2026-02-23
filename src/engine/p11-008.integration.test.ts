@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
+import { ClaudeAdapter } from "../adapters/claude-adapter";
 import { CodexAdapter } from "../adapters/codex-adapter";
+import { GeminiAdapter } from "../adapters/gemini-adapter";
 import { InteractiveModeError } from "../adapters/types";
 import { runCiIntegration } from "./ci-integration";
 import { DEFAULT_AUTH_POLICY, type AuthPolicy } from "../security/policy";
@@ -133,5 +135,261 @@ describe("P11-008 integration coverage", () => {
         setPhasePrUrl: async () => {},
       }),
     ).rejects.toThrow("reason: role-resolution-failed");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Non-interactive enforcement — cross-adapter runtime tamper detection
+  // ---------------------------------------------------------------------------
+
+  describe("non-interactive enforcement — cross-adapter runtime tamper detection", () => {
+    test("ClaudeAdapter — removing --print after construction causes InteractiveModeError on run()", async () => {
+      const runner = new MockProcessRunner([{ stdout: "should-not-run" }]);
+      const adapter = new ClaudeAdapter(runner);
+
+      // Tamper: strip the required --print flag from baseArgs after valid construction.
+      const baseArgs = (adapter as unknown as { baseArgs: string[] }).baseArgs;
+      baseArgs.splice(baseArgs.indexOf("--print"), 1);
+
+      await expect(
+        adapter.run({ prompt: "do work", cwd: "/repo" }),
+      ).rejects.toBeInstanceOf(InteractiveModeError);
+      expect(runner.calls).toHaveLength(0);
+    });
+
+    test("GeminiAdapter — removing --yolo after construction causes InteractiveModeError on run()", async () => {
+      const runner = new MockProcessRunner([{ stdout: "should-not-run" }]);
+      const adapter = new GeminiAdapter(runner);
+
+      // Tamper: strip the required --yolo flag from baseArgs after valid construction.
+      const baseArgs = (adapter as unknown as { baseArgs: string[] }).baseArgs;
+      baseArgs.splice(baseArgs.indexOf("--yolo"), 1);
+
+      await expect(
+        adapter.run({ prompt: "generate output", cwd: "/repo" }),
+      ).rejects.toBeInstanceOf(InteractiveModeError);
+      expect(runner.calls).toHaveLength(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Role gating — operator and viewer denied at orchestration level
+  // ---------------------------------------------------------------------------
+
+  describe("role gating — operator and viewer denied at CI integration orchestration level", () => {
+    test("operator role is denied — denylist-match on git:privileged:*, no subprocess runs", async () => {
+      const runner = new MockProcessRunner();
+
+      await expect(
+        runCiIntegration({
+          phaseId: PHASE.id,
+          phaseName: PHASE.name,
+          cwd: "/repo",
+          baseBranch: "main",
+          runner,
+          role: "operator",
+          policy: clonePolicy(DEFAULT_AUTH_POLICY),
+          setPhasePrUrl: async () => {},
+        }),
+      ).rejects.toBeInstanceOf(OrchestrationAuthorizationDeniedError);
+
+      expect(runner.calls).toHaveLength(0);
+    });
+
+    test("viewer role is denied — denylist blocks privileged actions, no subprocess runs", async () => {
+      const runner = new MockProcessRunner();
+
+      await expect(
+        runCiIntegration({
+          phaseId: PHASE.id,
+          phaseName: PHASE.name,
+          cwd: "/repo",
+          baseBranch: "main",
+          runner,
+          role: "viewer",
+          policy: clonePolicy(DEFAULT_AUTH_POLICY),
+          setPhasePrUrl: async () => {},
+        }),
+      ).rejects.toBeInstanceOf(OrchestrationAuthorizationDeniedError);
+
+      expect(runner.calls).toHaveLength(0);
+    });
+
+    test("OrchestrationAuthorizationDeniedError carries correct action, role, and reason for operator", async () => {
+      const err = await runCiIntegration({
+        phaseId: PHASE.id,
+        phaseName: PHASE.name,
+        cwd: "/repo",
+        baseBranch: "main",
+        runner: new MockProcessRunner(),
+        role: "operator",
+        policy: clonePolicy(DEFAULT_AUTH_POLICY),
+        setPhasePrUrl: async () => {},
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(OrchestrationAuthorizationDeniedError);
+      const denied = err as OrchestrationAuthorizationDeniedError;
+      expect(denied.name).toBe("OrchestrationAuthorizationDeniedError");
+      expect(denied.action).toBe(ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN);
+      expect(denied.role).toBe("operator");
+      expect(denied.reason).toBe("denylist-match");
+    });
+
+    test("OrchestrationAuthorizationDeniedError message includes action and reason", async () => {
+      const err = await runCiIntegration({
+        phaseId: PHASE.id,
+        phaseName: PHASE.name,
+        cwd: "/repo",
+        baseBranch: "main",
+        runner: new MockProcessRunner(),
+        role: "viewer",
+        policy: clonePolicy(DEFAULT_AUTH_POLICY),
+        setPhasePrUrl: async () => {},
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(OrchestrationAuthorizationDeniedError);
+      const denied = err as OrchestrationAuthorizationDeniedError;
+      expect(denied.message).toContain(ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN);
+      expect(denied.message).toContain("denylist-match");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Owner role — wildcard allowlist succeeds through full CI integration
+  // ---------------------------------------------------------------------------
+
+  describe("owner role — wildcard allowlist permits full CI integration flow", () => {
+    test("owner succeeds: push and PR create execute, result contains prUrl", async () => {
+      const runner = new MockProcessRunner([
+        { stdout: "feature/p11-008\n" },
+        { stdout: "" },
+        { stdout: "https://github.com/org/repo/pull/42\n" },
+      ]);
+
+      const result = await runCiIntegration({
+        phaseId: PHASE.id,
+        phaseName: PHASE.name,
+        cwd: "/repo",
+        baseBranch: "main",
+        runner,
+        role: "owner",
+        policy: clonePolicy(DEFAULT_AUTH_POLICY),
+        setPhasePrUrl: async () => {},
+      });
+
+      expect(result.prUrl).toBe("https://github.com/org/repo/pull/42");
+      expect(result.phaseId).toBe(PHASE.id);
+      expect(result.baseBranch).toBe("main");
+      // getCurrentBranch + pushBranch + createPullRequest = 3 subprocess calls
+      expect(runner.calls).toHaveLength(3);
+      expect(runner.calls[1]?.command).toBe("git");
+      expect(runner.calls[2]?.command).toBe("gh");
+    });
+
+    test("owner setPhasePrUrl callback receives the correct prUrl", async () => {
+      const runner = new MockProcessRunner([
+        { stdout: "feature/p11-008\n" },
+        { stdout: "" },
+        { stdout: "https://github.com/org/repo/pull/99\n" },
+      ]);
+
+      const captured: string[] = [];
+      await runCiIntegration({
+        phaseId: PHASE.id,
+        phaseName: PHASE.name,
+        cwd: "/repo",
+        baseBranch: "main",
+        runner,
+        role: "owner",
+        policy: clonePolicy(DEFAULT_AUTH_POLICY),
+        setPhasePrUrl: async ({ prUrl }) => {
+          captured.push(prUrl);
+        },
+      });
+
+      expect(captured).toEqual(["https://github.com/org/repo/pull/99"]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fail-closed — additional denial reasons in authorizeOrchestratorAction
+  // ---------------------------------------------------------------------------
+
+  describe("fail-closed — additional denial reasons surfaced by authorizeOrchestratorAction", () => {
+    test("role-resolution-failed when resolveSessionRole throws (not just returns null)", async () => {
+      const decision = await authorizeOrchestratorAction({
+        action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+        settingsFilePath: "<in-memory>",
+        session: { source: "cli" },
+        roleConfig: {},
+        loadPolicy: async () => DEFAULT_AUTH_POLICY,
+        resolveSessionRole: () => {
+          throw new Error("role resolver crashed");
+        },
+      });
+
+      expect(decision.decision).toBe("deny");
+      if (decision.decision === "deny") {
+        expect(decision.reason).toBe("role-resolution-failed");
+        expect(decision.message).toContain("role resolver crashed");
+      }
+    });
+
+    test("evaluator-error when getRequiredActions throws during profile evaluation", async () => {
+      const decision = await authorizeOrchestratorAction({
+        action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+        settingsFilePath: "<in-memory>",
+        session: { source: "cli" },
+        roleConfig: {},
+        loadPolicy: async () => DEFAULT_AUTH_POLICY,
+        resolveSessionRole: () => "admin",
+        getRequiredActions: () => {
+          throw new Error("profile lookup failed");
+        },
+      });
+
+      expect(decision.decision).toBe("deny");
+      if (decision.decision === "deny") {
+        expect(decision.reason).toBe("evaluator-error");
+        expect(decision.message).toContain("profile lookup failed");
+      }
+    });
+
+    test("missing-action-mapping for an unregistered orchestrator action", async () => {
+      const decision = await authorizeOrchestratorAction({
+        // Cast an unregistered action string into the typed parameter.
+        action:
+          "orchestrator:unknown:action" as typeof ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+        settingsFilePath: "<in-memory>",
+        session: { source: "cli" },
+        roleConfig: {},
+        loadPolicy: async () => DEFAULT_AUTH_POLICY,
+        resolveSessionRole: () => "admin",
+      });
+
+      expect(decision.decision).toBe("deny");
+      if (decision.decision === "deny") {
+        expect(decision.reason).toBe("missing-action-mapping");
+        expect(decision.role).toBe("admin");
+      }
+    });
+
+    test("policy-load-failed decision carries the original error message", async () => {
+      const decision = await authorizeOrchestratorAction({
+        action: ORCHESTRATOR_ACTIONS.STATUS_READ,
+        settingsFilePath: "<in-memory>",
+        session: { source: "cli" },
+        roleConfig: {},
+        loadPolicy: async () => {
+          throw new Error("ENOENT: policy file not found");
+        },
+      });
+
+      expect(decision.decision).toBe("deny");
+      if (decision.decision === "deny") {
+        expect(decision.reason).toBe("policy-load-failed");
+        expect(decision.role).toBeNull();
+        expect(decision.message).toContain("ENOENT");
+      }
+    });
   });
 });

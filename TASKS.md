@@ -111,8 +111,8 @@ Status markers:
 - [x] `P11-005` Implement fail-closed behavior across orchestration: on policy load failure, role resolution failure, evaluator error, or missing action mapping, block execution and emit denial reason. Deps: `P11-002`, `P11-004`.
 - [x] `P11-006` Add append-only audit logging (`.ixado/audit.log`) for all authorization decisions and privileged git actions with timestamp, actor, role, action, target, decision, reason, and command hash. Deps: `P11-005`.
 - [x] `P11-007` Add audit-log rotation/redaction policy and tests to ensure secrets/tokens are never logged in clear text. Deps: `P11-006`.
-- [ ] `P11-008` Add integration tests covering: non-interactive enforcement, denylist precedence, privileged git action authorization, and fail-closed startup/runtime paths. Deps: `P11-005`, `P11-007`.
-- [ ] `P11-009` Create PR Task: open Phase 11 PR after coding tasks are done. Deps: `P11-008`.
+- [x] `P11-008` Add integration tests covering: non-interactive enforcement, denylist precedence, privileged git action authorization, and fail-closed startup/runtime paths. Deps: `P11-005`, `P11-007`.
+- [x] `P11-009` Create PR Task: open Phase 11 PR after coding tasks are done. Deps: `P11-008`.
 
 ## Phase 12: Web UI – Project Tabs, Global Control Center & Settings
 
