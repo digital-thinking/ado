@@ -54,7 +54,11 @@ describe("AgentSupervisor", () => {
 
   test("starts, lists, and kills an agent", () => {
     const child = createFakeChild();
-    const spawnCalls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
+    const spawnCalls: Array<{
+      command: string;
+      args: string[];
+      options: SpawnOptions;
+    }> = [];
 
     const supervisor = new AgentSupervisor((command, args, options) => {
       spawnCalls.push({ command, args, options });
@@ -66,6 +70,7 @@ describe("AgentSupervisor", () => {
       command: "bun",
       args: ["run", "task"],
       cwd: "C:/repo",
+      approvedAdapterSpawn: true,
       taskId: "task-123",
     });
 
@@ -93,6 +98,7 @@ describe("AgentSupervisor", () => {
       command: "bun",
       args: [],
       cwd: "C:/repo",
+      approvedAdapterSpawn: true,
     });
 
     const restarted = supervisor.restart(started.id);
@@ -109,6 +115,7 @@ describe("AgentSupervisor", () => {
       name: "Worker 3",
       command: "bun",
       cwd: "C:/repo",
+      approvedAdapterSpawn: true,
     });
 
     child.stdout.write("line one\n");
@@ -117,7 +124,9 @@ describe("AgentSupervisor", () => {
 
     const listed = supervisor.list().find((agent) => agent.id === started.id);
     expect(listed?.status).toBe("FAILED");
-    expect(listed?.outputTail.some((line) => line.includes("line one"))).toBe(true);
+    expect(listed?.outputTail.some((line) => line.includes("line one"))).toBe(
+      true,
+    );
     expect(listed?.lastExitCode).toBe(2);
   });
 
@@ -128,6 +137,7 @@ describe("AgentSupervisor", () => {
       name: "Worker 4",
       command: "bun",
       cwd: "C:/repo",
+      approvedAdapterSpawn: true,
     });
 
     const assigned = supervisor.assign(started.id, {
@@ -151,6 +161,7 @@ describe("AgentSupervisor", () => {
       command: "codex",
       args: ["run", "prompt"],
       cwd: "C:/repo",
+      approvedAdapterSpawn: true,
       phaseId: "phase-1",
       taskId: "task-1",
     });
@@ -165,6 +176,20 @@ describe("AgentSupervisor", () => {
     expect(result.stderr).toContain("world");
     expect(listed?.status).toBe("STOPPED");
     expect(listed?.taskId).toBe("task-1");
+  });
+
+  test("rejects raw command starts that are not adapter-approved", () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+
+    expect(() =>
+      supervisor.start({
+        name: "Blocked worker",
+        command: "bash",
+        args: ["-lc", "echo hi"],
+        cwd: "C:/repo",
+      }),
+    ).toThrow("raw agent command execution is blocked");
   });
 
   test("shares tracked agents through registry file", () => {
@@ -183,6 +208,7 @@ describe("AgentSupervisor", () => {
       command: "codex",
       args: ["run", "x"],
       cwd: "C:/repo",
+      approvedAdapterSpawn: true,
       taskId: "task-shared",
     });
 

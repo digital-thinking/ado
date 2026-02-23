@@ -105,8 +105,8 @@ Status markers:
 ## Phase 11: Command Gating, Privileged Git Actions, and Auditability
 
 - [x] `P11-001` Enforce non-interactive execution for Claude/Codex/Gemini adapters (`--print`/batch mode equivalents) and fail if interactive mode is requested or detected. Deps: `P10-007`.
-- [ ] `P11-002` Add runtime guard to block raw shell execution paths that bypass adapter command templates; only approved adapter command builders may spawn child processes. Deps: `P11-001`.
-- [ ] `P11-003` Implement ixado-owned privileged git action wrapper (branch creation, rebase, push, PR open/merge) requiring explicit policy permission `git:privileged:*`. Deps: `P10-007`.
+- [x] `P11-002` Add runtime guard to block raw shell execution paths that bypass adapter command templates; only approved adapter command builders may spawn child processes. Deps: `P11-001`.
+- [x] `P11-003` Implement ixado-owned privileged git action wrapper (branch creation, rebase, push, PR open/merge) requiring explicit policy permission `git:privileged:*`. Deps: `P10-007`.
 - [ ] `P11-004` Wire authorization checks before every privileged GitManager/GitHubManager operation and return structured `AuthorizationDenied` errors. Deps: `P11-003`.
 - [ ] `P11-005` Implement fail-closed behavior across orchestration: on policy load failure, role resolution failure, evaluator error, or missing action mapping, block execution and emit denial reason. Deps: `P11-002`, `P11-004`.
 - [ ] `P11-006` Add append-only audit logging (`.ixado/audit.log`) for all authorization decisions and privileged git actions with timestamp, actor, role, action, target, decision, reason, and command hash. Deps: `P11-005`.

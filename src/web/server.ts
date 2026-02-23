@@ -3,12 +3,20 @@ import { createServer } from "node:net";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
-import { buildAdapterExecutionPlan, CodexUsageTracker, createAdapter } from "../adapters";
+import {
+  buildAdapterExecutionPlan,
+  CodexUsageTracker,
+  createAdapter,
+} from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
 import { loadCliSettings, saveCliSettings } from "../cli/settings";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
-import { CLI_ADAPTER_IDS, type CLIAdapterId, type CliAgentSettings } from "../types";
+import {
+  CLI_ADAPTER_IDS,
+  type CLIAdapterId,
+  type CliAgentSettings,
+} from "../types";
 import { AgentSupervisor } from "./agent-supervisor";
 import { createWebApp } from "./app";
 import { ControlCenterService } from "./control-center-service";
@@ -34,7 +42,9 @@ export type WebControlCenterRuntime = {
 
 const WEB_SERVER_HOST = "127.0.0.1";
 
-async function resolveWebPort(requestedPort: number | undefined): Promise<number> {
+async function resolveWebPort(
+  requestedPort: number | undefined,
+): Promise<number> {
   if (requestedPort !== 0) {
     return requestedPort ?? 8787;
   }
@@ -81,7 +91,7 @@ function isMissingCommandError(error: unknown): boolean {
 }
 
 export async function startWebControlCenter(
-  input: StartWebControlCenterInput
+  input: StartWebControlCenterInput,
 ): Promise<WebControlCenterRuntime> {
   if (!input.cwd.trim()) {
     throw new Error("cwd must not be empty.");
@@ -97,7 +107,7 @@ export async function startWebControlCenter(
   }
   if (!input.agentSettings[input.defaultInternalWorkAssignee].enabled) {
     throw new Error(
-      `defaultInternalWorkAssignee '${input.defaultInternalWorkAssignee}' must be enabled in agent settings.`
+      `defaultInternalWorkAssignee '${input.defaultInternalWorkAssignee}' must be enabled in agent settings.`,
     );
   }
 
@@ -116,9 +126,11 @@ export async function startWebControlCenter(
     async (workInput) => {
       const assigneeSettings = input.agentSettings[workInput.assignee];
       if (!assigneeSettings.enabled) {
-        const available = CLI_ADAPTER_IDS.filter((adapterId) => input.agentSettings[adapterId].enabled);
+        const available = CLI_ADAPTER_IDS.filter(
+          (adapterId) => input.agentSettings[adapterId].enabled,
+        );
         throw new Error(
-          `Agent '${workInput.assignee}' is disabled. Available agents: ${available.join(", ")}.`
+          `Agent '${workInput.assignee}' is disabled. Available agents: ${available.join(", ")}.`,
         );
       }
 
@@ -141,7 +153,7 @@ export async function startWebControlCenter(
         ? `${workInput.assignee} task worker`
         : `${workInput.assignee} internal worker`;
       console.info(
-        `[web][internal] starting adapter=${workInput.assignee} command=${adapter.contract.command}`
+        `[web][internal] starting adapter=${workInput.assignee} command=${adapter.contract.command}`,
       );
       const result = await (async () => {
         try {
@@ -152,6 +164,7 @@ export async function startWebControlCenter(
             cwd: input.cwd,
             timeoutMs: assigneeSettings.timeoutMs,
             stdin,
+            approvedAdapterSpawn: true,
             phaseId: workInput.phaseId,
             taskId: workInput.taskId,
           });
@@ -165,7 +178,8 @@ export async function startWebControlCenter(
           });
           return runResult;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           await writeOutputLog({
             outputFilePath: artifacts.outputFilePath,
             command: adapter.contract.command,
@@ -174,7 +188,7 @@ export async function startWebControlCenter(
           });
           if (isMissingCommandError(error)) {
             throw new Error(
-              `Internal work adapter '${workInput.assignee}' is configured to use '${adapter.contract.command}', but that command is not installed or not on PATH. Install it or choose another adapter in 'ixado onboard' / the web UI.`
+              `Internal work adapter '${workInput.assignee}' is configured to use '${adapter.contract.command}', but that command is not installed or not on PATH. Install it or choose another adapter in 'ixado onboard' / the web UI.`,
             );
           }
 
@@ -182,7 +196,7 @@ export async function startWebControlCenter(
         }
       })();
       console.info(
-        `[web][internal] completed adapter=${workInput.assignee} durationMs=${result.durationMs} stdoutLen=${result.stdout.length} stderrLen=${result.stderr.length}`
+        `[web][internal] completed adapter=${workInput.assignee} durationMs=${result.durationMs} stdoutLen=${result.stdout.length} stderrLen=${result.stderr.length}`,
       );
 
       return {
@@ -199,13 +213,17 @@ export async function startWebControlCenter(
         args: ["reset", "--hard"],
         cwd: input.cwd,
       });
-    }
+    },
   );
   await control.ensureInitialized(input.projectName, input.cwd);
 
-  const usage = new UsageService(new CodexUsageTracker(processManager), input.cwd, {
-    codexbarEnabled: settings.usage.codexbarEnabled,
-  });
+  const usage = new UsageService(
+    new CodexUsageTracker(processManager),
+    input.cwd,
+    {
+      codexbarEnabled: settings.usage.codexbarEnabled,
+    },
+  );
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
   const app = createWebApp({
     control,
@@ -215,15 +233,17 @@ export async function startWebControlCenter(
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     defaultAutoMode: input.defaultAutoMode,
     availableWorkerAssignees: CLI_ADAPTER_IDS.filter(
-      (adapterId) => input.agentSettings[adapterId].enabled
+      (adapterId) => input.agentSettings[adapterId].enabled,
     ),
     getRuntimeConfig: async () => runtimeConfig,
     updateRuntimeConfig: async (next) => {
       const currentSettings = await loadCliSettings(input.settingsFilePath);
-      const assignee = next.defaultInternalWorkAssignee ?? currentSettings.internalWork.assignee;
+      const assignee =
+        next.defaultInternalWorkAssignee ??
+        currentSettings.internalWork.assignee;
       if (!input.agentSettings[assignee].enabled) {
         throw new Error(
-          `defaultInternalWorkAssignee '${assignee}' must be enabled in agent settings.`
+          `defaultInternalWorkAssignee '${assignee}' must be enabled in agent settings.`,
         );
       }
       const autoMode =

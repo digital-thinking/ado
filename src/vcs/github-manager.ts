@@ -8,7 +8,12 @@ export type CreatePullRequestInput = {
   cwd: string;
 };
 
-export type CiCheckState = "PENDING" | "SUCCESS" | "FAILURE" | "CANCELLED" | "UNKNOWN";
+export type CiCheckState =
+  | "PENDING"
+  | "SUCCESS"
+  | "FAILURE"
+  | "CANCELLED"
+  | "UNKNOWN";
 
 export type CiCheck = {
   name: string;
@@ -18,6 +23,13 @@ export type CiCheck = {
 export type CiStatusSummary = {
   overall: CiCheckState;
   checks: CiCheck[];
+};
+
+export type MergePullRequestInput = {
+  prNumber: number;
+  cwd: string;
+  /** Merge strategy forwarded to `gh pr merge`. Defaults to "merge". */
+  mergeMethod?: "merge" | "squash" | "rebase";
 };
 
 export type PollCiStatusInput = {
@@ -39,7 +51,11 @@ function normalizeCheckState(rawCheck: Record<string, unknown>): CiCheckState {
   const status = toUpperText(rawCheck.status ?? rawCheck.state);
   const conclusion = toUpperText(rawCheck.conclusion ?? rawCheck.result);
 
-  if (["QUEUED", "IN_PROGRESS", "PENDING", "REQUESTED", "WAITING"].includes(status)) {
+  if (
+    ["QUEUED", "IN_PROGRESS", "PENDING", "REQUESTED", "WAITING"].includes(
+      status,
+    )
+  ) {
     return "PENDING";
   }
 
@@ -51,7 +67,11 @@ function normalizeCheckState(rawCheck: Record<string, unknown>): CiCheckState {
     return "CANCELLED";
   }
 
-  if (["FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(conclusion)) {
+  if (
+    ["FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(
+      conclusion,
+    )
+  ) {
     return "FAILURE";
   }
 
@@ -67,7 +87,11 @@ function computeOverallState(checks: CiCheck[]): CiCheckState {
     return "FAILURE";
   }
 
-  if (checks.some((check) => check.state === "PENDING" || check.state === "UNKNOWN")) {
+  if (
+    checks.some(
+      (check) => check.state === "PENDING" || check.state === "UNKNOWN",
+    )
+  ) {
     return "PENDING";
   }
 
@@ -119,6 +143,20 @@ export class GitHubManager {
     return url;
   }
 
+  async mergePullRequest(input: MergePullRequestInput): Promise<void> {
+    if (input.prNumber <= 0 || !Number.isInteger(input.prNumber)) {
+      throw new Error("prNumber must be a positive integer.");
+    }
+
+    const mergeFlag = `--${input.mergeMethod ?? "merge"}`;
+
+    await this.runner.run({
+      command: "gh",
+      args: ["pr", "merge", String(input.prNumber), mergeFlag, "--auto"],
+      cwd: input.cwd,
+    });
+  }
+
   async getCiStatus(prNumber: number, cwd: string): Promise<CiStatusSummary> {
     const result = await this.runner.run({
       command: "gh",
@@ -165,7 +203,9 @@ export class GitHubManager {
       }
 
       if (Date.now() - startedAt >= timeoutMs) {
-        throw new Error(`CI polling timed out after ${timeoutMs}ms for PR #${input.prNumber}.`);
+        throw new Error(
+          `CI polling timed out after ${timeoutMs}ms for PR #${input.prNumber}.`,
+        );
       }
 
       await new Promise<void>((resolve) => {

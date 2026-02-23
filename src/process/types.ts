@@ -7,6 +7,13 @@ export type ProcessRunOptions = {
   env?: NodeJS.ProcessEnv;
   stdin?: string;
   timeoutMs?: number;
+  /**
+   * Runtime guard: must be set to `true` by an approved command builder class
+   * (e.g. GitManager, GitHubManager, BaseCliAdapter).  Direct callers that
+   * omit this flag will be rejected by ProcessManager, preventing raw shell
+   * execution paths from bypassing the typed command-builder layer.
+   */
+  approvedCommandBuilder?: boolean;
 };
 
 export type ProcessRunResult = {
@@ -27,5 +34,5 @@ export interface ProcessRunner {
 export type SpawnFn = (
   command: string,
   args: string[],
-  options: SpawnOptions
+  options: SpawnOptions,
 ) => ChildProcess;

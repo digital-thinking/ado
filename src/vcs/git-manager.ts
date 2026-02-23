@@ -26,6 +26,12 @@ export type PushBranchInput = {
   setUpstream?: boolean;
 };
 
+export type RebaseInput = {
+  /** Target ref to rebase the current branch onto (e.g. "main", "origin/main"). */
+  onto: string;
+  cwd: string;
+};
+
 export class GitManager {
   private readonly runner: ProcessRunner;
 
@@ -120,6 +126,18 @@ export class GitManager {
     await this.runner.run({
       command: "git",
       args,
+      cwd: input.cwd,
+    });
+  }
+
+  async rebase(input: RebaseInput): Promise<void> {
+    if (!input.onto.trim()) {
+      throw new Error("onto must not be empty.");
+    }
+
+    await this.runner.run({
+      command: "git",
+      args: ["rebase", input.onto],
       cwd: input.cwd,
     });
   }
