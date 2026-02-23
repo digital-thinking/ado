@@ -1,1 +1,1 @@
-P15-005 — Split web control-center frontend script into focused modules while preserving behavior.
+P15-006 — Refactor /api/agents enrichment path to be side-effect free and scalable.
