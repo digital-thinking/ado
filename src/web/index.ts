@@ -10,6 +10,7 @@ export {
   ControlCenterService,
   type CreatePhaseInput,
   type CreateTaskInput,
+  type UpdateTaskInput,
   type ActivePhaseTasksView,
   type ImportTasksMarkdownResult,
   type SetActivePhaseInput,

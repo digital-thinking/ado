@@ -14,6 +14,7 @@ import type {
   RecordRecoveryAttemptInput,
   SetActivePhaseInput,
   StartTaskInput,
+  UpdateTaskInput,
 } from "./control-center-service";
 import type { UsageService } from "./usage-service";
 import type {
@@ -41,6 +42,9 @@ type ControlCenterControl = {
   createTask(
     input: CreateTaskInput & { projectName?: string },
   ): ReturnType<ControlCenterService["createTask"]>;
+  updateTask(
+    input: UpdateTaskInput & { projectName?: string },
+  ): ReturnType<ControlCenterService["updateTask"]>;
   setActivePhase(
     input: SetActivePhaseInput & { projectName?: string },
   ): ReturnType<ControlCenterService["setActivePhase"]>;
@@ -330,12 +334,36 @@ function controlCenterHtml(): string {
       margin-top: 8px;
       display: grid;
       gap: 6px;
+      position: relative;
     }
     .task-run-controls {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 8px;
       align-items: center;
+    }
+    .task-edit-inline {
+      display: grid;
+      gap: 6px;
+    }
+    .task-edit-inline textarea {
+      resize: vertical;
+      min-height: 72px;
+    }
+    .task-edit-corner {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      min-width: 28px;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      line-height: 1;
     }
     .dep-list { display: flex; flex-wrap: wrap; gap: 6px; }
     .dep-pill {
@@ -1004,6 +1032,34 @@ function controlCenterHtml(): string {
                 const depsHtml = depItems.length
                   ? depItems.join("")
                   : '<span class="small muted">No dependencies</span>';
+                const dependencyOptionsHtml = state.phases.map((candidatePhase) => {
+                  return (candidatePhase.tasks || []).map((candidateTask, index) => {
+                    if (candidateTask.id === task.id) {
+                      return "";
+                    }
+                    const selected = (task.dependencies || []).includes(candidateTask.id)
+                      ? " selected"
+                      : "";
+                    const label =
+                      candidatePhase.name +
+                      " :: " +
+                      (index + 1) +
+                      ". [" +
+                      candidateTask.status +
+                      "] " +
+                      candidateTask.title;
+                    return (
+                      '<option value="' +
+                      escapeHtml(candidateTask.id) +
+                      '"' +
+                      selected +
+                      ">" +
+                      escapeHtml(label) +
+                      "</option>"
+                    );
+                  }).join("");
+                }).join("");
+                const editDisabled = task.status === "IN_PROGRESS";
 
                 const optionsHtml = ['<option value="">Assign agent...</option>']
                   .concat(
@@ -1070,18 +1126,37 @@ function controlCenterHtml(): string {
 
                 return (
                   '<div class="task-card">' +
-                    '<div><strong>' + escapeHtml(task.title) + '</strong></div>' +
-                    '<div class="small">' + escapeHtml(task.description) + '</div>' +
-                    '<div class="small">Status: <span class="mono">' + escapeHtml(task.status) + '</span> | Worker: <span class="mono">' + escapeHtml(task.assignee) + "</span>" +
+                    '<button type="button" class="secondary task-edit-toggle-button task-edit-corner" title="Edit task" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '"' + (editDisabled ? " disabled" : "") + '>&#9998;</button>' +
+                    '<div class="task-view-inline">' +
+                      '<div><strong>' + escapeHtml(task.title) + '</strong></div>' +
+                      '<div class="small">' + escapeHtml(task.description) + '</div>' +
+                      '<div class="small">Status: <span class="mono">' + escapeHtml(task.status) + '</span> | Worker: <span class="mono">' + escapeHtml(task.assignee) + "</span>" +
+                        (latestRecovery
+                          ? ' <span class="pill" title="' + escapeHtml(latestRecovery.result.reasoning || "") + '">! recovery ' + escapeHtml(latestRecovery.result.status || "unknown") + '</span>'
+                          : "") +
+                      "</div>" +
                       (latestRecovery
-                        ? ' <span class="pill" title="' + escapeHtml(latestRecovery.result.reasoning || "") + '">! recovery ' + escapeHtml(latestRecovery.result.status || "unknown") + '</span>'
+                        ? '<div class="small">Recovery: <span class="mono">' + escapeHtml(latestRecovery.result.status || "unknown") + '</span> - ' + escapeHtml(latestRecovery.result.reasoning || "") + "</div>"
+                        : "") +
+                      '<div class="small">Dependencies:</div>' +
+                      '<div class="dep-list">' + depsHtml + "</div>" +
+                      (editDisabled
+                        ? '<div class="small muted">Editing disabled while task is IN_PROGRESS.</div>'
                         : "") +
                     "</div>" +
-                    (latestRecovery
-                      ? '<div class="small">Recovery: <span class="mono">' + escapeHtml(latestRecovery.result.status || "unknown") + '</span> - ' + escapeHtml(latestRecovery.result.reasoning || "") + "</div>"
-                      : "") +
-                    '<div class="small">Dependencies:</div>' +
-                    '<div class="dep-list">' + depsHtml + '</div>' +
+                    '<div class="task-edit-inline hidden">' +
+                      '<label class="small">Title</label>' +
+                      '<input class="task-edit-title" value="' + escapeHtml(task.title) + '" />' +
+                      '<label class="small">Description</label>' +
+                      '<textarea class="task-edit-description" rows="3">' + escapeHtml(task.description) + "</textarea>" +
+                      '<label class="small">Dependencies</label>' +
+                      '<select class="task-edit-dependencies" multiple size="6">' + dependencyOptionsHtml + "</select>" +
+                      '<div class="row">' +
+                        '<button type="button" class="secondary task-edit-save-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '">Save</button>' +
+                        '<button type="button" class="secondary task-edit-cancel-button">Cancel</button>' +
+                      "</div>" +
+                      '<div class="error task-edit-error"></div>' +
+                    "</div>" +
                     assigneeControl +
                   "</div>"
                 );
@@ -1300,6 +1375,100 @@ function controlCenterHtml(): string {
         return;
       }
 
+      if (target.classList.contains("task-edit-toggle-button")) {
+        const taskCard = target.closest(".task-card");
+        const viewPanel = taskCard ? taskCard.querySelector(".task-view-inline") : null;
+        const editPanel = taskCard ? taskCard.querySelector(".task-edit-inline") : null;
+        const editError = taskCard ? taskCard.querySelector(".task-edit-error") : null;
+        if (!(editPanel instanceof HTMLElement)) {
+          return;
+        }
+        if (!(viewPanel instanceof HTMLElement)) {
+          return;
+        }
+
+        setError("kanbanError", "");
+        if (editError instanceof HTMLElement) {
+          editError.textContent = "";
+        }
+        const isHidden = editPanel.classList.contains("hidden");
+        editPanel.classList.toggle("hidden", !isHidden);
+        viewPanel.classList.toggle("hidden", isHidden);
+        return;
+      }
+
+      if (target.classList.contains("task-edit-cancel-button")) {
+        const taskCard = target.closest(".task-card");
+        const viewPanel = taskCard ? taskCard.querySelector(".task-view-inline") : null;
+        const editPanel = taskCard ? taskCard.querySelector(".task-edit-inline") : null;
+        const editError = taskCard ? taskCard.querySelector(".task-edit-error") : null;
+        if (editError instanceof HTMLElement) {
+          editError.textContent = "";
+        }
+        if (viewPanel instanceof HTMLElement) {
+          viewPanel.classList.remove("hidden");
+        }
+        if (editPanel instanceof HTMLElement) {
+          editPanel.classList.add("hidden");
+        }
+        return;
+      }
+
+      if (target.classList.contains("task-edit-save-button")) {
+        const taskId = target.getAttribute("data-task-id") || "";
+        const phaseId = target.getAttribute("data-phase-id") || "";
+        const taskCard = target.closest(".task-card");
+        const titleInput = taskCard ? taskCard.querySelector(".task-edit-title") : null;
+        const descriptionInput = taskCard ? taskCard.querySelector(".task-edit-description") : null;
+        const dependenciesSelect = taskCard ? taskCard.querySelector(".task-edit-dependencies") : null;
+        const editError = taskCard ? taskCard.querySelector(".task-edit-error") : null;
+        if (!phaseId || !taskId) {
+          return;
+        }
+        if (!(titleInput instanceof HTMLInputElement)) {
+          return;
+        }
+        if (!(descriptionInput instanceof HTMLTextAreaElement)) {
+          return;
+        }
+
+        const dependencies =
+          dependenciesSelect instanceof HTMLSelectElement
+            ? Array.from(dependenciesSelect.selectedOptions)
+                .map((option) => option.value)
+                .filter(Boolean)
+            : [];
+
+        setError("kanbanError", "");
+        if (editError instanceof HTMLElement) {
+          editError.textContent = "";
+        }
+        target.disabled = true;
+        try {
+          await api("/api/tasks/" + encodeURIComponent(taskId), {
+            method: "PATCH",
+            body: JSON.stringify({
+              phaseId,
+              taskId,
+              title: titleInput.value,
+              description: descriptionInput.value,
+              dependencies,
+              projectName: activeProjectName,
+            }),
+          });
+          await refreshActiveProject();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setError("kanbanError", message);
+          if (editError instanceof HTMLElement) {
+            editError.textContent = message;
+          }
+        } finally {
+          target.disabled = false;
+        }
+        return;
+      }
+
       if (target.classList.contains("task-run-button")) {
         const taskId = target.getAttribute("data-task-id") || "";
         const phaseId = target.getAttribute("data-phase-id") || "";
@@ -1353,6 +1522,7 @@ function controlCenterHtml(): string {
             assigneeSelect.disabled = false;
           }
         }
+        return;
       }
 
       if (target.classList.contains("task-reset-button")) {
@@ -1388,6 +1558,7 @@ function controlCenterHtml(): string {
         } finally {
           target.disabled = false;
         }
+        return;
       }
     });
 
@@ -1547,6 +1718,27 @@ function controlCenterHtml(): string {
       }
     });
 
+    function isProjectUiInteractionActive() {
+      const openInlineEditor = kanbanBoard.querySelector(".task-edit-inline:not(.hidden)");
+      if (openInlineEditor) {
+        return true;
+      }
+
+      const activeElement = document.activeElement;
+      if (
+        !(activeElement instanceof HTMLInputElement) &&
+        !(activeElement instanceof HTMLTextAreaElement) &&
+        !(activeElement instanceof HTMLSelectElement)
+      ) {
+        return false;
+      }
+
+      return (
+        activeElement.closest("#projectContent") !== null ||
+        activeElement.closest("#executionSettingsPanel") !== null
+      );
+    }
+
     async function init() {
       await refreshProjects();
       await switchProject(activeProjectName);
@@ -1554,7 +1746,9 @@ function controlCenterHtml(): string {
       
       setInterval(() => {
         globalRefresh().catch(handleRefreshError);
-        refreshActiveProject().catch(handleRefreshError);
+        if (!isProjectUiInteractionActive()) {
+          refreshActiveProject().catch(handleRefreshError);
+        }
       }, 5000);
     }
 
@@ -1687,6 +1881,27 @@ export function createWebApp(deps: WebAppDependencies): {
             projectName: asString(body.projectName),
           });
           return json(state, 201);
+        }
+
+        const updateTaskMatch = /^\/api\/tasks\/([^/]+)$/.exec(url.pathname);
+        if (request.method === "PATCH" && updateTaskMatch) {
+          const body = await readJson(request);
+          const dependenciesRaw = body.dependencies;
+          const dependencies = Array.isArray(dependenciesRaw)
+            ? dependenciesRaw.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [];
+
+          const state = await deps.control.updateTask({
+            phaseId: asString(body.phaseId) ?? "",
+            taskId: decodeURIComponent(updateTaskMatch[1]),
+            title: asString(body.title) ?? "",
+            description: asString(body.description) ?? "",
+            dependencies,
+            projectName: asString(body.projectName),
+          });
+          return json(state, 200);
         }
 
         if (request.method === "POST" && url.pathname === "/api/tasks/start") {

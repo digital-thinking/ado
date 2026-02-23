@@ -10,6 +10,7 @@ describe("settings tab frontend (P12-008)", () => {
         getState: async () => ({}) as never,
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
+        updateTask: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,

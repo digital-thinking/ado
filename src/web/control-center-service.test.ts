@@ -48,6 +48,62 @@ describe("ControlCenterService", () => {
     expect(afterTask.phases[0].tasks[0].assignee).toBe("CODEX_CLI");
   });
 
+  test("updates task title, description, and dependencies", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+    const firstTaskState = await service.createTask({
+      phaseId,
+      title: "Task A",
+      description: "First task",
+    });
+    const dependencyTaskId = firstTaskState.phases[0].tasks[0].id;
+    const secondTaskState = await service.createTask({
+      phaseId,
+      title: "Task B",
+      description: "Second task",
+    });
+    const taskId = secondTaskState.phases[0].tasks[1].id;
+
+    const updated = await service.updateTask({
+      phaseId,
+      taskId,
+      title: "Task B updated",
+      description: "Second task updated",
+      dependencies: [dependencyTaskId],
+    });
+
+    expect(updated.phases[0].tasks[1].title).toBe("Task B updated");
+    expect(updated.phases[0].tasks[1].description).toBe("Second task updated");
+    expect(updated.phases[0].tasks[1].dependencies).toEqual([dependencyTaskId]);
+  });
+
+  test("fails fast when updating task with missing dependency", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Task A",
+      description: "First task",
+    });
+    const taskId = taskState.phases[0].tasks[0].id;
+
+    await expect(
+      service.updateTask({
+        phaseId,
+        taskId,
+        title: "Task A updated",
+        description: "Still first task",
+        dependencies: ["missing-dependency-id"],
+      }),
+    ).rejects.toThrow("Task has invalid dependency reference");
+  });
+
   test("fails fast on invalid task target phase", async () => {
     await expect(
       service.createTask({

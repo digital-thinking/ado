@@ -253,6 +253,7 @@ export async function startWebControlCenter(
       getState: (name) => control.getState(name),
       createPhase: (input) => control.createPhase(input),
       createTask: (input) => control.createTask(input),
+      updateTask: (input) => control.updateTask(input),
       setActivePhase: (input) => control.setActivePhase(input),
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),

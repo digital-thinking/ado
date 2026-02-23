@@ -8,6 +8,7 @@ import type {
   RunInternalWorkInput,
   SetActivePhaseInput,
   StartTaskInput,
+  UpdateTaskInput,
 } from "./control-center-service";
 import type { CLIAdapterId, ProjectRecord } from "../types";
 
@@ -89,6 +90,22 @@ describe("web app api", () => {
             assignee: input.assignee ?? "UNASSIGNED",
             dependencies: input.dependencies ?? [],
           });
+          return state as never;
+        },
+        updateTask: async (
+          input: UpdateTaskInput & { projectName?: string },
+        ) => {
+          const phase = state.phases.find((item) => item.id === input.phaseId);
+          if (!phase) {
+            throw new Error("Phase not found");
+          }
+          const task = phase.tasks.find((item) => item.id === input.taskId);
+          if (!task) {
+            throw new Error("Task not found");
+          }
+          task.title = input.title;
+          task.description = input.description;
+          task.dependencies = input.dependencies;
           return state as never;
         },
         setActivePhase: async (
@@ -290,6 +307,7 @@ describe("web app api", () => {
     const htmlContent = await htmlResponse.text();
     expect(htmlContent).toContain("IxADO Control Center");
     expect(htmlContent).toContain("Phase Kanban");
+    expect(htmlContent).toContain("task-edit-toggle-button");
 
     const createPhaseResponse = await app.fetch(
       new Request("http://localhost/api/phases", {
@@ -322,6 +340,25 @@ describe("web app api", () => {
     const statePayload = (await stateResponse.json()) as TestState;
     expect(statePayload.phases).toHaveLength(1);
     expect(statePayload.phases[0].tasks).toHaveLength(1);
+
+    const updateTaskResponse = await app.fetch(
+      new Request("http://localhost/api/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          phaseId: "phase-1",
+          title: "Build page v2",
+          description: "Implement dashboard and editing",
+          dependencies: [],
+        }),
+      }),
+    );
+    expect(updateTaskResponse.status).toBe(200);
+    const updatedState = (await updateTaskResponse.json()) as TestState;
+    expect(updatedState.phases[0].tasks[0].title).toBe("Build page v2");
+    expect(updatedState.phases[0].tasks[0].description).toBe(
+      "Implement dashboard and editing",
+    );
 
     const runtimeConfigResponse = await app.fetch(
       new Request("http://localhost/api/runtime-config"),
@@ -518,6 +555,7 @@ describe("multi-project api", () => {
           ({}) as never,
         createPhase: async (_input: unknown) => ({}) as never,
         createTask: async (_input: unknown) => ({}) as never,
+        updateTask: async (_input: unknown) => ({}) as never,
         setActivePhase: async (_input: unknown) => ({}) as never,
         startTask: async (_input: unknown) => ({}) as never,
         resetTaskToTodo: async (_input: unknown) => ({}) as never,
@@ -791,6 +829,7 @@ describe("project tabs frontend (P12-006)", () => {
         getState: async () => ({}) as never,
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
+        updateTask: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
@@ -880,6 +919,7 @@ describe("agent top bar frontend (P12-007)", () => {
         getState: async () => ({}) as never,
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
+        updateTask: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,

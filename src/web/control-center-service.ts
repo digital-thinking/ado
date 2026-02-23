@@ -68,6 +68,14 @@ export type CreateTaskInput = {
   status?: Task["status"];
 };
 
+export type UpdateTaskInput = {
+  phaseId: string;
+  taskId: string;
+  title: string;
+  description: string;
+  dependencies: string[];
+};
+
 export type RunInternalWorkInput = {
   assignee: CLIAdapterId;
   prompt: string;
@@ -472,6 +480,92 @@ export class ControlCenterService {
     nextPhases[phaseIndex] = {
       ...nextPhases[phaseIndex],
       tasks: [...nextPhases[phaseIndex].tasks, task],
+    };
+
+    return engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+  }
+
+  async updateTask(
+    input: UpdateTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const dependencies = input.dependencies
+      .map((dependencyId) => dependencyId.trim())
+      .filter(
+        (dependencyId, index, values) =>
+          dependencyId.length > 0 && values.indexOf(dependencyId) === index,
+      );
+
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!title) {
+      throw new Error("task title must not be empty.");
+    }
+    if (!description) {
+      throw new Error("task description must not be empty.");
+    }
+    if (dependencies.includes(taskId)) {
+      throw new Error("Task cannot depend on itself.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot edit a running task.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const task = phase.tasks[taskIndex];
+    if (task.status === "IN_PROGRESS") {
+      throw new Error("Cannot edit task while it is IN_PROGRESS.");
+    }
+
+    const knownTaskIds = new Set(
+      state.phases.flatMap((candidatePhase) =>
+        candidatePhase.tasks.map((candidateTask) => candidateTask.id),
+      ),
+    );
+    const missingDependency = dependencies.find(
+      (dependencyId) => !knownTaskIds.has(dependencyId),
+    );
+    if (missingDependency) {
+      throw new Error(`Task has invalid dependency reference: ${missingDependency}`);
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      title,
+      description,
+      dependencies,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
     };
 
     return engine.writeProjectState({
