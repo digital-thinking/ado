@@ -43,6 +43,7 @@ function actorFromSession(session: SessionContext): string {
 }
 
 async function logAuthorizationDecision(input: {
+  auditCwd: string;
   session: SessionContext;
   role: Role | null;
   action: string;
@@ -50,7 +51,7 @@ async function logAuthorizationDecision(input: {
   reason: string;
 }): Promise<void> {
   const command = `authorize ${input.action}`;
-  await appendAuditLog(process.cwd(), {
+  await appendAuditLog(input.auditCwd, {
     actor: actorFromSession(input.session),
     role: input.role,
     action: input.action,
@@ -63,6 +64,7 @@ async function logAuthorizationDecision(input: {
 
 export async function authorizeOrchestratorAction(input: {
   action: OrchestratorAction;
+  auditCwd: string;
   settingsFilePath: string;
   session: SessionContext;
   roleConfig: RoleResolutionConfig;
@@ -79,6 +81,7 @@ export async function authorizeOrchestratorAction(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await logAuthorizationDecision({
+      auditCwd: input.auditCwd,
       session: input.session,
       role: null,
       action: input.action,
@@ -103,6 +106,7 @@ export async function authorizeOrchestratorAction(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await logAuthorizationDecision({
+      auditCwd: input.auditCwd,
       session: input.session,
       role: null,
       action: input.action,
@@ -120,6 +124,7 @@ export async function authorizeOrchestratorAction(input: {
 
   if (role === null) {
     await logAuthorizationDecision({
+      auditCwd: input.auditCwd,
       session: input.session,
       role,
       action: input.action,
@@ -137,6 +142,7 @@ export async function authorizeOrchestratorAction(input: {
 
   if (!(input.action in ORCHESTRATOR_ACTION_PROFILE_MAP)) {
     await logAuthorizationDecision({
+      auditCwd: input.auditCwd,
       session: input.session,
       role,
       action: input.action,
@@ -160,6 +166,7 @@ export async function authorizeOrchestratorAction(input: {
       const evaluated = evaluate(role, requiredAction, policy);
       if (evaluated.decision === "deny") {
         await logAuthorizationDecision({
+          auditCwd: input.auditCwd,
           session: input.session,
           role,
           action: requiredAction,
@@ -175,6 +182,7 @@ export async function authorizeOrchestratorAction(input: {
         };
       }
       await logAuthorizationDecision({
+        auditCwd: input.auditCwd,
         session: input.session,
         role,
         action: requiredAction,
@@ -185,6 +193,7 @@ export async function authorizeOrchestratorAction(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await logAuthorizationDecision({
+      auditCwd: input.auditCwd,
       session: input.session,
       role,
       action: input.action,

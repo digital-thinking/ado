@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { ClaudeAdapter } from "../adapters/claude-adapter";
 import { CodexAdapter } from "../adapters/codex-adapter";
@@ -106,9 +110,59 @@ describe("P11-008 integration coverage", () => {
     expect(runner.calls[2]?.args).toContain("create");
   });
 
+  test("audit log writes to target project cwd even when process cwd is elsewhere", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "ixado-p11-008-project-"));
+    const externalCwd = await mkdtemp(
+      join(tmpdir(), "ixado-p11-008-external-"),
+    );
+    const originalCwd = process.cwd();
+    const previousAuditPath = process.env.IXADO_AUDIT_LOG_FILE;
+
+    const runner = new MockProcessRunner([
+      { stdout: "feature/p11-008\n" },
+      { stdout: "" },
+      { stdout: "https://github.com/org/repo/pull/1108\n" },
+    ]);
+
+    try {
+      delete process.env.IXADO_AUDIT_LOG_FILE;
+      process.chdir(externalCwd);
+
+      await runCiIntegration({
+        phaseId: PHASE.id,
+        phaseName: PHASE.name,
+        cwd: projectDir,
+        baseBranch: "main",
+        runner,
+        role: "admin",
+        policy: clonePolicy(DEFAULT_AUTH_POLICY),
+        setPhasePrUrl: async () => {},
+      });
+
+      const projectAuditLog = join(projectDir, ".ixado", "audit.log");
+      const externalAuditLog = join(externalCwd, ".ixado", "audit.log");
+
+      const rawLog = await readFile(projectAuditLog, "utf8");
+      expect(rawLog.length).toBeGreaterThan(0);
+      await expect(
+        access(externalAuditLog, fsConstants.F_OK),
+      ).rejects.toThrow();
+    } finally {
+      process.chdir(originalCwd);
+      if (previousAuditPath === undefined) {
+        delete process.env.IXADO_AUDIT_LOG_FILE;
+      } else {
+        process.env.IXADO_AUDIT_LOG_FILE = previousAuditPath;
+      }
+      await rm(projectDir, { recursive: true, force: true });
+      await rm(externalCwd, { recursive: true, force: true });
+    }
+  });
+
   test("fail-closed startup/runtime paths deny on policy-load and role-resolution failures", async () => {
     const startupDecision = await authorizeOrchestratorAction({
       action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+      auditCwd: "/repo",
       settingsFilePath: "/tmp/settings.json",
       session: { source: "cli" },
       roleConfig: {},
@@ -318,6 +372,7 @@ describe("P11-008 integration coverage", () => {
     test("role-resolution-failed when resolveSessionRole throws (not just returns null)", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+        auditCwd: "/repo",
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -337,6 +392,7 @@ describe("P11-008 integration coverage", () => {
     test("evaluator-error when getRequiredActions throws during profile evaluation", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+        auditCwd: "/repo",
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -359,6 +415,7 @@ describe("P11-008 integration coverage", () => {
         // Cast an unregistered action string into the typed parameter.
         action:
           "orchestrator:unknown:action" as typeof ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+        auditCwd: "/repo",
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -376,6 +433,7 @@ describe("P11-008 integration coverage", () => {
     test("policy-load-failed decision carries the original error message", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.STATUS_READ,
+        auditCwd: "/repo",
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
