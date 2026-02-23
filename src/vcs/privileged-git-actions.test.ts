@@ -25,6 +25,8 @@ import { GitHubManager } from "./github-manager";
 import { PrivilegedGitActions } from "./privileged-git-actions";
 import { MockProcessRunner } from "./test-utils";
 
+const TEST_CWD = process.cwd();
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -54,12 +56,12 @@ describe("GitManager.rebase", () => {
     const runner = new MockProcessRunner();
     const git = new GitManager(runner);
 
-    await git.rebase({ onto: "main", cwd: "/repo" });
+    await git.rebase({ onto: "main", cwd: TEST_CWD });
 
     expect(runner.calls[0]).toEqual({
       command: "git",
       args: ["rebase", "main"],
-      cwd: "/repo",
+      cwd: TEST_CWD,
     });
   });
 
@@ -67,7 +69,7 @@ describe("GitManager.rebase", () => {
     const runner = new MockProcessRunner();
     const git = new GitManager(runner);
 
-    await git.rebase({ onto: "origin/main", cwd: "/repo" });
+    await git.rebase({ onto: "origin/main", cwd: TEST_CWD });
 
     expect(runner.calls[0]?.args).toEqual(["rebase", "origin/main"]);
   });
@@ -76,10 +78,10 @@ describe("GitManager.rebase", () => {
     const runner = new MockProcessRunner();
     const git = new GitManager(runner);
 
-    await expect(git.rebase({ onto: "", cwd: "/repo" })).rejects.toThrow(
+    await expect(git.rebase({ onto: "", cwd: TEST_CWD })).rejects.toThrow(
       "onto must not be empty.",
     );
-    await expect(git.rebase({ onto: "   ", cwd: "/repo" })).rejects.toThrow(
+    await expect(git.rebase({ onto: "   ", cwd: TEST_CWD })).rejects.toThrow(
       "onto must not be empty.",
     );
   });
@@ -94,12 +96,12 @@ describe("GitHubManager.mergePullRequest", () => {
     const runner = new MockProcessRunner();
     const manager = new GitHubManager(runner);
 
-    await manager.mergePullRequest({ prNumber: 5, cwd: "/repo" });
+    await manager.mergePullRequest({ prNumber: 5, cwd: TEST_CWD });
 
     expect(runner.calls[0]).toEqual({
       command: "gh",
       args: ["pr", "merge", "5", "--merge", "--auto"],
-      cwd: "/repo",
+      cwd: TEST_CWD,
     });
   });
 
@@ -109,7 +111,7 @@ describe("GitHubManager.mergePullRequest", () => {
 
     await manager.mergePullRequest({
       prNumber: 7,
-      cwd: "/repo",
+      cwd: TEST_CWD,
       mergeMethod: "squash",
     });
 
@@ -123,7 +125,7 @@ describe("GitHubManager.mergePullRequest", () => {
 
     await manager.mergePullRequest({
       prNumber: 3,
-      cwd: "/repo",
+      cwd: TEST_CWD,
       mergeMethod: "rebase",
     });
 
@@ -135,7 +137,7 @@ describe("GitHubManager.mergePullRequest", () => {
     const manager = new GitHubManager(runner);
 
     await expect(
-      manager.mergePullRequest({ prNumber: 0, cwd: "/repo" }),
+      manager.mergePullRequest({ prNumber: 0, cwd: TEST_CWD }),
     ).rejects.toThrow("prNumber must be a positive integer.");
   });
 
@@ -144,7 +146,7 @@ describe("GitHubManager.mergePullRequest", () => {
     const manager = new GitHubManager(runner);
 
     await expect(
-      manager.mergePullRequest({ prNumber: -1, cwd: "/repo" }),
+      manager.mergePullRequest({ prNumber: -1, cwd: TEST_CWD }),
     ).rejects.toThrow("prNumber must be a positive integer.");
   });
 
@@ -153,7 +155,7 @@ describe("GitHubManager.mergePullRequest", () => {
     const manager = new GitHubManager(runner);
 
     await expect(
-      manager.mergePullRequest({ prNumber: 1.5, cwd: "/repo" }),
+      manager.mergePullRequest({ prNumber: 1.5, cwd: TEST_CWD }),
     ).rejects.toThrow("prNumber must be a positive integer.");
   });
 });
@@ -167,7 +169,7 @@ describe("AuthorizationDeniedError", () => {
     const { pga } = makeWrapper("viewer");
 
     const err = await pga
-      .pushBranch({ branchName: "feat", cwd: "/repo" })
+      .pushBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
@@ -182,7 +184,7 @@ describe("AuthorizationDeniedError", () => {
     const { pga } = makeWrapper(null);
 
     const err = await pga
-      .pushBranch({ branchName: "feat", cwd: "/repo" })
+      .pushBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
@@ -195,7 +197,7 @@ describe("AuthorizationDeniedError", () => {
     const { pga } = makeWrapper("operator");
 
     const err = await pga
-      .createBranch({ branchName: "feat", cwd: "/repo" })
+      .createBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
@@ -216,7 +218,7 @@ describe("PrivilegedGitActions.createBranch", () => {
 
     await pga.createBranch({
       branchName: "phase-11",
-      cwd: "/repo",
+      cwd: TEST_CWD,
       fromRef: "main",
     });
 
@@ -224,14 +226,14 @@ describe("PrivilegedGitActions.createBranch", () => {
     expect(runner.calls[0]).toEqual({
       command: "git",
       args: ["checkout", "-b", "phase-11", "main"],
-      cwd: "/repo",
+      cwd: TEST_CWD,
     });
   });
 
   test("admin: allowed — delegates to git.createBranch", async () => {
     const { pga, runner } = makeWrapper("admin");
 
-    await pga.createBranch({ branchName: "feat", cwd: "/repo" });
+    await pga.createBranch({ branchName: "feat", cwd: TEST_CWD });
 
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0]?.command).toBe("git");
@@ -241,7 +243,7 @@ describe("PrivilegedGitActions.createBranch", () => {
     const { pga, runner } = makeWrapper("operator");
 
     const err = await pga
-      .createBranch({ branchName: "feat", cwd: "/repo" })
+      .createBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
@@ -253,7 +255,7 @@ describe("PrivilegedGitActions.createBranch", () => {
     const { pga, runner } = makeWrapper("viewer");
 
     await expect(
-      pga.createBranch({ branchName: "feat", cwd: "/repo" }),
+      pga.createBranch({ branchName: "feat", cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(AuthorizationDeniedError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -262,7 +264,7 @@ describe("PrivilegedGitActions.createBranch", () => {
     const { pga, runner } = makeWrapper(null);
 
     const err = await pga
-      .createBranch({ branchName: "feat", cwd: "/repo" })
+      .createBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
@@ -279,20 +281,20 @@ describe("PrivilegedGitActions.rebase", () => {
   test("owner: allowed — delegates to git.rebase with correct args", async () => {
     const { pga, runner } = makeWrapper("owner");
 
-    await pga.rebase({ onto: "main", cwd: "/repo" });
+    await pga.rebase({ onto: "main", cwd: TEST_CWD });
 
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0]).toEqual({
       command: "git",
       args: ["rebase", "main"],
-      cwd: "/repo",
+      cwd: TEST_CWD,
     });
   });
 
   test("admin: allowed — delegates to git.rebase", async () => {
     const { pga, runner } = makeWrapper("admin");
 
-    await pga.rebase({ onto: "origin/main", cwd: "/repo" });
+    await pga.rebase({ onto: "origin/main", cwd: TEST_CWD });
 
     expect(runner.calls).toHaveLength(1);
   });
@@ -301,7 +303,7 @@ describe("PrivilegedGitActions.rebase", () => {
     const { pga, runner } = makeWrapper("operator");
 
     await expect(
-      pga.rebase({ onto: "main", cwd: "/repo" }),
+      pga.rebase({ onto: "main", cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(AuthorizationDeniedError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -310,7 +312,7 @@ describe("PrivilegedGitActions.rebase", () => {
     const { pga, runner } = makeWrapper("viewer");
 
     await expect(
-      pga.rebase({ onto: "main", cwd: "/repo" }),
+      pga.rebase({ onto: "main", cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(AuthorizationDeniedError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -319,7 +321,7 @@ describe("PrivilegedGitActions.rebase", () => {
     const { pga, runner } = makeWrapper(null);
 
     const err = await pga
-      .rebase({ onto: "main", cwd: "/repo" })
+      .rebase({ onto: "main", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect((err as AuthorizationDeniedError).reason).toBe("no-role");
@@ -335,20 +337,20 @@ describe("PrivilegedGitActions.pushBranch", () => {
   test("owner: allowed — delegates to git.pushBranch with correct args", async () => {
     const { pga, runner } = makeWrapper("owner");
 
-    await pga.pushBranch({ branchName: "phase-11", cwd: "/repo" });
+    await pga.pushBranch({ branchName: "phase-11", cwd: TEST_CWD });
 
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0]).toEqual({
       command: "git",
       args: ["push", "-u", "origin", "phase-11"],
-      cwd: "/repo",
+      cwd: TEST_CWD,
     });
   });
 
   test("admin: allowed — delegates to git.pushBranch", async () => {
     const { pga, runner } = makeWrapper("admin");
 
-    await pga.pushBranch({ branchName: "feat", cwd: "/repo" });
+    await pga.pushBranch({ branchName: "feat", cwd: TEST_CWD });
 
     expect(runner.calls).toHaveLength(1);
   });
@@ -357,7 +359,7 @@ describe("PrivilegedGitActions.pushBranch", () => {
     const { pga, runner } = makeWrapper("operator");
 
     const err = await pga
-      .pushBranch({ branchName: "feat", cwd: "/repo" })
+      .pushBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
@@ -369,7 +371,7 @@ describe("PrivilegedGitActions.pushBranch", () => {
     const { pga, runner } = makeWrapper("viewer");
 
     await expect(
-      pga.pushBranch({ branchName: "feat", cwd: "/repo" }),
+      pga.pushBranch({ branchName: "feat", cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(AuthorizationDeniedError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -378,7 +380,7 @@ describe("PrivilegedGitActions.pushBranch", () => {
     const { pga, runner } = makeWrapper(null);
 
     const err = await pga
-      .pushBranch({ branchName: "feat", cwd: "/repo" })
+      .pushBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
 
     expect((err as AuthorizationDeniedError).reason).toBe("no-role");
@@ -396,7 +398,7 @@ describe("PrivilegedGitActions.createPullRequest", () => {
     head: "phase-11",
     title: "Phase 11",
     body: "Implements P11",
-    cwd: "/repo",
+    cwd: TEST_CWD,
   };
 
   test("owner: allowed — delegates and returns PR URL", async () => {
@@ -454,13 +456,13 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
   test("owner: allowed — delegates with default merge method", async () => {
     const { pga, runner } = makeWrapper("owner");
 
-    await pga.mergePullRequest({ prNumber: 42, cwd: "/repo" });
+    await pga.mergePullRequest({ prNumber: 42, cwd: TEST_CWD });
 
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0]).toEqual({
       command: "gh",
       args: ["pr", "merge", "42", "--merge", "--auto"],
-      cwd: "/repo",
+      cwd: TEST_CWD,
     });
   });
 
@@ -469,7 +471,7 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
 
     await pga.mergePullRequest({
       prNumber: 7,
-      cwd: "/repo",
+      cwd: TEST_CWD,
       mergeMethod: "squash",
     });
 
@@ -482,7 +484,7 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
 
     await pga.mergePullRequest({
       prNumber: 3,
-      cwd: "/repo",
+      cwd: TEST_CWD,
       mergeMethod: "rebase",
     });
 
@@ -493,7 +495,7 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
     const { pga, runner } = makeWrapper("operator");
 
     await expect(
-      pga.mergePullRequest({ prNumber: 1, cwd: "/repo" }),
+      pga.mergePullRequest({ prNumber: 1, cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(AuthorizationDeniedError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -502,7 +504,7 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
     const { pga, runner } = makeWrapper("viewer");
 
     await expect(
-      pga.mergePullRequest({ prNumber: 1, cwd: "/repo" }),
+      pga.mergePullRequest({ prNumber: 1, cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(AuthorizationDeniedError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -511,7 +513,7 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
     const { pga, runner } = makeWrapper(null);
 
     const err = await pga
-      .mergePullRequest({ prNumber: 1, cwd: "/repo" })
+      .mergePullRequest({ prNumber: 1, cwd: TEST_CWD })
       .catch((e) => e);
 
     expect((err as AuthorizationDeniedError).reason).toBe("no-role");
@@ -548,14 +550,14 @@ describe("denylist wins over allowlist", () => {
 
     // push is denylisted — deny
     const err = await pga
-      .pushBranch({ branchName: "feat", cwd: "/repo" })
+      .pushBranch({ branchName: "feat", cwd: TEST_CWD })
       .catch((e) => e);
     expect(err).toBeInstanceOf(AuthorizationDeniedError);
     expect((err as AuthorizationDeniedError).reason).toBe("denylist-match");
     expect(runner.calls).toHaveLength(0);
 
     // createBranch is NOT denylisted — the wildcard allowlist still grants it
-    await pga.createBranch({ branchName: "feat", cwd: "/repo" });
+    await pga.createBranch({ branchName: "feat", cwd: TEST_CWD });
     expect(runner.calls).toHaveLength(1);
   });
 });

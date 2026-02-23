@@ -17,6 +17,8 @@ import {
 import { ORCHESTRATOR_ACTIONS } from "../security/workflow-profiles";
 import { MockProcessRunner } from "../vcs/test-utils";
 
+const TEST_CWD = process.cwd();
+
 const PHASE = {
   id: "33333333-3333-4333-8333-333333333333",
   name: "Phase 11 Integration Security",
@@ -35,7 +37,7 @@ describe("P11-008 integration coverage", () => {
     (adapter as unknown as { baseArgs: string[] }).baseArgs.push("chat");
 
     await expect(
-      adapter.run({ prompt: "continue", cwd: "/repo" }),
+      adapter.run({ prompt: "continue", cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(InteractiveModeError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -49,7 +51,7 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "C:/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner,
         role: "admin",
@@ -62,7 +64,7 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "C:/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner: new MockProcessRunner([{ stdout: "feature/p11-008\n" }]),
         role: "admin",
@@ -85,7 +87,7 @@ describe("P11-008 integration coverage", () => {
     const result = await runCiIntegration({
       phaseId: PHASE.id,
       phaseName: PHASE.name,
-      cwd: "C:/repo",
+      cwd: TEST_CWD,
       baseBranch: "main",
       runner,
       role: "admin",
@@ -162,7 +164,7 @@ describe("P11-008 integration coverage", () => {
   test("fail-closed startup/runtime paths deny on policy-load and role-resolution failures", async () => {
     const startupDecision = await authorizeOrchestratorAction({
       action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-      auditCwd: "/repo",
+      auditCwd: TEST_CWD,
       settingsFilePath: "/tmp/settings.json",
       session: { source: "cli" },
       roleConfig: {},
@@ -181,7 +183,7 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "C:/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner,
         role: null,
@@ -205,7 +207,7 @@ describe("P11-008 integration coverage", () => {
       baseArgs.splice(baseArgs.indexOf("--print"), 1);
 
       await expect(
-        adapter.run({ prompt: "do work", cwd: "/repo" }),
+        adapter.run({ prompt: "do work", cwd: TEST_CWD }),
       ).rejects.toBeInstanceOf(InteractiveModeError);
       expect(runner.calls).toHaveLength(0);
     });
@@ -219,7 +221,7 @@ describe("P11-008 integration coverage", () => {
       baseArgs.splice(baseArgs.indexOf("--yolo"), 1);
 
       await expect(
-        adapter.run({ prompt: "generate output", cwd: "/repo" }),
+        adapter.run({ prompt: "generate output", cwd: TEST_CWD }),
       ).rejects.toBeInstanceOf(InteractiveModeError);
       expect(runner.calls).toHaveLength(0);
     });
@@ -237,7 +239,7 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
-          cwd: "/repo",
+          cwd: TEST_CWD,
           baseBranch: "main",
           runner,
           role: "operator",
@@ -256,7 +258,7 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
-          cwd: "/repo",
+          cwd: TEST_CWD,
           baseBranch: "main",
           runner,
           role: "viewer",
@@ -272,7 +274,7 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner: new MockProcessRunner(),
         role: "operator",
@@ -292,7 +294,7 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner: new MockProcessRunner(),
         role: "viewer",
@@ -322,7 +324,7 @@ describe("P11-008 integration coverage", () => {
       const result = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner,
         role: "owner",
@@ -350,7 +352,7 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        cwd: TEST_CWD,
         baseBranch: "main",
         runner,
         role: "owner",
@@ -372,7 +374,7 @@ describe("P11-008 integration coverage", () => {
     test("role-resolution-failed when resolveSessionRole throws (not just returns null)", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -392,7 +394,7 @@ describe("P11-008 integration coverage", () => {
     test("evaluator-error when getRequiredActions throws during profile evaluation", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -415,7 +417,7 @@ describe("P11-008 integration coverage", () => {
         // Cast an unregistered action string into the typed parameter.
         action:
           "orchestrator:unknown:action" as typeof ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -433,7 +435,7 @@ describe("P11-008 integration coverage", () => {
     test("policy-load-failed decision carries the original error message", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.STATUS_READ,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
