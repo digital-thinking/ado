@@ -868,3 +868,82 @@ describe("project tabs frontend (P12-006)", () => {
     expect(html).toContain('id="settingsContent"');
   });
 });
+
+describe("agent top bar frontend (P12-007)", () => {
+  async function getHtml(): Promise<string> {
+    const app = createWebApp({
+      defaultAgentCwd: "/tmp",
+      control: {
+        getState: async () => ({}) as never,
+        createPhase: async () => ({}) as never,
+        createTask: async () => ({}) as never,
+        setActivePhase: async () => ({}) as never,
+        startTask: async () => ({}) as never,
+        resetTaskToTodo: async () => ({}) as never,
+        failTaskIfInProgress: async () => ({}) as never,
+        importFromTasksMarkdown: async () => ({}) as never,
+        runInternalWork: async () => ({}) as never,
+      } as never,
+      agents: {
+        list: () => [],
+        start: () => ({}) as never,
+        assign: () => ({}) as never,
+        kill: () => ({}) as never,
+        restart: () => ({}) as never,
+        subscribe: () => () => {},
+      },
+      usage: { getLatest: async () => ({ available: false }) } as never,
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      availableWorkerAssignees: ["MOCK_CLI"],
+      projectName: "TestProject",
+      getRuntimeConfig: async () => ({
+        defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
+        autoMode: false,
+      }),
+      updateRuntimeConfig: async () => ({
+        defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
+        autoMode: false,
+      }),
+      getProjects: async () => [],
+      getProjectState: async () => ({}) as never,
+      updateProjectSettings: async () => ({}) as never,
+      getGlobalSettings: async () => ({}) as never,
+      updateGlobalSettings: async () => ({}) as never,
+      webLogFilePath: "/tmp/web.log",
+      cliLogFilePath: "/tmp/cli.log",
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    return response.text();
+  }
+
+  test("HTML contains sticky agent top bar container", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="agentTopBar"');
+    expect(html).toContain("sticky-top-bar");
+  });
+
+  test("HTML contains agent top bar table with required columns", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="agentTopTable"');
+    expect(html).toContain("<th>Project</th>");
+    expect(html).toContain("<th>Agent</th>");
+    expect(html).toContain("<th>Task</th>");
+    expect(html).toContain("<th>Status</th>");
+    expect(html).toContain("<th>PID</th>");
+    expect(html).toContain("<th>Actions</th>");
+  });
+
+  test("HTML includes logic to populate top bar table", async () => {
+    const html = await getHtml();
+    expect(html).toContain("agentTopTableBody");
+    expect(html).toContain("agentTopTableBody.innerHTML");
+  });
+
+  test("HTML includes event delegation for top bar table actions", async () => {
+    const html = await getHtml();
+    expect(html).toContain(
+      'agentTopTableBody.addEventListener("click", handleAgentAction)',
+    );
+  });
+});

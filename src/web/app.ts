@@ -386,6 +386,17 @@ function controlCenterHtml(): string {
     .tab-settings {
       margin-left: auto;
     }
+    .sticky-top-bar {
+      position: sticky;
+      top: 10px;
+      z-index: 100;
+      background: var(--surface);
+      margin-bottom: 20px;
+      border: 1px solid var(--line);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .compact-table { font-size: 0.82rem; }
+    .compact-table th, .compact-table td { padding: 4px 8px; }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -394,6 +405,19 @@ function controlCenterHtml(): string {
     <section class="card wide">
       <h1>IxADO Control Center <span class="pill">Phase 12</span></h1>
       <div class="small">Web log: <span id="webLogPath" class="mono"></span> | CLI log: <span id="cliLogPath" class="mono"></span></div>
+    </section>
+
+    <section id="agentTopBar" class="card wide sticky-top-bar">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h2 style="margin: 0; font-size: 1rem;">Global Agents</h2>
+        <div id="topBarAgentError" class="error small"></div>
+      </div>
+      <table id="agentTopTable" class="compact-table">
+        <thead>
+          <tr><th>Project</th><th>Agent</th><th>Task</th><th>Status</th><th>PID</th><th>Actions</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </section>
 
     <div class="tabs" id="tabStrip"></div>
@@ -497,6 +521,7 @@ function controlCenterHtml(): string {
     const kanbanBoard = document.getElementById("kanbanBoard");
     const taskPhase = document.getElementById("taskPhase");
     const taskDependencies = document.getElementById("taskDependencies");
+    const agentTopTableBody = document.querySelector("#agentTopTable tbody");
     const agentTableBody = document.querySelector("#agentTable tbody");
     const agentLogs = document.getElementById("agentLogs");
     const importTasksStatus = document.getElementById("importTasksStatus");
@@ -892,14 +917,19 @@ function controlCenterHtml(): string {
     function renderAgents(agents) {
       latestAgents = agents;
       agentTableBody.innerHTML = "";
+      agentTopTableBody.innerHTML = "";
       agents.forEach((agent) => {
+        const projectName = agent.projectName || "-";
+        const taskName = agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
+        const pid = agent.pid === undefined || agent.pid === null ? "-" : agent.pid;
+
         const row = document.createElement("tr");
         row.innerHTML = \`
-          <td>\${agent.projectName || "-"}</td>
+          <td>\${projectName}</td>
           <td>\${agent.name}<div class="small mono">\${agent.command} \${agent.args.join(" ")}</div></td>
           <td>\${agent.status}</td>
-          <td>\${agent.pid === undefined || agent.pid === null ? "-" : agent.pid}</td>
-          <td class="mono">\${agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId}</td>
+          <td>\${pid}</td>
+          <td class="mono">\${taskName}</td>
           <td>
             <div class="row">
               <button data-action="show-logs" data-id="\${agent.id}" class="secondary">Logs</button>
@@ -910,6 +940,23 @@ function controlCenterHtml(): string {
           <td><div class="mono small">\${(agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ")}</div></td>
         \`;
         agentTableBody.appendChild(row);
+
+        const topRow = document.createElement("tr");
+        topRow.innerHTML = \`
+          <td>\${projectName}</td>
+          <td title="\${agent.command} \${agent.args.join(" ")}">\${agent.name}</td>
+          <td class="mono">\${taskName}</td>
+          <td>\${agent.status}</td>
+          <td>\${pid}</td>
+          <td>
+            <div class="row">
+              <button data-action="show-logs" data-id="\${agent.id}" class="secondary small">Logs</button>
+              <button data-action="kill" data-id="\${agent.id}" class="secondary small">Kill</button>
+              <button data-action="restart" data-id="\${agent.id}" class="secondary small">Restart</button>
+            </div>
+          </td>
+        \`;
+        agentTopTableBody.appendChild(topRow);
       });
     }
 
@@ -926,6 +973,7 @@ function controlCenterHtml(): string {
     function handleRefreshError(error) {
       const message = error instanceof Error ? error.message : String(error);
       setError("agentError", message);
+      setError("topBarAgentError", message);
     }
 
     document.getElementById("phaseForm").addEventListener("submit", async (event) => {
@@ -1162,7 +1210,7 @@ function controlCenterHtml(): string {
       }
     });
 
-    agentTableBody.addEventListener("click", async (event) => {
+    async function handleAgentAction(event) {
       const target = event.target;
       if (!(target instanceof HTMLButtonElement)) return;
       const action = target.getAttribute("data-action");
@@ -1182,14 +1230,20 @@ function controlCenterHtml(): string {
       }
 
       setError("agentError", "");
+      setError("topBarAgentError", "");
       try {
         await api("/api/agents/" + id + "/" + action, { method: "POST" });
         await globalRefresh();
         await refreshActiveProject();
       } catch (error) {
-        setError("agentError", error.message);
+        const message = error.message || String(error);
+        setError("agentError", message);
+        setError("topBarAgentError", message);
       }
-    });
+    }
+
+    agentTableBody.addEventListener("click", handleAgentAction);
+    agentTopTableBody.addEventListener("click", handleAgentAction);
 
     async function init() {
       await refreshProjects();
