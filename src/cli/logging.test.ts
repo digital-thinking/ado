@@ -1,18 +1,15 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
+import { join } from "node:path";
 import { resolveCliLogFilePath } from "./logging";
+import { TestSandbox } from "./test-helpers";
 
 describe("cli logging", () => {
-  let sandboxDir: string;
+  let sandbox: TestSandbox;
   const originalGlobalConfigPath = process.env.IXADO_GLOBAL_CONFIG_FILE;
   const originalCliLogPath = process.env.IXADO_CLI_LOG_FILE;
 
   beforeEach(async () => {
-    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-cli-logging-"));
+    sandbox = await TestSandbox.create("ixado-cli-logging-");
     delete process.env.IXADO_GLOBAL_CONFIG_FILE;
     delete process.env.IXADO_CLI_LOG_FILE;
   });
@@ -28,26 +25,22 @@ describe("cli logging", () => {
     } else {
       process.env.IXADO_CLI_LOG_FILE = originalCliLogPath;
     }
-    await rm(sandboxDir, { recursive: true, force: true });
+    await sandbox.cleanup();
   });
 
   test("defaults CLI log path to global .ixado folder", () => {
-    process.env.IXADO_GLOBAL_CONFIG_FILE = join(
-      sandboxDir,
-      ".ixado",
-      "config.json",
-    );
+    process.env.IXADO_GLOBAL_CONFIG_FILE = sandbox.globalConfigFile;
 
-    expect(resolveCliLogFilePath(join(sandboxDir, "project"))).toBe(
-      join(sandboxDir, ".ixado", "cli.log"),
+    expect(resolveCliLogFilePath(join(sandbox.projectDir, "project"))).toBe(
+      join(sandbox.projectDir, ".ixado", "cli.log"),
     );
   });
 
   test("uses IXADO_CLI_LOG_FILE when configured", () => {
-    const customLogFilePath = join(sandboxDir, "custom", "cli.log");
+    const customLogFilePath = join(sandbox.projectDir, "custom", "cli.log");
     process.env.IXADO_CLI_LOG_FILE = customLogFilePath;
 
-    expect(resolveCliLogFilePath(join(sandboxDir, "project"))).toBe(
+    expect(resolveCliLogFilePath(join(sandbox.projectDir, "project"))).toBe(
       customLogFilePath,
     );
   });

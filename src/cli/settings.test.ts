@@ -1,8 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { TestSandbox } from "./test-helpers";
 
 import {
   DEFAULT_CLI_SETTINGS,
@@ -39,9 +37,8 @@ const DEFAULT_USAGE_SETTINGS = {
 };
 
 describe("cli settings", () => {
-  let sandboxDir: string;
+  let sandbox: TestSandbox;
   let settingsFilePath: string;
-  let globalSettingsFilePath: string;
   let soulFilePath: string;
   const originalHome = process.env.HOME;
   const originalGlobalConfigPath = process.env.IXADO_GLOBAL_CONFIG_FILE;
@@ -49,12 +46,11 @@ describe("cli settings", () => {
   const originalSoulPath = process.env.IXADO_SOUL_FILE;
 
   beforeEach(async () => {
-    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-cli-settings-"));
-    settingsFilePath = join(sandboxDir, "settings.json");
-    globalSettingsFilePath = join(sandboxDir, "global-config.json");
-    soulFilePath = join(sandboxDir, "SOUL.md");
-    process.env.HOME = sandboxDir;
-    process.env.IXADO_GLOBAL_CONFIG_FILE = globalSettingsFilePath;
+    sandbox = await TestSandbox.create("ixado-cli-settings-");
+    settingsFilePath = join(sandbox.projectDir, "settings.json");
+    soulFilePath = join(sandbox.projectDir, "SOUL.md");
+    process.env.HOME = sandbox.projectDir;
+    process.env.IXADO_GLOBAL_CONFIG_FILE = sandbox.globalConfigFile;
     delete process.env.IXADO_SETTINGS_FILE;
     delete process.env.IXADO_SOUL_FILE;
   });
@@ -80,24 +76,32 @@ describe("cli settings", () => {
     } else {
       process.env.IXADO_SOUL_FILE = originalSoulPath;
     }
-    await rm(sandboxDir, { recursive: true, force: true });
+    await sandbox.cleanup();
   });
 
   test("onboard defaults to global settings path", () => {
-    expect(resolveOnboardSettingsFilePath()).toBe(globalSettingsFilePath);
+    expect(resolveOnboardSettingsFilePath()).toBe(sandbox.globalConfigFile);
   });
 
   test("onboard defaults SOUL path next to settings file", () => {
-    expect(resolveOnboardSoulFilePath()).toBe(join(sandboxDir, "SOUL.md"));
+    expect(resolveOnboardSoulFilePath()).toBe(
+      join(sandbox.projectDir, ".ixado", "SOUL.md"),
+    );
   });
 
   test("onboard settings and SOUL paths honor environment overrides", () => {
-    const customSettingsPath = join(sandboxDir, "custom", "settings.json");
-    const customSoulPath = join(sandboxDir, "custom", "profile.md");
+    const customSettingsPath = join(
+      sandbox.projectDir,
+      "custom",
+      "settings.json",
+    );
+    const customSoulPath = join(sandbox.projectDir, "custom", "profile.md");
 
     process.env.IXADO_SETTINGS_FILE = customSettingsPath;
     expect(resolveOnboardSettingsFilePath()).toBe(customSettingsPath);
-    expect(resolveOnboardSoulFilePath()).toBe(join(sandboxDir, "custom", "SOUL.md"));
+    expect(resolveOnboardSoulFilePath()).toBe(
+      join(sandbox.projectDir, "custom", "SOUL.md"),
+    );
 
     process.env.IXADO_SOUL_FILE = customSoulPath;
     expect(resolveOnboardSoulFilePath()).toBe(customSoulPath);
@@ -145,7 +149,7 @@ describe("cli settings", () => {
 
   test("loads settings from global config when local file is missing", async () => {
     await Bun.write(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       JSON.stringify({
         executionLoop: {
           autoMode: true,
@@ -173,7 +177,7 @@ describe("cli settings", () => {
 
   test("local settings override global config values", async () => {
     await Bun.write(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       JSON.stringify({
         executionLoop: {
           testerCommand: "bun",
@@ -217,7 +221,7 @@ describe("cli settings", () => {
 
   test("supports overriding codexbar usage telemetry from global and local config", async () => {
     await Bun.write(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       JSON.stringify({
         usage: {
           codexbarEnabled: false,

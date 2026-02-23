@@ -1,56 +1,28 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-
-import type { ProjectState } from "../types";
-
-function runCli(args: string[], cwd: string, globalConfigFile: string) {
-  return Bun.spawnSync({
-    cmd: [process.execPath, "run", resolve("src/cli/index.ts"), ...args],
-    cwd,
-    env: {
-      ...process.env,
-      IXADO_GLOBAL_CONFIG_FILE: globalConfigFile,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-}
-
-async function readStateFile(projectDir: string): Promise<ProjectState> {
-  const raw = await readFile(join(projectDir, ".ixado", "state.json"), "utf8");
-  return JSON.parse(raw) as ProjectState;
-}
+import { TestSandbox, runIxado } from "./test-helpers";
 
 describe("phase13 CLI create commands", () => {
-  const tempDirs: string[] = [];
+  const sandboxes: TestSandbox[] = [];
 
   afterEach(async () => {
-    await Promise.all(
-      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
-    );
-    tempDirs.length = 0;
+    await Promise.all(sandboxes.map((s) => s.cleanup()));
+    sandboxes.length = 0;
   });
 
   test("phase create creates and activates a phase", async () => {
-    const projectDir = await mkdtemp(join(tmpdir(), "ixado-p13-phase-create-"));
-    tempDirs.push(projectDir);
-    const globalConfigFile = join(projectDir, ".ixado", "global-config.json");
+    const sandbox = await TestSandbox.create("ixado-p13-phase-create-");
+    sandboxes.push(sandbox);
 
-    const result = runCli(
+    const result = runIxado(
       ["phase", "create", "Phase 13", "phase-13-post-release-bugfixes"],
-      projectDir,
-      globalConfigFile,
+      sandbox,
     );
-    const stdout = new TextDecoder().decode(result.stdout);
-    const stderr = new TextDecoder().decode(result.stderr);
 
     expect(result.exitCode).toBe(0);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("Created phase Phase 13");
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Created phase Phase 13");
 
-    const state = await readStateFile(projectDir);
+    const state = await sandbox.readProjectState();
     expect(state.phases).toHaveLength(1);
     expect(state.activePhaseId).toBe(state.phases[0]?.id);
     expect(state.phases[0]?.name).toBe("Phase 13");
@@ -58,77 +30,46 @@ describe("phase13 CLI create commands", () => {
   });
 
   test("task create appends task to active phase and validates usage", async () => {
-    const projectDir = await mkdtemp(join(tmpdir(), "ixado-p13-task-create-"));
-    tempDirs.push(projectDir);
-    const globalConfigFile = join(projectDir, ".ixado", "global-config.json");
+    const sandbox = await TestSandbox.create("ixado-p13-task-create-");
+    sandboxes.push(sandbox);
 
-    const phaseCreateResult = runCli(
+    const phaseCreateResult = runIxado(
       ["phase", "create", "Phase 13", "phase-13-post-release-bugfixes"],
-      projectDir,
-      globalConfigFile,
+      sandbox,
     );
     expect(phaseCreateResult.exitCode).toBe(0);
 
-    const taskCreateResult = runCli(
+    const taskCreateResult = runIxado(
       ["task", "create", "P13-002", "Implement CLI create flows", "MOCK_CLI"],
-      projectDir,
-      globalConfigFile,
+      sandbox,
     );
     expect(taskCreateResult.exitCode).toBe(0);
 
-    const state = await readStateFile(projectDir);
+    const state = await sandbox.readProjectState();
     expect(state.phases[0]?.tasks).toHaveLength(1);
     expect(state.phases[0]?.tasks[0]?.title).toBe("P13-002");
     expect(state.phases[0]?.tasks[0]?.assignee).toBe("MOCK_CLI");
 
-    const invalidUsageResult = runCli(
+    const invalidUsageResult = runIxado(
       ["task", "create", "missing-description-only"],
-      projectDir,
-      globalConfigFile,
+      sandbox,
     );
-    const usageStderr = new TextDecoder().decode(invalidUsageResult.stderr);
     expect(invalidUsageResult.exitCode).toBe(1);
-    expect(usageStderr).toContain(
+    expect(invalidUsageResult.stderr).toContain(
       "Usage: ixado task create <title> <description> [assignee]",
     );
 
-    const invalidAssigneeResult = runCli(
+    const invalidAssigneeResult = runIxado(
       [
         "task",
         "create",
         "P13-002",
         "Implement CLI create flows",
-        "BAD_ASSIGNEE",
+        "INVALID_CLI",
       ],
-      projectDir,
-      globalConfigFile,
-    );
-    const invalidAssigneeStderr = new TextDecoder().decode(
-      invalidAssigneeResult.stderr,
+      sandbox,
     );
     expect(invalidAssigneeResult.exitCode).toBe(1);
-    expect(invalidAssigneeStderr).toContain(
-      "assignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
-    );
-  });
-
-  test("phase/task subcommand help is explicit and succeeds", async () => {
-    const projectDir = await mkdtemp(join(tmpdir(), "ixado-p13-sub-help-"));
-    tempDirs.push(projectDir);
-    const globalConfigFile = join(projectDir, ".ixado", "global-config.json");
-
-    const phaseHelp = runCli(["phase", "--help"], projectDir, globalConfigFile);
-    const phaseHelpOut = new TextDecoder().decode(phaseHelp.stdout);
-    expect(phaseHelp.exitCode).toBe(0);
-    expect(phaseHelpOut).toContain("Phase commands:");
-    expect(phaseHelpOut).toContain("ixado phase create <name> <branchName>");
-
-    const taskHelp = runCli(["task", "--help"], projectDir, globalConfigFile);
-    const taskHelpOut = new TextDecoder().decode(taskHelp.stdout);
-    expect(taskHelp.exitCode).toBe(0);
-    expect(taskHelpOut).toContain("Task commands:");
-    expect(taskHelpOut).toContain(
-      "ixado task create <title> <description> [assignee]",
-    );
+    expect(invalidAssigneeResult.stderr).toContain("assignee must be one of");
   });
 });

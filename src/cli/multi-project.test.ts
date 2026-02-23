@@ -1,5 +1,3 @@
-import { mkdtemp, rm, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -10,6 +8,7 @@ import {
   resolveGlobalSettingsFilePath,
 } from "./settings";
 import type { CliSettings } from "../types";
+import { TestSandbox } from "./test-helpers";
 
 const DEFAULT_AGENT_SETTINGS = {
   CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
@@ -49,14 +48,12 @@ function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
 }
 
 describe("multi-project management", () => {
-  let sandboxDir: string;
-  let globalSettingsFilePath: string;
+  let sandbox: TestSandbox;
   const originalGlobalConfigPath = process.env.IXADO_GLOBAL_CONFIG_FILE;
 
   beforeEach(async () => {
-    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-multi-project-"));
-    globalSettingsFilePath = join(sandboxDir, "global-config.json");
-    process.env.IXADO_GLOBAL_CONFIG_FILE = globalSettingsFilePath;
+    sandbox = await TestSandbox.create("ixado-multi-project-");
+    process.env.IXADO_GLOBAL_CONFIG_FILE = sandbox.globalConfigFile;
   });
 
   afterEach(async () => {
@@ -65,7 +62,7 @@ describe("multi-project management", () => {
     } else {
       process.env.IXADO_GLOBAL_CONFIG_FILE = originalGlobalConfigPath;
     }
-    await rm(sandboxDir, { recursive: true, force: true });
+    await sandbox.cleanup();
   });
 
   test("saves and loads projects in global config", async () => {
@@ -76,8 +73,8 @@ describe("multi-project management", () => {
       ],
     });
 
-    await saveCliSettings(globalSettingsFilePath, settings);
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    await saveCliSettings(sandbox.globalConfigFile, settings);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
 
     expect(loaded.projects).toEqual([
       { name: "alpha", rootDir: "/tmp/alpha" },
@@ -94,8 +91,8 @@ describe("multi-project management", () => {
       activeProject: "beta",
     });
 
-    await saveCliSettings(globalSettingsFilePath, settings);
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    await saveCliSettings(sandbox.globalConfigFile, settings);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
 
     expect(loaded.activeProject).toBe("beta");
   });
@@ -105,21 +102,21 @@ describe("multi-project management", () => {
       projects: [{ name: "alpha", rootDir: "/tmp/alpha" }],
     });
 
-    await saveCliSettings(globalSettingsFilePath, settings);
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    await saveCliSettings(sandbox.globalConfigFile, settings);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
 
     expect(loaded.activeProject).toBeUndefined();
   });
 
   test("registers a new project by pushing to projects array", async () => {
     const settings = makeSettings();
-    await saveCliSettings(globalSettingsFilePath, settings);
+    await saveCliSettings(sandbox.globalConfigFile, settings);
 
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
     loaded.projects.push({ name: "new-project", rootDir: "/tmp/new-project" });
-    await saveCliSettings(globalSettingsFilePath, loaded);
+    await saveCliSettings(sandbox.globalConfigFile, loaded);
 
-    const reloaded = await loadCliSettings(globalSettingsFilePath);
+    const reloaded = await loadCliSettings(sandbox.globalConfigFile);
     expect(reloaded.projects).toEqual([
       { name: "new-project", rootDir: "/tmp/new-project" },
     ]);
@@ -129,9 +126,9 @@ describe("multi-project management", () => {
     const settings = makeSettings({
       projects: [{ name: "existing", rootDir: "/tmp/existing" }],
     });
-    await saveCliSettings(globalSettingsFilePath, settings);
+    await saveCliSettings(sandbox.globalConfigFile, settings);
 
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
     const duplicate = loaded.projects.find(
       (p) => p.rootDir === "/tmp/existing",
     );
@@ -146,32 +143,35 @@ describe("multi-project management", () => {
         { name: "beta", rootDir: "/tmp/beta" },
       ],
     });
-    await saveCliSettings(globalSettingsFilePath, settings);
+    await saveCliSettings(sandbox.globalConfigFile, settings);
 
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
     loaded.activeProject = "alpha";
-    await saveCliSettings(globalSettingsFilePath, loaded);
+    await saveCliSettings(sandbox.globalConfigFile, loaded);
 
-    const reloaded = await loadCliSettings(globalSettingsFilePath);
+    const reloaded = await loadCliSettings(sandbox.globalConfigFile);
     expect(reloaded.activeProject).toBe("alpha");
 
     reloaded.activeProject = "beta";
-    await saveCliSettings(globalSettingsFilePath, reloaded);
+    await saveCliSettings(sandbox.globalConfigFile, reloaded);
 
-    const final = await loadCliSettings(globalSettingsFilePath);
+    const final = await loadCliSettings(sandbox.globalConfigFile);
     expect(final.activeProject).toBe("beta");
   });
 
   test("global config activeProject is preserved through merge with local settings", async () => {
     await saveCliSettings(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       makeSettings({
         projects: [{ name: "alpha", rootDir: "/tmp/alpha" }],
         activeProject: "alpha",
       }),
     );
 
-    const localSettingsFilePath = join(sandboxDir, "local-settings.json");
+    const localSettingsFilePath = join(
+      sandbox.projectDir,
+      "local-settings.json",
+    );
     await Bun.write(
       localSettingsFilePath,
       JSON.stringify({ executionLoop: { countdownSeconds: 5 } }),
@@ -205,7 +205,7 @@ describe("multi-project management", () => {
 
   test("migrates runtime config into active project executionSettings once", async () => {
     await saveCliSettings(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       makeSettings({
         projects: [
           { name: "alpha", rootDir: "/tmp/alpha" },
@@ -220,7 +220,7 @@ describe("multi-project management", () => {
       }),
     );
 
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
     expect(loaded.projects).toEqual([
       { name: "alpha", rootDir: "/tmp/alpha" },
       {
@@ -233,7 +233,7 @@ describe("multi-project management", () => {
       },
     ]);
 
-    const persisted = await loadCliSettings(globalSettingsFilePath);
+    const persisted = await loadCliSettings(sandbox.globalConfigFile);
     expect(persisted.projects[1]?.executionSettings).toEqual({
       autoMode: true,
       defaultAssignee: "CLAUDE_CLI",
@@ -242,7 +242,7 @@ describe("multi-project management", () => {
 
   test("does not overwrite existing project executionSettings during migration", async () => {
     await saveCliSettings(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       makeSettings({
         projects: [
           {
@@ -263,7 +263,7 @@ describe("multi-project management", () => {
       }),
     );
 
-    const loaded = await loadCliSettings(globalSettingsFilePath);
+    const loaded = await loadCliSettings(sandbox.globalConfigFile);
     expect(loaded.projects[0]?.executionSettings).toEqual({
       autoMode: false,
       defaultAssignee: "GEMINI_CLI",

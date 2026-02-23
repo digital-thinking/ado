@@ -1,87 +1,54 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-
-function runCli(args: string[], cwd: string, globalConfigFile: string) {
-  return Bun.spawnSync({
-    cmd: [process.execPath, "run", resolve("src/cli/index.ts"), ...args],
-    cwd,
-    env: {
-      ...process.env,
-      IXADO_GLOBAL_CONFIG_FILE: globalConfigFile,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-}
+import { TestSandbox, runIxado } from "./test-helpers";
 
 describe("phase14 CLI config commands", () => {
-  const tempDirs: string[] = [];
+  const sandboxes: TestSandbox[] = [];
 
   afterEach(async () => {
-    await Promise.all(
-      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
-    );
-    tempDirs.length = 0;
+    await Promise.all(sandboxes.map((s) => s.cleanup()));
+    sandboxes.length = 0;
   });
 
   test("config help includes recovery command", async () => {
-    const projectDir = await mkdtemp(join(tmpdir(), "ixado-p14-config-help-"));
-    tempDirs.push(projectDir);
-    const globalConfigFile = join(projectDir, ".ixado", "global-config.json");
+    const sandbox = await TestSandbox.create("ixado-p14-config-help-");
+    sandboxes.push(sandbox);
 
-    const result = runCli(["config", "help"], projectDir, globalConfigFile);
-    const stdout = new TextDecoder().decode(result.stdout);
-    const stderr = new TextDecoder().decode(result.stderr);
+    const result = runIxado(["config", "help"], sandbox);
 
     expect(result.exitCode).toBe(0);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("Config commands:");
-    expect(stdout).toContain("ixado config recovery <maxAttempts:0-10>");
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Config commands:");
+    expect(result.stdout).toContain("ixado config recovery <maxAttempts:0-10>");
   });
 
   test("config recovery updates and shows exception recovery max attempts", async () => {
-    const projectDir = await mkdtemp(
-      join(tmpdir(), "ixado-p14-config-recovery-"),
-    );
-    tempDirs.push(projectDir);
-    const globalConfigFile = join(projectDir, ".ixado", "global-config.json");
+    const sandbox = await TestSandbox.create("ixado-p14-config-recovery-");
+    sandboxes.push(sandbox);
 
-    const updateResult = runCli(
-      ["config", "recovery", "3"],
-      projectDir,
-      globalConfigFile,
-    );
-    const updateOut = new TextDecoder().decode(updateResult.stdout);
-    const updateErr = new TextDecoder().decode(updateResult.stderr);
+    const updateResult = runIxado(["config", "recovery", "3"], sandbox);
     expect(updateResult.exitCode).toBe(0);
-    expect(updateErr).toBe("");
-    expect(updateOut).toContain("Exception recovery max attempts set to 3.");
+    expect(updateResult.stderr).toBe("");
+    expect(updateResult.stdout).toContain(
+      "Exception recovery max attempts set to 3.",
+    );
 
-    const showResult = runCli(["config"], projectDir, globalConfigFile);
-    const showOut = new TextDecoder().decode(showResult.stdout);
-    const showErr = new TextDecoder().decode(showResult.stderr);
+    const showResult = runIxado(["config"], sandbox);
     expect(showResult.exitCode).toBe(0);
-    expect(showErr).toBe("");
-    expect(showOut).toContain("Exception recovery max attempts: 3");
+    expect(showResult.stderr).toBe("");
+    expect(showResult.stdout).toContain("Exception recovery max attempts: 3");
   });
 
   test("config recovery validates value range", async () => {
-    const projectDir = await mkdtemp(
-      join(tmpdir(), "ixado-p14-config-recovery-invalid-"),
+    const sandbox = await TestSandbox.create(
+      "ixado-p14-config-recovery-invalid-",
     );
-    tempDirs.push(projectDir);
-    const globalConfigFile = join(projectDir, ".ixado", "global-config.json");
+    sandboxes.push(sandbox);
 
-    const result = runCli(
-      ["config", "recovery", "11"],
-      projectDir,
-      globalConfigFile,
-    );
-    const stderr = new TextDecoder().decode(result.stderr);
+    const result = runIxado(["config", "recovery", "11"], sandbox);
 
     expect(result.exitCode).toBe(1);
-    expect(stderr).toContain("Usage: ixado config recovery <maxAttempts:0-10>");
+    expect(result.stderr).toContain(
+      "Usage: ixado config recovery <maxAttempts:0-10>",
+    );
   });
 });
