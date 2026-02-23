@@ -3,6 +3,29 @@ import type { ApiDependencies } from "./types";
 import { json, readJson, asString } from "./utils";
 import type { ProjectState } from "../../types";
 
+const recoveryCache = new Map<
+  string, // taskId
+  { status: string; reasoning: string }
+>();
+
+export function refreshRecoveryCache(state: ProjectState): void {
+  for (const phase of state.phases) {
+    for (const task of phase.tasks) {
+      const attempts = Array.isArray(task.recoveryAttempts)
+        ? task.recoveryAttempts
+        : [];
+      if (attempts.length === 0) {
+        continue;
+      }
+      const latest = attempts[attempts.length - 1];
+      recoveryCache.set(task.id, {
+        status: latest.result.status,
+        reasoning: latest.result.reasoning,
+      });
+    }
+  }
+}
+
 export function buildAgentFailureReason(
   agent: AgentView,
   action: "terminated" | "killed",
@@ -26,66 +49,12 @@ export async function handleAgentsApi(
 ): Promise<Response | null> {
   if (request.method === "GET" && url.pathname === "/api/agents") {
     const agents = deps.agents.list();
-    const recoveryByTask = new Map<
-      string,
-      { status: string; reasoning: string }
-    >();
-    const projects = await deps.getProjects();
-    for (const project of projects) {
-      let projectState: ProjectState;
-      try {
-        projectState = await deps.getProjectState(project.name);
-      } catch {
-        continue;
-      }
-      for (const phase of projectState.phases) {
-        for (const task of phase.tasks) {
-          const attempts = Array.isArray(task.recoveryAttempts)
-            ? task.recoveryAttempts
-            : [];
-          if (attempts.length === 0) {
-            continue;
-          }
-          const latest = attempts[attempts.length - 1];
-          recoveryByTask.set(task.id, {
-            status: latest.result.status,
-            reasoning: latest.result.reasoning,
-          });
-        }
-      }
-    }
-    const latestByTask = new Map<string, AgentView>();
-    for (const agent of agents) {
-      if (!agent.taskId) {
-        continue;
-      }
-      const existing = latestByTask.get(agent.taskId);
-      if (!existing || existing.startedAt < agent.startedAt) {
-        latestByTask.set(agent.taskId, agent);
-      }
-    }
 
-    for (const agent of latestByTask.values()) {
-      const isTerminalFailure =
-        agent.status === "FAILED" ||
-        (agent.status === "STOPPED" && (agent.lastExitCode ?? -1) !== 0);
-      if (isTerminalFailure && agent.taskId) {
-        try {
-          await deps.control.failTaskIfInProgress({
-            taskId: agent.taskId,
-            reason: buildAgentFailureReason(agent, "terminated"),
-          });
-        } catch {
-          // Ignore stale task references from historical agent entries.
-        }
-      }
-    }
     return json(
       agents.map((agent) => {
-        const recovery =
-          agent.taskId && recoveryByTask.has(agent.taskId)
-            ? recoveryByTask.get(agent.taskId)
-            : undefined;
+        const recovery = agent.taskId
+          ? recoveryCache.get(agent.taskId)
+          : undefined;
 
         return {
           ...agent,
@@ -120,16 +89,6 @@ export async function handleAgentsApi(
   const killMatch = /^\/api\/agents\/([^/]+)\/kill$/.exec(url.pathname);
   if (request.method === "POST" && killMatch) {
     const killed = deps.agents.kill(killMatch[1]);
-    if (killed.taskId) {
-      try {
-        await deps.control.failTaskIfInProgress({
-          taskId: killed.taskId,
-          reason: buildAgentFailureReason(killed, "killed"),
-        });
-      } catch {
-        // Ignore stale task references from historical agent entries.
-      }
-    }
     return json(killed);
   }
 

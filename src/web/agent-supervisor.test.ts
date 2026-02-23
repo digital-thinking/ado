@@ -217,4 +217,54 @@ describe("AgentSupervisor", () => {
     expect(found?.status).toBe("RUNNING");
     expect(found?.taskId).toBe("task-shared");
   });
+
+  test("calls onFailure hook when agent fails", (done) => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => child,
+      onFailure: (agent) => {
+        try {
+          expect(agent.status).toBe("FAILED");
+          expect(agent.name).toBe("Failing worker");
+          done();
+        } catch (error) {
+          done(error);
+        }
+      },
+    });
+
+    supervisor.start({
+      name: "Failing worker",
+      command: "bun",
+      cwd: "C:/repo",
+      approvedAdapterSpawn: true,
+    });
+
+    child.emit("close", 1, null);
+  });
+
+  test("calls onFailure hook when agent is killed", (done) => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => child,
+      onFailure: (agent) => {
+        try {
+          expect(agent.status).toBe("STOPPED");
+          expect(agent.name).toBe("Killed worker");
+          done();
+        } catch (error) {
+          done(error);
+        }
+      },
+    });
+
+    const agent = supervisor.start({
+      name: "Killed worker",
+      command: "bun",
+      cwd: "C:/repo",
+      approvedAdapterSpawn: true,
+    });
+
+    supervisor.kill(agent.id);
+  });
 });

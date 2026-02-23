@@ -891,4 +891,28 @@ describe("ControlCenterService", () => {
     expect(afterReset.phases[0].tasks[0].assignee).toBe("UNASSIGNED");
     expect(afterReset.phases[0].tasks[0].errorLogs).toBeUndefined();
   });
+
+  test("calls onStateChange hook when state is written", async () => {
+    let callCount = 0;
+    let lastProjectName = "";
+    const serviceWithHook = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      undefined,
+      undefined,
+      (projectName) => {
+        callCount += 1;
+        lastProjectName = projectName;
+      },
+    );
+    await serviceWithHook.ensureInitialized("IxADO", "C:/repo");
+
+    await serviceWithHook.createPhase({
+      name: "Phase 1",
+      branchName: "phase-1",
+    });
+
+    expect(callCount).toBe(1);
+    expect(lastProjectName).toBe("IxADO");
+  });
 });

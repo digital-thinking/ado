@@ -278,6 +278,10 @@ export class ControlCenterService {
   private readonly internalWorkRunner?: InternalWorkRunner;
   private readonly repositoryResetRunner?: RepositoryResetRunner;
   private readonly runningTaskExecutions = new Map<string, Promise<void>>();
+  private readonly onStateChange?: (
+    projectName: string,
+    state: ProjectState,
+  ) => void;
   private defaultProjectName?: string;
 
   constructor(
@@ -285,6 +289,7 @@ export class ControlCenterService {
     tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
     internalWorkRunner?: InternalWorkRunner,
     repositoryResetRunner?: RepositoryResetRunner,
+    onStateChange?: (projectName: string, state: ProjectState) => void,
   ) {
     if (typeof stateOrFactory === "function") {
       this.stateEngineFactory = stateOrFactory;
@@ -294,6 +299,7 @@ export class ControlCenterService {
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
     this.repositoryResetRunner = repositoryResetRunner;
+    this.onStateChange = onStateChange;
   }
 
   private async getEngine(projectName?: string): Promise<StateEngine> {
@@ -357,11 +363,13 @@ export class ControlCenterService {
       tasks: [],
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       activePhaseId: phase.id,
       phases: [...state.phases, phase],
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async createTask(
@@ -401,10 +409,12 @@ export class ControlCenterService {
       tasks: [...nextPhases[phaseIndex].tasks, task],
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async updateTask(
@@ -489,10 +499,12 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setActivePhase(
@@ -507,10 +519,12 @@ export class ControlCenterService {
     const state = await engine.readProjectState();
     const phaseId = resolvePhaseIdForReference(state, phaseReference);
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       activePhaseId: phaseId,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setPhasePrUrl(
@@ -539,10 +553,12 @@ export class ControlCenterService {
       prUrl,
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setPhaseStatus(
@@ -574,10 +590,12 @@ export class ControlCenterService {
       ciStatusContext,
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async listActivePhaseTasks(
@@ -657,10 +675,12 @@ export class ControlCenterService {
       });
     }
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async startActiveTask(
@@ -824,6 +844,7 @@ export class ControlCenterService {
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
 
     const shouldResume =
       Boolean(input.resume) ||
@@ -981,6 +1002,7 @@ export class ControlCenterService {
       phases: nextPhases,
       activePhaseId: state.activePhaseId ?? lastImportedPhaseId,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
 
     return {
       state: nextState,
@@ -1146,10 +1168,11 @@ export class ControlCenterService {
       tasks: nextTasks,
     });
 
-    await engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
   }
 
   async failTaskIfInProgress(input: {
@@ -1205,10 +1228,12 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async resetTaskToTodo(
@@ -1267,9 +1292,11 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 }

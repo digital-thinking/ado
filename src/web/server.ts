@@ -22,8 +22,9 @@ import {
   ProjectExecutionSettingsSchema,
   type CLIAdapterId,
   type CliAgentSettings,
+  type ProjectState,
 } from "../types";
-import { AgentSupervisor } from "./agent-supervisor";
+import { AgentSupervisor, type AgentView } from "./agent-supervisor";
 import { createWebApp } from "./app";
 import { ControlCenterService } from "./control-center-service";
 import { UsageService } from "./usage-service";
@@ -123,10 +124,42 @@ export async function startWebControlCenter(
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     autoMode: input.defaultAutoMode,
   };
-  const agents = new AgentSupervisor({
+
+  // 1. Define placeholders for cross-dependencies.
+  let agents: AgentSupervisor;
+  let control: ControlCenterService;
+
+  // 2. Define the hooks.
+  const onAgentFailure = async (agent: AgentView) => {
+    const isTerminalFailure =
+      agent.status === "FAILED" ||
+      (agent.status === "STOPPED" && (agent.lastExitCode ?? -1) !== 0);
+    if (isTerminalFailure && agent.taskId) {
+      const { buildAgentFailureReason } = await import("./api/agents");
+      try {
+        await control.failTaskIfInProgress({
+          taskId: agent.taskId,
+          reason: buildAgentFailureReason(agent, "terminated"),
+          projectName: agent.projectName,
+        });
+      } catch {
+        // Ignore stale task references.
+      }
+    }
+  };
+
+  const onStateChange = async (_projectName: string, state: ProjectState) => {
+    const { refreshRecoveryCache } = await import("./api/agents");
+    refreshRecoveryCache(state);
+  };
+
+  // 3. Initialize services with hooks.
+  agents = new AgentSupervisor({
     registryFilePath: resolveAgentRegistryFilePath(input.cwd),
+    onFailure: onAgentFailure,
   });
-  const control = new ControlCenterService(
+
+  control = new ControlCenterService(
     (projectName) => {
       const settingsFilePath = input.settingsFilePath;
       return (async () => {
@@ -237,7 +270,26 @@ export async function startWebControlCenter(
         cwd: input.cwd,
       });
     },
+    onStateChange,
   );
+
+  // 4. Initial cache load for all known projects.
+  const { refreshRecoveryCache } = await import("./api/agents");
+  for (const project of settings.projects) {
+    try {
+      const state = await control.getState(project.name);
+      refreshRecoveryCache(state);
+    } catch {
+      // Ignore projects with no state yet.
+    }
+  }
+  try {
+    const defaultState = await control.getState(input.projectName);
+    refreshRecoveryCache(defaultState);
+  } catch {
+    // Ignore.
+  }
+
   await control.ensureInitialized(input.projectName, input.cwd);
 
   const usage = new UsageService(
