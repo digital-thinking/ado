@@ -17,7 +17,10 @@ describe("ControlCenterService", () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-web-control-"));
     stateFilePath = join(sandboxDir, "state.json");
     tasksMarkdownPath = join(sandboxDir, "TASKS.md");
-    service = new ControlCenterService(new StateEngine(stateFilePath), tasksMarkdownPath);
+    service = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+    );
     await service.ensureInitialized("IxADO", "C:/repo");
   });
 
@@ -51,7 +54,7 @@ describe("ControlCenterService", () => {
         phaseId: "missing",
         title: "x",
         description: "y",
-      })
+      }),
     ).rejects.toThrow("Phase not found");
   });
 
@@ -69,7 +72,7 @@ describe("ControlCenterService", () => {
         "- [ ] `P2-001` Wire runtime. Deps: `P1-002`.",
         "",
       ].join("\n"),
-      "utf8"
+      "utf8",
     );
 
     const serviceWithRunner = new ControlCenterService(
@@ -127,24 +130,27 @@ describe("ControlCenterService", () => {
                 ],
               },
               null,
-              2
+              2,
             ),
             "```",
           ].join("\n"),
           stderr: "",
           durationMs: 12,
         };
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
-    const imported = await serviceWithRunner.importFromTasksMarkdown("MOCK_CLI");
+    const imported =
+      await serviceWithRunner.importFromTasksMarkdown("MOCK_CLI");
     expect(imported.importedPhaseCount).toBe(2);
     expect(imported.importedTaskCount).toBe(3);
     expect(imported.assignee).toBe("MOCK_CLI");
     expect(imported.state.phases).toHaveLength(2);
 
-    const phase1 = imported.state.phases.find((phase) => phase.name === "Phase 1: Foundation");
+    const phase1 = imported.state.phases.find(
+      (phase) => phase.name === "Phase 1: Foundation",
+    );
     expect(phase1).toBeDefined();
     if (!phase1) {
       throw new Error("Phase 1 was not imported");
@@ -153,7 +159,9 @@ describe("ControlCenterService", () => {
     expect(phase1.tasks[0].status).toBe("DONE");
     expect(phase1.tasks[1].dependencies).toEqual([phase1.tasks[0].id]);
 
-    const phase2 = imported.state.phases.find((phase) => phase.name === "Phase 2: Execution");
+    const phase2 = imported.state.phases.find(
+      (phase) => phase.name === "Phase 2: Execution",
+    );
     expect(phase2).toBeDefined();
     if (!phase2) {
       throw new Error("Phase 2 was not imported");
@@ -161,7 +169,8 @@ describe("ControlCenterService", () => {
     expect(phase2.tasks).toHaveLength(1);
     expect(phase2.tasks[0].dependencies).toEqual([phase1.tasks[1].id]);
 
-    const secondImport = await serviceWithRunner.importFromTasksMarkdown("MOCK_CLI");
+    const secondImport =
+      await serviceWithRunner.importFromTasksMarkdown("MOCK_CLI");
     expect(secondImport.importedPhaseCount).toBe(0);
     expect(secondImport.importedTaskCount).toBe(0);
   });
@@ -171,7 +180,7 @@ describe("ControlCenterService", () => {
       service.runInternalWork({
         assignee: "CODEX_CLI",
         prompt: "hello",
-      })
+      }),
     ).rejects.toThrow("Internal work runner is not configured.");
   });
 
@@ -189,7 +198,7 @@ describe("ControlCenterService", () => {
           stderr: "",
           durationMs: 100,
         };
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -227,7 +236,7 @@ describe("ControlCenterService", () => {
         stdout: "ok",
         stderr: "",
         durationMs: 10,
-      })
+      }),
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -255,7 +264,7 @@ describe("ControlCenterService", () => {
         phaseId,
         taskId: taskBId,
         assignee: "CODEX_CLI",
-      })
+      }),
     ).rejects.toThrow("Task has incomplete dependency");
   });
 
@@ -265,7 +274,7 @@ describe("ControlCenterService", () => {
       tasksMarkdownPath,
       async () => {
         throw new Error("adapter failed");
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -330,7 +339,9 @@ describe("ControlCenterService", () => {
       branchName: "phase-a",
     });
 
-    await expect(service.setActivePhase({ phaseId: "5" })).rejects.toThrow("Phase not found: 5");
+    await expect(service.setActivePhase({ phaseId: "5" })).rejects.toThrow(
+      "Phase not found: 5",
+    );
   });
 
   test("stores phase pull request URL", async () => {
@@ -345,7 +356,9 @@ describe("ControlCenterService", () => {
       prUrl: "https://github.com/org/repo/pull/999",
     });
 
-    expect(updated.phases[0].prUrl).toBe("https://github.com/org/repo/pull/999");
+    expect(updated.phases[0].prUrl).toBe(
+      "https://github.com/org/repo/pull/999",
+    );
   });
 
   test("updates phase status and CI context", async () => {
@@ -361,7 +374,9 @@ describe("ControlCenterService", () => {
       ciStatusContext: "Validation loop exceeded retries.",
     });
     expect(failed.phases[0].status).toBe("CI_FAILED");
-    expect(failed.phases[0].ciStatusContext).toBe("Validation loop exceeded retries.");
+    expect(failed.phases[0].ciStatusContext).toBe(
+      "Validation loop exceeded retries.",
+    );
 
     const recovered = await service.setPhaseStatus({
       phaseId,
@@ -369,6 +384,88 @@ describe("ControlCenterService", () => {
     });
     expect(recovered.phases[0].status).toBe("READY_FOR_REVIEW");
     expect(recovered.phases[0].ciStatusContext).toBeUndefined();
+  });
+
+  test("recovers phase from CI_FAILED after successful CI_FIX task", async () => {
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => ({
+        command: "codex",
+        args: ["run"],
+        stdout: "fixed",
+        stderr: "",
+        durationMs: 5,
+      }),
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Recover",
+      branchName: "phase-recover",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "Fix tests after Task A",
+      description: "Repair failing test",
+      assignee: "CODEX_CLI",
+      status: "CI_FIX",
+    });
+    await serviceWithRunner.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      ciStatusContext: "Tests failed in CI",
+    });
+
+    const finished = await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 1,
+      assignee: "CODEX_CLI",
+    });
+    const phase = finished.phases[0];
+    expect(phase.status).toBe("CODING");
+    expect(phase.ciStatusContext).toBeUndefined();
+    expect(phase.tasks[0].status).toBe("DONE");
+  });
+
+  test("does not clear CI_FAILED when non-fix task succeeds", async () => {
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => ({
+        command: "codex",
+        args: ["run"],
+        stdout: "done",
+        stderr: "",
+        durationMs: 5,
+      }),
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Keep Failed",
+      branchName: "phase-keep-failed",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "Regular follow-up task",
+      description: "Not a CI fix task",
+      assignee: "CODEX_CLI",
+      status: "TODO",
+    });
+    await serviceWithRunner.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      ciStatusContext: "Still failing",
+    });
+
+    const finished = await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 1,
+      assignee: "CODEX_CLI",
+    });
+    const phase = finished.phases[0];
+    expect(phase.status).toBe("CI_FAILED");
+    expect(phase.ciStatusContext).toBe("Still failing");
+    expect(phase.tasks[0].status).toBe("DONE");
   });
 
   test("lists active phase tasks with 1-based numbers", async () => {
@@ -405,7 +502,7 @@ describe("ControlCenterService", () => {
         stdout: "done",
         stderr: "",
         durationMs: 10,
-      })
+      }),
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -453,7 +550,7 @@ describe("ControlCenterService", () => {
           stderr: "",
           durationMs: 10,
         };
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -496,7 +593,7 @@ describe("ControlCenterService", () => {
         stdout: "ok",
         stderr: "",
         durationMs: 10,
-      })
+      }),
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -561,7 +658,7 @@ describe("ControlCenterService", () => {
           stderr: "",
           durationMs: 10,
         };
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -590,7 +687,7 @@ describe("ControlCenterService", () => {
         phaseId,
         taskId,
         assignee: "CLAUDE_CLI",
-      })
+      }),
     ).rejects.toThrow("FAILED task must be retried with the same assignee");
   });
 
@@ -608,12 +705,18 @@ describe("ControlCenterService", () => {
 
         return {
           command: "codex",
-          args: ["exec", "resume", "--last", "--dangerously-bypass-approvals-and-sandbox", "-"],
+          args: [
+            "exec",
+            "resume",
+            "--last",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-",
+          ],
           stdout: "second run passed",
           stderr: "",
           durationMs: 10,
         };
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
@@ -653,7 +756,7 @@ describe("ControlCenterService", () => {
       },
       async () => {
         resetCalled += 1;
-      }
+      },
     );
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 

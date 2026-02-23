@@ -54,6 +54,27 @@ export async function runCiIntegration(
     role: input.role,
     policy: input.policy,
   });
+
+  await git.stageAll(input.cwd);
+  const hasChangesToCommit = await git.hasStagedChanges(input.cwd);
+  if (!hasChangesToCommit) {
+    throw new Error(
+      "CI integration requires a commit before push/PR, but there are no local changes to commit.",
+    );
+  }
+
+  try {
+    await git.commit({
+      cwd: input.cwd,
+      message: `chore(ixado): finalize ${input.phaseName}`,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `CI integration could not create commit before push/PR: ${message}`,
+    );
+  }
+
   const headBranch = await git.getCurrentBranch(input.cwd);
 
   await privileged.pushBranch({

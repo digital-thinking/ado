@@ -19,6 +19,7 @@ export type TesterWorkflowInput = {
     title: string;
     description: string;
     dependencies: string[];
+    status: "CI_FIX";
   }) => Promise<void>;
   maxOutputLength?: number;
 };
@@ -70,10 +71,13 @@ function buildFixTaskDescription(input: {
   ].join("\n");
 }
 
-export async function runTesterWorkflow(input: TesterWorkflowInput): Promise<TesterWorkflowResult> {
+export async function runTesterWorkflow(
+  input: TesterWorkflowInput,
+): Promise<TesterWorkflowResult> {
   const command = input.testerCommand.trim();
   const args = [...input.testerArgs];
-  const maxOutputLength = input.maxOutputLength ?? DEFAULT_MAX_TESTER_OUTPUT_LENGTH;
+  const maxOutputLength =
+    input.maxOutputLength ?? DEFAULT_MAX_TESTER_OUTPUT_LENGTH;
   if (!command) {
     throw new Error("testerCommand must not be empty.");
   }
@@ -123,6 +127,7 @@ export async function runTesterWorkflow(input: TesterWorkflowInput): Promise<Tes
       title: fixTaskTitle,
       description: fixTaskDescription,
       dependencies: [input.completedTask.id],
+      status: "CI_FIX",
     });
 
     return {

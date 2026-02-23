@@ -66,6 +66,7 @@ describe("runTesterWorkflow", () => {
       title: string;
       description: string;
       dependencies: string[];
+      status: "CI_FIX";
     }> = [];
 
     const result = await runTesterWorkflow({
@@ -94,6 +95,7 @@ describe("runTesterWorkflow", () => {
     expect(createdFixTasks[0]?.dependencies).toEqual([
       "22222222-2222-4222-8222-222222222222",
     ]);
+    expect(createdFixTasks[0]?.status).toBe("CI_FIX");
     expect(createdFixTasks[0]?.description).toContain("failing test output");
     expect(createdFixTasks[0]?.description).toContain("stack trace");
   });

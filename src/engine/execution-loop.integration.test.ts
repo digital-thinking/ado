@@ -19,6 +19,9 @@ describe("execution loop integration", () => {
   test("runs tester, creates PR, and completes review validation", async () => {
     const runner = new MockProcessRunner([
       { stdout: "tests passed\n" },
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "phase-5-ci-execution-loop\n" },
       { stdout: "" },
       { stdout: "https://github.com/org/repo/pull/555\n" },
