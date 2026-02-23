@@ -104,7 +104,7 @@ Status markers:
 
 ## Phase 11: Command Gating, Privileged Git Actions, and Auditability
 
-- [ ] `P11-001` Enforce non-interactive execution for Claude/Codex/Gemini adapters (`--print`/batch mode equivalents) and fail if interactive mode is requested or detected. **Status: InProgress** Deps: `P10-007`.
+- [x] `P11-001` Enforce non-interactive execution for Claude/Codex/Gemini adapters (`--print`/batch mode equivalents) and fail if interactive mode is requested or detected. Deps: `P10-007`.
 - [ ] `P11-002` Add runtime guard to block raw shell execution paths that bypass adapter command templates; only approved adapter command builders may spawn child processes. Deps: `P11-001`.
 - [ ] `P11-003` Implement ixado-owned privileged git action wrapper (branch creation, rebase, push, PR open/merge) requiring explicit policy permission `git:privileged:*`. Deps: `P10-007`.
 - [ ] `P11-004` Wire authorization checks before every privileged GitManager/GitHubManager operation and return structured `AuthorizationDenied` errors. Deps: `P11-003`.
