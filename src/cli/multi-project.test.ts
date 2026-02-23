@@ -28,6 +28,9 @@ const DEFAULT_LOOP_SETTINGS = {
   ciBaseBranch: "main",
   validationMaxRetries: 3,
 };
+const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
+  maxAttempts: 1,
+};
 const DEFAULT_USAGE_SETTINGS = {
   codexbarEnabled: true,
 };
@@ -38,6 +41,7 @@ function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
     telegram: { enabled: false },
     internalWork: { assignee: "CODEX_CLI" },
     executionLoop: DEFAULT_LOOP_SETTINGS,
+    exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
     usage: DEFAULT_USAGE_SETTINGS,
     agents: DEFAULT_AGENT_SETTINGS,
     ...overrides,

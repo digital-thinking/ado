@@ -35,6 +35,9 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     ciBaseBranch: "main",
     validationMaxRetries: 3,
   },
+  exceptionRecovery: {
+    maxAttempts: 1,
+  },
   usage: {
     codexbarEnabled: true,
   },
@@ -135,6 +138,10 @@ function mergeCliSettings(
     executionLoop: {
       ...base.executionLoop,
       ...override.executionLoop,
+    },
+    exceptionRecovery: {
+      ...base.exceptionRecovery,
+      ...override.exceptionRecovery,
     },
     usage: {
       ...base.usage,
@@ -557,6 +564,7 @@ export async function runOnboard(
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
       };
@@ -574,6 +582,7 @@ export async function runOnboard(
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
       };
@@ -634,6 +643,7 @@ export async function runOnboard(
         assignee: internalWorkAssignee,
       },
       executionLoop: existingSettings.executionLoop,
+      exceptionRecovery: existingSettings.exceptionRecovery,
       usage: existingSettings.usage,
       agents: configuredAgents,
     };

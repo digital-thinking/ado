@@ -30,16 +30,14 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Build a minimal valid AuthPolicy using provided role overrides. */
-function makePolicy(
-  overrides: Partial<AuthPolicy["roles"]> = {},
-): AuthPolicy {
+function makePolicy(overrides: Partial<AuthPolicy["roles"]> = {}): AuthPolicy {
   return {
     version: "1",
     roles: {
-      owner:    { allowlist: ["*"],            denylist: [] },
-      admin:    { allowlist: ["admin:*"],       denylist: [] },
-      operator: { allowlist: ["operator:*"],    denylist: [] },
-      viewer:   { allowlist: ["viewer:*"],      denylist: [] },
+      owner: { allowlist: ["*"], denylist: [] },
+      admin: { allowlist: ["admin:*"], denylist: [] },
+      operator: { allowlist: ["operator:*"], denylist: [] },
+      viewer: { allowlist: ["viewer:*"], denylist: [] },
       ...overrides,
     },
   };
@@ -66,9 +64,15 @@ describe("matchesPattern", () => {
     });
 
     test("matches multi-segment suffix after prefix", () => {
-      expect(matchesPattern("git:privileged:*", "git:privileged:push")).toBe(true);
-      expect(matchesPattern("git:privileged:*", "git:privileged:branch-create")).toBe(true);
-      expect(matchesPattern("git:privileged:*", "git:privileged:pr-open")).toBe(true);
+      expect(matchesPattern("git:privileged:*", "git:privileged:push")).toBe(
+        true,
+      );
+      expect(
+        matchesPattern("git:privileged:*", "git:privileged:branch-create"),
+      ).toBe(true);
+      expect(matchesPattern("git:privileged:*", "git:privileged:pr-open")).toBe(
+        true,
+      );
     });
 
     test("does not match actions with a different prefix", () => {
@@ -155,8 +159,8 @@ describe("evaluate — denylist-match deny", () => {
   test("wildcard allowlist loses to specific denylist entry", () => {
     const policy = makePolicy({
       admin: {
-        allowlist: ["status:*"],       // matches status:read
-        denylist: ["status:read"],     // specific deny wins
+        allowlist: ["status:*"], // matches status:read
+        denylist: ["status:read"], // specific deny wins
       },
     });
     const result = evaluate("admin", "status:read", policy);
@@ -170,7 +174,7 @@ describe("evaluate — denylist-match deny", () => {
     const policy = makePolicy({
       operator: {
         allowlist: ["execution:start"],
-        denylist: ["execution:*"],     // wildcard deny wins
+        denylist: ["execution:*"], // wildcard deny wins
       },
     });
     const result = evaluate("operator", "execution:start", policy);
@@ -206,7 +210,11 @@ describe("evaluate — denylist-match deny", () => {
   });
 
   test("operator: config:write is denied by denylist", () => {
-    const result = evaluate("operator", ACTIONS.CONFIG_WRITE, DEFAULT_AUTH_POLICY);
+    const result = evaluate(
+      "operator",
+      ACTIONS.CONFIG_WRITE,
+      DEFAULT_AUTH_POLICY,
+    );
     expect(result.decision).toBe("deny");
     if (result.decision === "deny") {
       expect(result.reason).toBe("denylist-match");
@@ -214,7 +222,11 @@ describe("evaluate — denylist-match deny", () => {
   });
 
   test("operator: agent:kill is denied by denylist", () => {
-    const result = evaluate("operator", ACTIONS.AGENT_KILL, DEFAULT_AUTH_POLICY);
+    const result = evaluate(
+      "operator",
+      ACTIONS.AGENT_KILL,
+      DEFAULT_AUTH_POLICY,
+    );
     expect(result.decision).toBe("deny");
     if (result.decision === "deny") {
       expect(result.reason).toBe("denylist-match");
@@ -222,7 +234,11 @@ describe("evaluate — denylist-match deny", () => {
   });
 
   test("viewer: execution:start is denied by denylist", () => {
-    const result = evaluate("viewer", ACTIONS.EXECUTION_START, DEFAULT_AUTH_POLICY);
+    const result = evaluate(
+      "viewer",
+      ACTIONS.EXECUTION_START,
+      DEFAULT_AUTH_POLICY,
+    );
     expect(result.decision).toBe("deny");
     if (result.decision === "deny") {
       expect(result.reason).toBe("denylist-match");
@@ -230,7 +246,11 @@ describe("evaluate — denylist-match deny", () => {
   });
 
   test("viewer: phase:create is denied by denylist", () => {
-    const result = evaluate("viewer", ACTIONS.PHASE_CREATE, DEFAULT_AUTH_POLICY);
+    const result = evaluate(
+      "viewer",
+      ACTIONS.PHASE_CREATE,
+      DEFAULT_AUTH_POLICY,
+    );
     expect(result.decision).toBe("deny");
     if (result.decision === "deny") {
       expect(result.reason).toBe("denylist-match");
@@ -268,7 +288,11 @@ describe("evaluate — allowlist-match allow", () => {
   });
 
   test("returns allow for global wildcard '*' allowlist", () => {
-    const result = evaluate("owner", "git:privileged:pr-merge", DEFAULT_AUTH_POLICY);
+    const result = evaluate(
+      "owner",
+      "git:privileged:pr-merge",
+      DEFAULT_AUTH_POLICY,
+    );
     expect(result.decision).toBe("allow");
     if (result.decision === "allow") {
       expect(result.matchedPattern).toBe("*");
@@ -443,38 +467,52 @@ describe("DEFAULT_AUTH_POLICY — role × action matrix", () => {
   describe("operator", () => {
     test("is allowed to perform all read actions", () => {
       for (const action of readActions) {
-        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(
+          true,
+        );
       }
     });
 
     test("is allowed to perform all execution actions", () => {
       for (const action of executionActions) {
-        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(
+          true,
+        );
       }
     });
 
     test("is allowed to perform all planning actions", () => {
       for (const action of planningActions) {
-        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(
+          true,
+        );
       }
     });
 
     test("is DENIED all privileged git actions (denylist)", () => {
       for (const action of privilegedGitActions) {
-        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(isAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(
+          false,
+        );
       }
     });
 
     test("is DENIED config:write (denylist)", () => {
-      expect(isAuthorized("operator", ACTIONS.CONFIG_WRITE, DEFAULT_AUTH_POLICY)).toBe(false);
+      expect(
+        isAuthorized("operator", ACTIONS.CONFIG_WRITE, DEFAULT_AUTH_POLICY),
+      ).toBe(false);
     });
 
     test("is DENIED agent:kill (denylist)", () => {
-      expect(isAuthorized("operator", ACTIONS.AGENT_KILL, DEFAULT_AUTH_POLICY)).toBe(false);
+      expect(
+        isAuthorized("operator", ACTIONS.AGENT_KILL, DEFAULT_AUTH_POLICY),
+      ).toBe(false);
     });
 
     test("is DENIED agent:restart (denylist)", () => {
-      expect(isAuthorized("operator", ACTIONS.AGENT_RESTART, DEFAULT_AUTH_POLICY)).toBe(false);
+      expect(
+        isAuthorized("operator", ACTIONS.AGENT_RESTART, DEFAULT_AUTH_POLICY),
+      ).toBe(false);
     });
   });
 
@@ -506,7 +544,9 @@ describe("DEFAULT_AUTH_POLICY — role × action matrix", () => {
     });
 
     test("is DENIED config:write (denylist)", () => {
-      expect(isAuthorized("viewer", ACTIONS.CONFIG_WRITE, DEFAULT_AUTH_POLICY)).toBe(false);
+      expect(
+        isAuthorized("viewer", ACTIONS.CONFIG_WRITE, DEFAULT_AUTH_POLICY),
+      ).toBe(false);
     });
 
     test("is DENIED all agent actions (denylist)", () => {
@@ -528,10 +568,10 @@ describe("conflict cases — denylist always wins", () => {
     const policy: AuthPolicy = {
       version: "1",
       roles: {
-        owner:    { allowlist: ["*"],           denylist: [] },
-        admin:    { allowlist: ["*"],            denylist: ["config:write"] },
-        operator: { allowlist: ["status:read"],  denylist: [] },
-        viewer:   { allowlist: ["status:read"],  denylist: [] },
+        owner: { allowlist: ["*"], denylist: [] },
+        admin: { allowlist: ["*"], denylist: ["config:write"] },
+        operator: { allowlist: ["status:read"], denylist: [] },
+        viewer: { allowlist: ["status:read"], denylist: [] },
       },
     };
     expect(isAuthorized("admin", "config:write", policy)).toBe(false);
@@ -543,25 +583,25 @@ describe("conflict cases — denylist always wins", () => {
     const policy: AuthPolicy = {
       version: "1",
       roles: {
-        owner:    { allowlist: ["*"],            denylist: [] },
-        admin:    { allowlist: ["execution:*"],  denylist: ["execution:*"] },
-        operator: { allowlist: ["status:read"],  denylist: [] },
-        viewer:   { allowlist: ["status:read"],  denylist: [] },
+        owner: { allowlist: ["*"], denylist: [] },
+        admin: { allowlist: ["execution:*"], denylist: ["execution:*"] },
+        operator: { allowlist: ["status:read"], denylist: [] },
+        viewer: { allowlist: ["status:read"], denylist: [] },
       },
     };
     expect(isAuthorized("admin", "execution:start", policy)).toBe(false);
-    expect(isAuthorized("admin", "execution:stop",  policy)).toBe(false);
-    expect(isAuthorized("admin", "execution:next",  policy)).toBe(false);
+    expect(isAuthorized("admin", "execution:stop", policy)).toBe(false);
+    expect(isAuthorized("admin", "execution:next", policy)).toBe(false);
   });
 
   test("specific allowlist entry + overlapping wildcard denylist → deny", () => {
     const policy: AuthPolicy = {
       version: "1",
       roles: {
-        owner:    { allowlist: ["*"],             denylist: [] },
-        admin:    { allowlist: ["status:read"],   denylist: ["status:*"] },
-        operator: { allowlist: ["status:read"],   denylist: [] },
-        viewer:   { allowlist: ["status:read"],   denylist: [] },
+        owner: { allowlist: ["*"], denylist: [] },
+        admin: { allowlist: ["status:read"], denylist: ["status:*"] },
+        operator: { allowlist: ["status:read"], denylist: [] },
+        viewer: { allowlist: ["status:read"], denylist: [] },
       },
     };
     expect(isAuthorized("admin", "status:read", policy)).toBe(false);
@@ -587,7 +627,7 @@ describe("conflict cases — denylist always wins", () => {
     const policy = makePolicy({
       operator: {
         allowlist: ["git:privileged:push", "git:privileged:*"],
-        denylist:  ["git:privileged:push"],
+        denylist: ["git:privileged:push"],
       },
     });
     const result = evaluate("operator", "git:privileged:push", policy);
@@ -604,7 +644,9 @@ describe("conflict cases — denylist always wins", () => {
 
 describe("isAuthorized", () => {
   test("returns true when evaluate returns allow", () => {
-    expect(isAuthorized("owner", "status:read", DEFAULT_AUTH_POLICY)).toBe(true);
+    expect(isAuthorized("owner", "status:read", DEFAULT_AUTH_POLICY)).toBe(
+      true,
+    );
   });
 
   test("returns false when evaluate returns deny (no-role)", () => {
@@ -612,11 +654,15 @@ describe("isAuthorized", () => {
   });
 
   test("returns false when evaluate returns deny (denylist-match)", () => {
-    expect(isAuthorized("viewer", ACTIONS.EXECUTION_START, DEFAULT_AUTH_POLICY)).toBe(false);
+    expect(
+      isAuthorized("viewer", ACTIONS.EXECUTION_START, DEFAULT_AUTH_POLICY),
+    ).toBe(false);
   });
 
   test("returns false when evaluate returns deny (no-allowlist-match)", () => {
-    const policy = makePolicy({ viewer: { allowlist: ["status:read"], denylist: [] } });
+    const policy = makePolicy({
+      viewer: { allowlist: ["status:read"], denylist: [] },
+    });
     expect(isAuthorized("viewer", "tasks:read", policy)).toBe(false);
   });
 });
@@ -645,6 +691,7 @@ describe("isOrchestratorActionAuthorized", () => {
     ORCHESTRATOR_ACTIONS.EXECUTION_NEXT,
     ORCHESTRATOR_ACTIONS.TESTER_RUN,
     ORCHESTRATOR_ACTIONS.CI_VALIDATION_RUN,
+    ORCHESTRATOR_ACTIONS.EXCEPTION_RECOVERY_RUN,
   ] as const;
 
   const privilegedOrchestratorActions = [
@@ -664,13 +711,17 @@ describe("isOrchestratorActionAuthorized", () => {
   describe("null role", () => {
     test("is denied all readonly orchestrator actions", () => {
       for (const action of readonlyOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized(null, action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(
+          isOrchestratorActionAuthorized(null, action, DEFAULT_AUTH_POLICY),
+        ).toBe(false);
       }
     });
 
     test("is denied all privileged orchestrator actions", () => {
       for (const action of privilegedOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized(null, action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(
+          isOrchestratorActionAuthorized(null, action, DEFAULT_AUTH_POLICY),
+        ).toBe(false);
       }
     });
   });
@@ -680,25 +731,33 @@ describe("isOrchestratorActionAuthorized", () => {
   describe("owner", () => {
     test("is authorized for all readonly orchestrator actions", () => {
       for (const action of readonlyOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all planning orchestrator actions", () => {
       for (const action of planningOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all execution orchestrator actions", () => {
       for (const action of executionOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all privileged orchestrator actions", () => {
       for (const action of privilegedOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("owner", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
   });
@@ -708,25 +767,33 @@ describe("isOrchestratorActionAuthorized", () => {
   describe("admin", () => {
     test("is authorized for all readonly orchestrator actions", () => {
       for (const action of readonlyOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all planning orchestrator actions", () => {
       for (const action of planningOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all execution orchestrator actions", () => {
       for (const action of executionOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all privileged orchestrator actions", () => {
       for (const action of privilegedOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("admin", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
   });
@@ -736,25 +803,49 @@ describe("isOrchestratorActionAuthorized", () => {
   describe("operator", () => {
     test("is authorized for all readonly orchestrator actions", () => {
       for (const action of readonlyOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized(
+            "operator",
+            action,
+            DEFAULT_AUTH_POLICY,
+          ),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all planning orchestrator actions", () => {
       for (const action of planningOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized(
+            "operator",
+            action,
+            DEFAULT_AUTH_POLICY,
+          ),
+        ).toBe(true);
       }
     });
 
     test("is authorized for all execution orchestrator actions", () => {
       for (const action of executionOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized(
+            "operator",
+            action,
+            DEFAULT_AUTH_POLICY,
+          ),
+        ).toBe(true);
       }
     });
 
     test("is DENIED all privileged orchestrator actions", () => {
       for (const action of privilegedOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("operator", action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(
+          isOrchestratorActionAuthorized(
+            "operator",
+            action,
+            DEFAULT_AUTH_POLICY,
+          ),
+        ).toBe(false);
       }
     });
   });
@@ -764,25 +855,33 @@ describe("isOrchestratorActionAuthorized", () => {
   describe("viewer", () => {
     test("is authorized for all readonly orchestrator actions", () => {
       for (const action of readonlyOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY)).toBe(true);
+        expect(
+          isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY),
+        ).toBe(true);
       }
     });
 
     test("is DENIED all planning orchestrator actions", () => {
       for (const action of planningOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(
+          isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY),
+        ).toBe(false);
       }
     });
 
     test("is DENIED all execution orchestrator actions", () => {
       for (const action of executionOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(
+          isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY),
+        ).toBe(false);
       }
     });
 
     test("is DENIED all privileged orchestrator actions", () => {
       for (const action of privilegedOrchestratorActions) {
-        expect(isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY)).toBe(false);
+        expect(
+          isOrchestratorActionAuthorized("viewer", action, DEFAULT_AUTH_POLICY),
+        ).toBe(false);
       }
     });
   });

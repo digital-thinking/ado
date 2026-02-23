@@ -386,6 +386,54 @@ describe("ControlCenterService", () => {
     expect(recovered.phases[0].ciStatusContext).toBeUndefined();
   });
 
+  test("records recovery attempt on task and phase", async () => {
+    const created = await service.createPhase({
+      name: "Phase Recovery Record",
+      branchName: "phase-recovery-record",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await service.createTask({
+      phaseId,
+      title: "Task A",
+      description: "do work",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const withTaskRecovery = await service.recordRecoveryAttempt({
+      phaseId,
+      taskId,
+      attemptNumber: 1,
+      exception: {
+        category: "AGENT_FAILURE",
+        message: "worker failed",
+        phaseId,
+        taskId,
+      },
+      result: {
+        status: "fixed",
+        reasoning: "retry completed",
+      },
+    });
+    expect(withTaskRecovery.phases[0].tasks[0].recoveryAttempts).toHaveLength(
+      1,
+    );
+
+    const withPhaseRecovery = await service.recordRecoveryAttempt({
+      phaseId,
+      attemptNumber: 2,
+      exception: {
+        category: "MISSING_COMMIT",
+        message: "commit required",
+        phaseId,
+      },
+      result: {
+        status: "unfixable",
+        reasoning: "manual intervention needed",
+      },
+    });
+    expect(withPhaseRecovery.phases[0].recoveryAttempts).toHaveLength(1);
+  });
+
   test("recovers phase from CI_FAILED after successful CI_FIX task", async () => {
     const serviceWithRunner = new ControlCenterService(
       new StateEngine(stateFilePath),

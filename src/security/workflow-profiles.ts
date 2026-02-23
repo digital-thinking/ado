@@ -30,7 +30,11 @@ import { isAuthorized } from "./auth-evaluator";
 // Profile names
 // ---------------------------------------------------------------------------
 
-export type WorkflowProfileName = "readonly" | "planning" | "execution" | "privileged";
+export type WorkflowProfileName =
+  | "readonly"
+  | "planning"
+  | "execution"
+  | "privileged";
 
 // ---------------------------------------------------------------------------
 // Profile type
@@ -144,54 +148,55 @@ export const WORKFLOW_PROFILES: ReadonlyArray<WorkflowProfile> = [
  */
 export const ORCHESTRATOR_ACTIONS = {
   // ── Read-only informational queries ───────────────────────────────────────
-  STATUS_READ:          "orchestrator:status:read",
-  TASKS_READ:           "orchestrator:tasks:read",
-  LOGS_READ:            "orchestrator:logs:read",
-  USAGE_READ:           "orchestrator:usage:read",
+  STATUS_READ: "orchestrator:status:read",
+  TASKS_READ: "orchestrator:tasks:read",
+  LOGS_READ: "orchestrator:logs:read",
+  USAGE_READ: "orchestrator:usage:read",
 
   // ── Project / phase / task management ─────────────────────────────────────
-  PHASE_CREATE:         "orchestrator:phase:create",
-  TASK_CREATE:          "orchestrator:task:create",
-  TASK_UPDATE:          "orchestrator:task:update",
+  PHASE_CREATE: "orchestrator:phase:create",
+  TASK_CREATE: "orchestrator:task:create",
+  TASK_UPDATE: "orchestrator:task:update",
 
   // ── Execution lifecycle ───────────────────────────────────────────────────
-  EXECUTION_START:      "orchestrator:execution:start",
-  EXECUTION_STOP:       "orchestrator:execution:stop",
-  EXECUTION_NEXT:       "orchestrator:execution:next",
+  EXECUTION_START: "orchestrator:execution:start",
+  EXECUTION_STOP: "orchestrator:execution:stop",
+  EXECUTION_NEXT: "orchestrator:execution:next",
 
   /**
    * Run the automated test suite after a task completes.
    * May create fix tasks internally (requires task:create from planning).
    */
-  TESTER_RUN:           "orchestrator:tester:run",
+  TESTER_RUN: "orchestrator:tester:run",
 
   /**
    * Run the CI review / fix validation loop after a phase completes.
    * Drives the Reviewer and Fixer worker archetypes.
    */
-  CI_VALIDATION_RUN:    "orchestrator:ci-validation:run",
+  CI_VALIDATION_RUN: "orchestrator:ci-validation:run",
+  EXCEPTION_RECOVERY_RUN: "orchestrator:exception-recovery:run",
 
   // ── Privileged git / VCS ──────────────────────────────────────────────────
-  GIT_BRANCH_CREATE:    "orchestrator:git:branch-create",
-  GIT_PUSH:             "orchestrator:git:push",
-  GIT_REBASE:           "orchestrator:git:rebase",
+  GIT_BRANCH_CREATE: "orchestrator:git:branch-create",
+  GIT_PUSH: "orchestrator:git:push",
+  GIT_REBASE: "orchestrator:git:rebase",
 
   /** Open a pull request for the completed phase branch. */
-  GIT_PR_OPEN:          "orchestrator:git:pr-open",
-  GIT_PR_MERGE:         "orchestrator:git:pr-merge",
+  GIT_PR_OPEN: "orchestrator:git:pr-open",
+  GIT_PR_MERGE: "orchestrator:git:pr-merge",
 
   /**
    * Full CI integration flow: push branch + open PR.
    * Wraps GIT_PUSH and GIT_PR_OPEN as a single orchestrated step.
    */
-  CI_INTEGRATION_RUN:   "orchestrator:ci-integration:run",
+  CI_INTEGRATION_RUN: "orchestrator:ci-integration:run",
 
   // ── Agent management ──────────────────────────────────────────────────────
-  AGENT_KILL:           "orchestrator:agent:kill",
-  AGENT_RESTART:        "orchestrator:agent:restart",
+  AGENT_KILL: "orchestrator:agent:kill",
+  AGENT_RESTART: "orchestrator:agent:restart",
 
   // ── System configuration ──────────────────────────────────────────────────
-  CONFIG_WRITE:         "orchestrator:config:write",
+  CONFIG_WRITE: "orchestrator:config:write",
 } as const;
 
 export type OrchestratorAction =
@@ -212,37 +217,38 @@ export const ORCHESTRATOR_ACTION_PROFILE_MAP: Readonly<
   Record<OrchestratorAction, WorkflowProfileName>
 > = {
   // readonly
-  [ORCHESTRATOR_ACTIONS.STATUS_READ]:         "readonly",
-  [ORCHESTRATOR_ACTIONS.TASKS_READ]:          "readonly",
-  [ORCHESTRATOR_ACTIONS.LOGS_READ]:           "readonly",
-  [ORCHESTRATOR_ACTIONS.USAGE_READ]:          "readonly",
+  [ORCHESTRATOR_ACTIONS.STATUS_READ]: "readonly",
+  [ORCHESTRATOR_ACTIONS.TASKS_READ]: "readonly",
+  [ORCHESTRATOR_ACTIONS.LOGS_READ]: "readonly",
+  [ORCHESTRATOR_ACTIONS.USAGE_READ]: "readonly",
 
   // planning
-  [ORCHESTRATOR_ACTIONS.PHASE_CREATE]:        "planning",
-  [ORCHESTRATOR_ACTIONS.TASK_CREATE]:         "planning",
-  [ORCHESTRATOR_ACTIONS.TASK_UPDATE]:         "planning",
+  [ORCHESTRATOR_ACTIONS.PHASE_CREATE]: "planning",
+  [ORCHESTRATOR_ACTIONS.TASK_CREATE]: "planning",
+  [ORCHESTRATOR_ACTIONS.TASK_UPDATE]: "planning",
 
   // execution
-  [ORCHESTRATOR_ACTIONS.EXECUTION_START]:     "execution",
-  [ORCHESTRATOR_ACTIONS.EXECUTION_STOP]:      "execution",
-  [ORCHESTRATOR_ACTIONS.EXECUTION_NEXT]:      "execution",
+  [ORCHESTRATOR_ACTIONS.EXECUTION_START]: "execution",
+  [ORCHESTRATOR_ACTIONS.EXECUTION_STOP]: "execution",
+  [ORCHESTRATOR_ACTIONS.EXECUTION_NEXT]: "execution",
   // Tester may create fix tasks (needs task:create), so it requires execution
   // which already subsumes planning (includes task:create).
-  [ORCHESTRATOR_ACTIONS.TESTER_RUN]:          "execution",
+  [ORCHESTRATOR_ACTIONS.TESTER_RUN]: "execution",
   // CI validation drives agent workflows; no external git ops required here.
-  [ORCHESTRATOR_ACTIONS.CI_VALIDATION_RUN]:   "execution",
+  [ORCHESTRATOR_ACTIONS.CI_VALIDATION_RUN]: "execution",
+  [ORCHESTRATOR_ACTIONS.EXCEPTION_RECOVERY_RUN]: "execution",
 
   // privileged
-  [ORCHESTRATOR_ACTIONS.GIT_BRANCH_CREATE]:   "privileged",
-  [ORCHESTRATOR_ACTIONS.GIT_PUSH]:            "privileged",
-  [ORCHESTRATOR_ACTIONS.GIT_REBASE]:          "privileged",
-  [ORCHESTRATOR_ACTIONS.GIT_PR_OPEN]:         "privileged",
-  [ORCHESTRATOR_ACTIONS.GIT_PR_MERGE]:        "privileged",
+  [ORCHESTRATOR_ACTIONS.GIT_BRANCH_CREATE]: "privileged",
+  [ORCHESTRATOR_ACTIONS.GIT_PUSH]: "privileged",
+  [ORCHESTRATOR_ACTIONS.GIT_REBASE]: "privileged",
+  [ORCHESTRATOR_ACTIONS.GIT_PR_OPEN]: "privileged",
+  [ORCHESTRATOR_ACTIONS.GIT_PR_MERGE]: "privileged",
   // CI integration = push + PR open, so inherits the privileged requirement.
-  [ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN]:  "privileged",
-  [ORCHESTRATOR_ACTIONS.AGENT_KILL]:          "privileged",
-  [ORCHESTRATOR_ACTIONS.AGENT_RESTART]:       "privileged",
-  [ORCHESTRATOR_ACTIONS.CONFIG_WRITE]:        "privileged",
+  [ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN]: "privileged",
+  [ORCHESTRATOR_ACTIONS.AGENT_KILL]: "privileged",
+  [ORCHESTRATOR_ACTIONS.AGENT_RESTART]: "privileged",
+  [ORCHESTRATOR_ACTIONS.CONFIG_WRITE]: "privileged",
 };
 
 // ---------------------------------------------------------------------------
@@ -300,6 +306,7 @@ export function isOrchestratorActionAuthorized(
   orchestratorAction: OrchestratorAction,
   policy: AuthPolicy,
 ): boolean {
-  const requiredActions = getRequiredActionsForOrchestratorAction(orchestratorAction);
+  const requiredActions =
+    getRequiredActionsForOrchestratorAction(orchestratorAction);
   return requiredActions.every((action) => isAuthorized(role, action, policy));
 }

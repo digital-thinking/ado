@@ -257,6 +257,7 @@ export async function startWebControlCenter(
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),
       failTaskIfInProgress: (input) => control.failTaskIfInProgress(input),
+      recordRecoveryAttempt: (input) => control.recordRecoveryAttempt(input),
       importFromTasksMarkdown: (assignee, name) =>
         control.importFromTasksMarkdown(assignee, name),
       runInternalWork: (input) => control.runInternalWork(input),
@@ -328,6 +329,10 @@ export async function startWebControlCenter(
         executionLoop: {
           ...current.executionLoop,
           ...(validatedPatch.executionLoop ?? {}),
+        },
+        exceptionRecovery: {
+          ...current.exceptionRecovery,
+          ...(validatedPatch.exceptionRecovery ?? {}),
         },
         usage: {
           ...current.usage,

@@ -9,6 +9,11 @@ import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
 import { runCiIntegration } from "../engine/ci-integration";
+import {
+  classifyRecoveryException,
+  isRecoverableException,
+  runExceptionRecovery,
+} from "../engine/exception-recovery";
 import { runCiValidationLoop } from "../engine/ci-validation-loop";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import {
@@ -18,7 +23,11 @@ import {
 import { runTesterWorkflow } from "../engine/tester-workflow";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
-import { CLIAdapterIdSchema, WorkerAssigneeSchema } from "../types";
+import {
+  CLIAdapterIdSchema,
+  WorkerAssigneeSchema,
+  type CLIAdapterId,
+} from "../types";
 import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
@@ -502,15 +511,16 @@ function printHelp(): void {
     "  ixado phase create <name> <branchName>  Create phase and set it active",
   );
   console.info(
-    "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO tasks in active phase sequentially",
+    "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO/CI_FIX tasks in active phase sequentially",
   );
-  console.info(
-    "  ixado config                 Show execution mode and default coding CLI",
-  );
+  console.info("  ixado config                 Show global defaults");
   console.info(
     "  ixado config mode <auto|manual>      Set default phase-loop mode",
   );
   console.info("  ixado config assignee <CLI_ADAPTER>  Set default coding CLI");
+  console.info(
+    "  ixado config recovery <0-10>         Set exception recovery max attempts",
+  );
   console.info(
     "  ixado config usage <on|off>          Enable/disable codexbar usage telemetry",
   );
@@ -1125,6 +1135,97 @@ async function runTaskCommand(args: string[]): Promise<void> {
   );
 }
 
+async function attemptExceptionRecovery(input: {
+  control: ControlCenterService;
+  cwd: string;
+  policy: Awaited<ReturnType<typeof loadAuthPolicy>>;
+  assignee: CLIAdapterId;
+  maxAttempts: number;
+  phaseId: string;
+  phaseName: string;
+  taskId?: string;
+  taskTitle?: string;
+  errorMessage: string;
+}): Promise<void> {
+  const exception = classifyRecoveryException({
+    message: input.errorMessage,
+    phaseId: input.phaseId,
+    taskId: input.taskId,
+  });
+  if (!isRecoverableException(exception)) {
+    throw new Error(
+      `Exception is not recoverable by policy: ${input.errorMessage}`,
+    );
+  }
+  if (input.maxAttempts <= 0) {
+    throw new Error(
+      `Exception recovery disabled (exceptionRecovery.maxAttempts=${input.maxAttempts}).`,
+    );
+  }
+
+  let lastError: Error | undefined;
+  for (
+    let attemptNumber = 1;
+    attemptNumber <= input.maxAttempts;
+    attemptNumber += 1
+  ) {
+    console.info(
+      `Recovery attempt ${attemptNumber}/${input.maxAttempts} for ${input.taskTitle ?? input.phaseName}: ${exception.category}.`,
+    );
+    try {
+      const recovery = await runExceptionRecovery({
+        cwd: input.cwd,
+        assignee: input.assignee,
+        exception,
+        attemptNumber,
+        role: "admin",
+        policy: input.policy,
+        phaseName: input.phaseName,
+        taskTitle: input.taskTitle,
+        runInternalWork: async (work) => {
+          const result = await input.control.runInternalWork({
+            assignee: work.assignee,
+            prompt: work.prompt,
+            phaseId: work.phaseId,
+            taskId: work.taskId,
+            resume: work.resume,
+          });
+
+          return {
+            stdout: result.stdout,
+            stderr: result.stderr,
+          };
+        },
+      });
+
+      await input.control.recordRecoveryAttempt({
+        phaseId: input.phaseId,
+        taskId: input.taskId,
+        attemptNumber,
+        exception: recovery.exception,
+        result: recovery.result,
+      });
+
+      if (recovery.result.status === "fixed") {
+        console.info(`Recovery fixed: ${recovery.result.reasoning}`);
+        return;
+      }
+
+      throw new Error(
+        `Recovery marked unfixable: ${recovery.result.reasoning}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = new Error(message);
+      console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
+    }
+  }
+
+  throw new Error(
+    `Recovery attempts exhausted (${input.maxAttempts}): ${lastError?.message ?? input.errorMessage}`,
+  );
+}
+
 async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1147,6 +1248,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   );
   const loopControl = new PhaseLoopControl();
   const activeAssignee = settings.internalWork.assignee;
+  const maxRecoveryAttempts = settings.exceptionRecovery.maxAttempts;
   const testerRunner = new ProcessManager();
   const git = new GitManager(testerRunner);
   const github = new GitHubManager(testerRunner);
@@ -1204,7 +1306,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   });
 
   console.info(
-    `Starting phase execution loop in ${mode} mode (countdown: ${countdownSeconds}s, assignee: ${activeAssignee}).`,
+    `Starting phase execution loop in ${mode} mode (countdown: ${countdownSeconds}s, assignee: ${activeAssignee}, recovery max attempts: ${maxRecoveryAttempts}).`,
   );
 
   try {
@@ -1217,38 +1319,62 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
     console.info(
       `Execution loop: preparing branch ${startingPhase.branchName}.`,
     );
-    try {
-      await git.ensureCleanWorkingTree(cwd);
-      const currentBranch = await git.getCurrentBranch(cwd);
-      if (currentBranch === startingPhase.branchName) {
-        console.info(
-          `Execution loop: already on branch ${startingPhase.branchName}.`,
-        );
-      } else {
-        try {
-          await git.checkout(startingPhase.branchName, cwd);
+    while (true) {
+      try {
+        await git.ensureCleanWorkingTree(cwd);
+        const currentBranch = await git.getCurrentBranch(cwd);
+        if (currentBranch === startingPhase.branchName) {
           console.info(
-            `Execution loop: checked out existing branch ${startingPhase.branchName}.`,
+            `Execution loop: already on branch ${startingPhase.branchName}.`,
           );
-        } catch {
-          await privilegedGit.createBranch({
-            branchName: startingPhase.branchName,
+        } else {
+          try {
+            await git.checkout(startingPhase.branchName, cwd);
+            console.info(
+              `Execution loop: checked out existing branch ${startingPhase.branchName}.`,
+            );
+          } catch {
+            await privilegedGit.createBranch({
+              branchName: startingPhase.branchName,
+              cwd,
+              fromRef: "HEAD",
+            });
+            console.info(
+              `Execution loop: created and checked out branch ${startingPhase.branchName}.`,
+            );
+          }
+        }
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+          await attemptExceptionRecovery({
+            control,
             cwd,
-            fromRef: "HEAD",
+            policy,
+            assignee: activeAssignee,
+            maxAttempts: maxRecoveryAttempts,
+            phaseId: startingPhase.id,
+            phaseName: startingPhase.name,
+            errorMessage: message,
           });
           console.info(
-            `Execution loop: created and checked out branch ${startingPhase.branchName}.`,
+            "Execution loop: recovery succeeded for branching preconditions, retrying.",
           );
+          continue;
+        } catch (recoveryError) {
+          const recoveryMessage =
+            recoveryError instanceof Error
+              ? recoveryError.message
+              : String(recoveryError);
+          await control.setPhaseStatus({
+            phaseId: startingPhase.id,
+            status: "CI_FAILED",
+            ciStatusContext: `Branching failed: ${message}\nRecovery: ${recoveryMessage}`,
+          });
+          throw recoveryError;
         }
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await control.setPhaseStatus({
-        phaseId: startingPhase.id,
-        status: "CI_FAILED",
-        ciStatusContext: `Branching failed: ${message}`,
-      });
-      throw error;
     }
 
     await control.setPhaseStatus({
@@ -1304,36 +1430,88 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
       console.info(
         `Execution loop: starting ${nextTaskLabel} with ${activeAssignee}.`,
       );
-      const updatedState = await control.startActiveTaskAndWait({
-        taskNumber: nextTaskNumber,
-        assignee: activeAssignee,
-        resume: resumeSession,
-      });
-      const updatedPhase = resolveActivePhaseFromState(updatedState);
-      const resultTask = updatedPhase.tasks[nextTaskNumber - 1];
-      if (!resultTask) {
-        throw new Error(
-          `Task #${nextTaskNumber} not found after loop execution.`,
-        );
-      }
+      let updatedPhase:
+        | Awaited<
+            ReturnType<ControlCenterService["getState"]>
+          >["phases"][number]
+        | undefined;
+      let resultTask:
+        | Awaited<
+            ReturnType<ControlCenterService["getState"]>
+          >["phases"][number]["tasks"][number]
+        | undefined;
+      let taskRunCount = 0;
+      const maxTaskRunCount = Math.max(1, maxRecoveryAttempts + 1);
+      while (taskRunCount < maxTaskRunCount) {
+        taskRunCount += 1;
+        const updatedState = await control.startActiveTaskAndWait({
+          taskNumber: nextTaskNumber,
+          assignee: activeAssignee,
+          resume: resumeSession,
+        });
+        updatedPhase = resolveActivePhaseFromState(updatedState);
+        resultTask = updatedPhase.tasks[nextTaskNumber - 1];
+        if (!resultTask) {
+          throw new Error(
+            `Task #${nextTaskNumber} not found after loop execution.`,
+          );
+        }
 
-      console.info(
-        `Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`,
-      );
-      if (resultTask.status === "FAILED") {
-        resumeSession = false;
+        console.info(
+          `Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`,
+        );
+        if (resultTask.status !== "FAILED") {
+          break;
+        }
+
+        resumeSession = true;
+        const failureMessage =
+          resultTask.errorLogs ??
+          `Execution failed for task #${nextTaskNumber} ${resultTask.title}.`;
         if (resultTask.errorLogs) {
           console.info(`Failure details: ${resultTask.errorLogs}`);
         }
+        try {
+          await attemptExceptionRecovery({
+            control,
+            cwd,
+            policy,
+            assignee: activeAssignee,
+            maxAttempts: maxRecoveryAttempts,
+            phaseId: updatedPhase.id,
+            phaseName: updatedPhase.name,
+            taskId: resultTask.id,
+            taskTitle: resultTask.title,
+            errorMessage: failureMessage,
+          });
+          console.info(
+            `Execution loop: recovery fixed ${nextTaskLabel}, retrying task.`,
+          );
+          continue;
+        } catch (recoveryError) {
+          const recoveryMessage =
+            recoveryError instanceof Error
+              ? recoveryError.message
+              : String(recoveryError);
+          await control.setPhaseStatus({
+            phaseId: updatedPhase.id,
+            status: "CI_FAILED",
+            ciStatusContext: `${failureMessage}\nRecovery: ${recoveryMessage}`,
+          });
+          throw recoveryError;
+        }
+      }
+      if (!updatedPhase || !resultTask) {
+        throw new Error("Execution loop task state resolution failed.");
+      }
+      if (resultTask.status === "FAILED") {
         await control.setPhaseStatus({
           phaseId: updatedPhase.id,
           status: "CI_FAILED",
-          ciStatusContext:
-            resultTask.errorLogs ??
-            `Execution failed for task #${nextTaskNumber} ${resultTask.title}.`,
+          ciStatusContext: `Execution failed after ${maxTaskRunCount} run attempts for task #${nextTaskNumber}.`,
         });
         throw new Error(
-          `Execution loop stopped after FAILED task #${nextTaskNumber}. Resolve it or reset the task before continuing.`,
+          `Execution loop stopped after FAILED task #${nextTaskNumber}. Recovery retries were exhausted.`,
         );
       }
 
@@ -1395,18 +1573,50 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
       console.info(
         "Optional CI integration enabled. Pushing branch and creating PR via gh.",
       );
-      const ciResult = await runCiIntegration({
-        phaseId: completedPhase.id,
-        phaseName: completedPhase.name,
-        cwd,
-        baseBranch: settings.executionLoop.ciBaseBranch,
-        runner: testerRunner,
-        role: "admin",
-        policy,
-        setPhasePrUrl: async (input) => {
-          await control.setPhasePrUrl(input);
-        },
-      });
+      let ciResult: Awaited<ReturnType<typeof runCiIntegration>> | undefined;
+      for (
+        let ciAttempt = 1;
+        ciAttempt <= Math.max(1, maxRecoveryAttempts + 1);
+        ciAttempt += 1
+      ) {
+        try {
+          ciResult = await runCiIntegration({
+            phaseId: completedPhase.id,
+            phaseName: completedPhase.name,
+            cwd,
+            baseBranch: settings.executionLoop.ciBaseBranch,
+            runner: testerRunner,
+            role: "admin",
+            policy,
+            setPhasePrUrl: async (input) => {
+              await control.setPhasePrUrl(input);
+            },
+          });
+          break;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          if (ciAttempt > maxRecoveryAttempts) {
+            throw error;
+          }
+          await attemptExceptionRecovery({
+            control,
+            cwd,
+            policy,
+            assignee: activeAssignee,
+            maxAttempts: maxRecoveryAttempts,
+            phaseId: completedPhase.id,
+            phaseName: completedPhase.name,
+            errorMessage: message,
+          });
+          console.info(
+            `Execution loop: recovery fixed CI integration precondition, retrying CI integration (attempt ${ciAttempt + 1}).`,
+          );
+        }
+      }
+      if (!ciResult) {
+        throw new Error("CI integration did not produce a result.");
+      }
       await control.setPhaseStatus({
         phaseId: completedPhase.id,
         status: "AWAITING_CI",
@@ -1679,6 +1889,27 @@ function parseConfigToggle(rawValue: string, usage: string): boolean {
   throw new Error(usage);
 }
 
+function parseConfigRecoveryMaxAttempts(rawValue: string): number {
+  const maxAttempts = Number(rawValue.trim());
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 0 || maxAttempts > 10) {
+    throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
+  }
+
+  return maxAttempts;
+}
+
+function printConfigHelp(): void {
+  console.info("Config commands:");
+  console.info("  ixado config");
+  console.info("  ixado config show");
+  console.info("  ixado config mode <auto|manual>");
+  console.info(
+    "  ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+  );
+  console.info("  ixado config recovery <maxAttempts:0-10>");
+  console.info("  ixado config usage <on|off>");
+}
+
 async function runConfigShowCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1687,6 +1918,9 @@ async function runConfigShowCommand(): Promise<void> {
     `Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`,
   );
   console.info(`Default coding CLI: ${settings.internalWork.assignee}`);
+  console.info(
+    `Exception recovery max attempts: ${settings.exceptionRecovery.maxAttempts}`,
+  );
   console.info(
     `Codexbar usage telemetry: ${settings.usage.codexbarEnabled ? "ON" : "OFF"}`,
   );
@@ -1768,10 +2002,38 @@ async function runConfigUsageCommand(args: string[]): Promise<void> {
   console.info(`Settings saved to ${settingsFilePath}.`);
 }
 
+async function runConfigRecoveryCommand(args: string[]): Promise<void> {
+  const rawValue = args[2]?.trim() ?? "";
+  if (!rawValue) {
+    throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
+  }
+
+  const maxAttempts = parseConfigRecoveryMaxAttempts(rawValue);
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    exceptionRecovery: {
+      ...settings.exceptionRecovery,
+      maxAttempts,
+    },
+  });
+
+  console.info(
+    `Exception recovery max attempts set to ${saved.exceptionRecovery.maxAttempts}.`,
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+}
+
 async function runConfigCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
   if (!subcommand || subcommand === "show") {
     await runConfigShowCommand();
+    return;
+  }
+
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    printConfigHelp();
     return;
   }
 
@@ -1790,8 +2052,13 @@ async function runConfigCommand(args: string[]): Promise<void> {
     return;
   }
 
+  if (subcommand === "recovery") {
+    await runConfigRecoveryCommand(args);
+    return;
+  }
+
   throw new Error(
-    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`, or `ixado config usage <on|off>`.",
+    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`, `ixado config recovery <maxAttempts:0-10>`, or `ixado config usage <on|off>`.",
   );
 }
 
