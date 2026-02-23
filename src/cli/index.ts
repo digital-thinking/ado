@@ -8,19 +8,8 @@ import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
 import { createTelegramRuntime } from "../bot";
-import { runCiIntegration } from "../engine/ci-integration";
-import {
-  classifyRecoveryException,
-  isRecoverableException,
-  runExceptionRecovery,
-} from "../engine/exception-recovery";
-import { runCiValidationLoop } from "../engine/ci-validation-loop";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
-import {
-  waitForAutoAdvance as waitForAutoAdvanceGate,
-  waitForManualAdvance as waitForManualAdvanceGate,
-} from "../engine/phase-loop-wait";
-import { runTesterWorkflow } from "../engine/tester-workflow";
+import { PhaseRunner } from "../engine/phase-runner";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
@@ -28,7 +17,6 @@ import {
   WorkerAssigneeSchema,
   type CLIAdapterId,
 } from "../types";
-import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
@@ -735,52 +723,6 @@ function resolveCountdownSeconds(
   return parsed;
 }
 
-async function waitForManualAdvance(
-  rl: ReturnType<typeof createInterface>,
-  loopControl: PhaseLoopControl,
-  nextTaskLabel: string,
-): Promise<"NEXT" | "STOP"> {
-  const abortController = new AbortController();
-  return waitForManualAdvanceGate({
-    loopControl,
-    nextTaskLabel,
-    askLocal: async () =>
-      rl
-        .question("> ", { signal: abortController.signal })
-        .then((answer) =>
-          answer.trim().toLowerCase() === "stop" ? "STOP" : "NEXT",
-        )
-        .catch((error) => {
-          if ((error as { name?: string }).name === "AbortError") {
-            return new Promise<"NEXT" | "STOP">(() => {});
-          }
-
-          throw error;
-        }),
-    cancelLocal: () => {
-      abortController.abort();
-    },
-    onInfo: (line) => {
-      console.info(line);
-    },
-  });
-}
-
-async function waitForAutoAdvance(
-  loopControl: PhaseLoopControl,
-  countdownSeconds: number,
-  nextTaskLabel: string,
-): Promise<"NEXT" | "STOP"> {
-  return waitForAutoAdvanceGate({
-    loopControl,
-    countdownSeconds,
-    nextTaskLabel,
-    onInfo: (line) => {
-      console.info(line);
-    },
-  });
-}
-
 async function resolveActivePhaseTaskForNumber(
   control: ControlCenterService,
   taskNumber: number,
@@ -1136,97 +1078,6 @@ async function runTaskCommand(args: string[]): Promise<void> {
   );
 }
 
-async function attemptExceptionRecovery(input: {
-  control: ControlCenterService;
-  cwd: string;
-  policy: Awaited<ReturnType<typeof loadAuthPolicy>>;
-  assignee: CLIAdapterId;
-  maxAttempts: number;
-  phaseId: string;
-  phaseName: string;
-  taskId?: string;
-  taskTitle?: string;
-  errorMessage: string;
-}): Promise<void> {
-  const exception = classifyRecoveryException({
-    message: input.errorMessage,
-    phaseId: input.phaseId,
-    taskId: input.taskId,
-  });
-  if (!isRecoverableException(exception)) {
-    throw new Error(
-      `Exception is not recoverable by policy: ${input.errorMessage}`,
-    );
-  }
-  if (input.maxAttempts <= 0) {
-    throw new Error(
-      `Exception recovery disabled (exceptionRecovery.maxAttempts=${input.maxAttempts}).`,
-    );
-  }
-
-  let lastError: Error | undefined;
-  for (
-    let attemptNumber = 1;
-    attemptNumber <= input.maxAttempts;
-    attemptNumber += 1
-  ) {
-    console.info(
-      `Recovery attempt ${attemptNumber}/${input.maxAttempts} for ${input.taskTitle ?? input.phaseName}: ${exception.category}.`,
-    );
-    try {
-      const recovery = await runExceptionRecovery({
-        cwd: input.cwd,
-        assignee: input.assignee,
-        exception,
-        attemptNumber,
-        role: "admin",
-        policy: input.policy,
-        phaseName: input.phaseName,
-        taskTitle: input.taskTitle,
-        runInternalWork: async (work) => {
-          const result = await input.control.runInternalWork({
-            assignee: work.assignee,
-            prompt: work.prompt,
-            phaseId: work.phaseId,
-            taskId: work.taskId,
-            resume: work.resume,
-          });
-
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        },
-      });
-
-      await input.control.recordRecoveryAttempt({
-        phaseId: input.phaseId,
-        taskId: input.taskId,
-        attemptNumber,
-        exception: recovery.exception,
-        result: recovery.result,
-      });
-
-      if (recovery.result.status === "fixed") {
-        console.info(`Recovery fixed: ${recovery.result.reasoning}`);
-        return;
-      }
-
-      throw new Error(
-        `Recovery marked unfixable: ${recovery.result.reasoning}`,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      lastError = new Error(message);
-      console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
-    }
-  }
-
-  throw new Error(
-    `Recovery attempts exhausted (${input.maxAttempts}): ${lastError?.message ?? input.errorMessage}`,
-  );
-}
-
 async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1249,22 +1100,11 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   );
   const loopControl = new PhaseLoopControl();
   const activeAssignee = settings.internalWork.assignee;
-  const maxRecoveryAttempts = settings.exceptionRecovery.maxAttempts;
-  const testerRunner = new ProcessManager();
-  const git = new GitManager(testerRunner);
-  const github = new GitHubManager(testerRunner);
-  const privilegedGit = new PrivilegedGitActions({
-    git,
-    github,
-    role: "admin",
-    policy,
-  });
-  const cwd = projectRootDir;
   const telegram = resolveTelegramConfig(settings.telegram);
 
-  let runtime: ReturnType<typeof createTelegramRuntime> | undefined;
+  let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
   if (telegram.enabled) {
-    runtime = createTelegramRuntime({
+    telegramRuntime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
       readState: () => control.getState(),
@@ -1289,426 +1129,40 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
         return "Execution loop stop requested.";
       },
     });
-    await runtime.start();
+    await telegramRuntime.start();
     console.info("Telegram loop controls enabled: /next and /stop.");
   }
 
-  const notifyLoopEvent = async (message: string): Promise<void> => {
-    if (!runtime) {
-      return;
-    }
-
-    await runtime.notifyOwner(message);
-  };
-
-  const rl = createInterface({
-    input: stdin,
-    output: stdout,
-  });
-
-  console.info(
-    `Starting phase execution loop in ${mode} mode (countdown: ${countdownSeconds}s, assignee: ${activeAssignee}, recovery max attempts: ${maxRecoveryAttempts}).`,
+  const runner = new PhaseRunner(
+    control,
+    {
+      mode,
+      countdownSeconds,
+      activeAssignee,
+      maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
+      testerCommand: settings.executionLoop.testerCommand,
+      testerArgs: settings.executionLoop.testerArgs,
+      testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+      ciEnabled: settings.executionLoop.ciEnabled,
+      ciBaseBranch: settings.executionLoop.ciBaseBranch,
+      validationMaxRetries: settings.executionLoop.validationMaxRetries,
+      projectRootDir,
+      projectName,
+      policy,
+      role: "admin",
+    },
+    loopControl,
+    async (message) => {
+      if (telegramRuntime) {
+        await telegramRuntime.notifyOwner(message);
+      }
+    },
   );
 
   try {
-    const startingState = await control.getState();
-    const startingPhase = resolveActivePhaseFromState(startingState);
-    await control.setPhaseStatus({
-      phaseId: startingPhase.id,
-      status: "BRANCHING",
-    });
-    console.info(
-      `Execution loop: preparing branch ${startingPhase.branchName}.`,
-    );
-    while (true) {
-      try {
-        await git.ensureCleanWorkingTree(cwd);
-        const currentBranch = await git.getCurrentBranch(cwd);
-        if (currentBranch === startingPhase.branchName) {
-          console.info(
-            `Execution loop: already on branch ${startingPhase.branchName}.`,
-          );
-        } else {
-          try {
-            await git.checkout(startingPhase.branchName, cwd);
-            console.info(
-              `Execution loop: checked out existing branch ${startingPhase.branchName}.`,
-            );
-          } catch {
-            await privilegedGit.createBranch({
-              branchName: startingPhase.branchName,
-              cwd,
-              fromRef: "HEAD",
-            });
-            console.info(
-              `Execution loop: created and checked out branch ${startingPhase.branchName}.`,
-            );
-          }
-        }
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-          await attemptExceptionRecovery({
-            control,
-            cwd,
-            policy,
-            assignee: activeAssignee,
-            maxAttempts: maxRecoveryAttempts,
-            phaseId: startingPhase.id,
-            phaseName: startingPhase.name,
-            errorMessage: message,
-          });
-          console.info(
-            "Execution loop: recovery succeeded for branching preconditions, retrying.",
-          );
-          continue;
-        } catch (recoveryError) {
-          const recoveryMessage =
-            recoveryError instanceof Error
-              ? recoveryError.message
-              : String(recoveryError);
-          await control.setPhaseStatus({
-            phaseId: startingPhase.id,
-            status: "CI_FAILED",
-            ciStatusContext: `Branching failed: ${message}\nRecovery: ${recoveryMessage}`,
-          });
-          throw recoveryError;
-        }
-      }
-    }
-
-    await control.setPhaseStatus({
-      phaseId: startingPhase.id,
-      status: "CODING",
-    });
-
-    let iteration = 0;
-    let resumeSession = false;
-    let completedPhase:
-      | Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number]
-      | undefined;
-    while (true) {
-      if (loopControl.isStopRequested()) {
-        console.info("Execution loop stopped.");
-        break;
-      }
-
-      const state = await control.getState();
-      const phase = resolveActivePhaseFromState(state);
-      const nextTaskIndex = phase.tasks.findIndex(
-        (task) => task.status === "TODO" || task.status === "CI_FIX",
-      );
-      if (nextTaskIndex < 0) {
-        console.info(
-          `Execution loop finished. No TODO or CI_FIX tasks in active phase ${phase.name}.`,
-        );
-        completedPhase = phase;
-        break;
-      }
-
-      const nextTaskNumber = nextTaskIndex + 1;
-      const nextTask = phase.tasks[nextTaskIndex];
-      const nextTaskLabel = `task #${nextTaskNumber} ${nextTask.title}`;
-
-      if (iteration > 0) {
-        const decision =
-          mode === "AUTO"
-            ? await waitForAutoAdvance(
-                loopControl,
-                countdownSeconds,
-                nextTaskLabel,
-              )
-            : await waitForManualAdvance(rl, loopControl, nextTaskLabel);
-        if (decision === "STOP") {
-          loopControl.requestStop();
-          console.info("Execution loop stopped before starting the next task.");
-          break;
-        }
-      }
-
-      iteration += 1;
-      console.info(
-        `Execution loop: starting ${nextTaskLabel} with ${activeAssignee}.`,
-      );
-      let updatedPhase:
-        | Awaited<
-            ReturnType<ControlCenterService["getState"]>
-          >["phases"][number]
-        | undefined;
-      let resultTask:
-        | Awaited<
-            ReturnType<ControlCenterService["getState"]>
-          >["phases"][number]["tasks"][number]
-        | undefined;
-      let taskRunCount = 0;
-      const maxTaskRunCount = Math.max(1, maxRecoveryAttempts + 1);
-      while (taskRunCount < maxTaskRunCount) {
-        taskRunCount += 1;
-        const updatedState = await control.startActiveTaskAndWait({
-          taskNumber: nextTaskNumber,
-          assignee: activeAssignee,
-          resume: resumeSession,
-        });
-        updatedPhase = resolveActivePhaseFromState(updatedState);
-        resultTask = updatedPhase.tasks[nextTaskNumber - 1];
-        if (!resultTask) {
-          throw new Error(
-            `Task #${nextTaskNumber} not found after loop execution.`,
-          );
-        }
-
-        console.info(
-          `Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`,
-        );
-        if (resultTask.status !== "FAILED") {
-          break;
-        }
-
-        resumeSession = true;
-        const failureMessage =
-          resultTask.errorLogs ??
-          `Execution failed for task #${nextTaskNumber} ${resultTask.title}.`;
-        if (resultTask.errorLogs) {
-          console.info(`Failure details: ${resultTask.errorLogs}`);
-        }
-        try {
-          await attemptExceptionRecovery({
-            control,
-            cwd,
-            policy,
-            assignee: activeAssignee,
-            maxAttempts: maxRecoveryAttempts,
-            phaseId: updatedPhase.id,
-            phaseName: updatedPhase.name,
-            taskId: resultTask.id,
-            taskTitle: resultTask.title,
-            errorMessage: failureMessage,
-          });
-          console.info(
-            `Execution loop: recovery fixed ${nextTaskLabel}, retrying task.`,
-          );
-          continue;
-        } catch (recoveryError) {
-          const recoveryMessage =
-            recoveryError instanceof Error
-              ? recoveryError.message
-              : String(recoveryError);
-          await control.setPhaseStatus({
-            phaseId: updatedPhase.id,
-            status: "CI_FAILED",
-            ciStatusContext: `${failureMessage}\nRecovery: ${recoveryMessage}`,
-          });
-          throw recoveryError;
-        }
-      }
-      if (!updatedPhase || !resultTask) {
-        throw new Error("Execution loop task state resolution failed.");
-      }
-      if (resultTask.status === "FAILED") {
-        await control.setPhaseStatus({
-          phaseId: updatedPhase.id,
-          status: "CI_FAILED",
-          ciStatusContext: `Execution failed after ${maxTaskRunCount} run attempts for task #${nextTaskNumber}.`,
-        });
-        throw new Error(
-          `Execution loop stopped after FAILED task #${nextTaskNumber}. Recovery retries were exhausted.`,
-        );
-      }
-
-      await notifyLoopEvent(
-        `Task Done: ${updatedPhase.name} #${nextTaskNumber} ${resultTask.title} (${resultTask.status}).`,
-      );
-
-      const testerResult = await runTesterWorkflow({
-        phaseId: updatedPhase.id,
-        phaseName: updatedPhase.name,
-        completedTask: {
-          id: resultTask.id,
-          title: resultTask.title,
-        },
-        cwd: projectRootDir,
-        testerCommand: settings.executionLoop.testerCommand,
-        testerArgs: settings.executionLoop.testerArgs,
-        testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
-        runner: testerRunner,
-        createFixTask: async (input) => {
-          await control.createTask({
-            phaseId: input.phaseId,
-            title: input.title,
-            description: input.description,
-            assignee: activeAssignee,
-            dependencies: input.dependencies,
-            status: input.status,
-          });
-        },
-      });
-      if (testerResult.status === "FAILED") {
-        resumeSession = false;
-        console.info(
-          `Tester workflow failed after ${nextTaskLabel}. Created fix task: ${testerResult.fixTaskTitle}.`,
-        );
-        await notifyLoopEvent(
-          `Test Fail: ${updatedPhase.name} after ${resultTask.title}. Created fix task: ${testerResult.fixTaskTitle}.`,
-        );
-        await control.setPhaseStatus({
-          phaseId: updatedPhase.id,
-          status: "CI_FAILED",
-          ciStatusContext:
-            `${testerResult.errorMessage}\n\n${testerResult.fixTaskDescription}`.trim(),
-        });
-        throw new Error(
-          "Execution loop stopped after tester failure. Fix task has been created.",
-        );
-      }
-
-      console.info(`Tester workflow passed after ${nextTaskLabel}.`);
-      resumeSession = true;
-    }
-
-    if (completedPhase && settings.executionLoop.ciEnabled) {
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "CREATING_PR",
-      });
-      console.info(
-        "Optional CI integration enabled. Pushing branch and creating PR via gh.",
-      );
-      let ciResult: Awaited<ReturnType<typeof runCiIntegration>> | undefined;
-      for (
-        let ciAttempt = 1;
-        ciAttempt <= Math.max(1, maxRecoveryAttempts + 1);
-        ciAttempt += 1
-      ) {
-        try {
-          ciResult = await runCiIntegration({
-            phaseId: completedPhase.id,
-            phaseName: completedPhase.name,
-            cwd,
-            baseBranch: settings.executionLoop.ciBaseBranch,
-            runner: testerRunner,
-            role: "admin",
-            policy,
-            setPhasePrUrl: async (input) => {
-              await control.setPhasePrUrl(input);
-            },
-          });
-          break;
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          if (ciAttempt > maxRecoveryAttempts) {
-            throw error;
-          }
-          await attemptExceptionRecovery({
-            control,
-            cwd,
-            policy,
-            assignee: activeAssignee,
-            maxAttempts: maxRecoveryAttempts,
-            phaseId: completedPhase.id,
-            phaseName: completedPhase.name,
-            errorMessage: message,
-          });
-          console.info(
-            `Execution loop: recovery fixed CI integration precondition, retrying CI integration (attempt ${ciAttempt + 1}).`,
-          );
-        }
-      }
-      if (!ciResult) {
-        throw new Error("CI integration did not produce a result.");
-      }
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "AWAITING_CI",
-      });
-      console.info(
-        `Optional CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`,
-      );
-      await notifyLoopEvent(
-        `PR Created: ${completedPhase.name} -> ${ciResult.prUrl}`,
-      );
-
-      const latestState = await control.getState();
-      const validationPhase = latestState.phases.find(
-        (phase) => phase.id === completedPhase.id,
-      );
-      if (!validationPhase) {
-        throw new Error(
-          `Completed phase not found for CI validation: ${completedPhase.id}`,
-        );
-      }
-
-      console.info(
-        `Starting CI validation loop (max retries: ${settings.executionLoop.validationMaxRetries}).`,
-      );
-      const validationResult = await runCiValidationLoop({
-        projectName: latestState.projectName,
-        rootDir: latestState.rootDir,
-        phase: validationPhase,
-        assignee: activeAssignee,
-        maxRetries: settings.executionLoop.validationMaxRetries,
-        readGitDiff: async () => {
-          const diff = await testerRunner.run({
-            command: "git",
-            args: ["diff", "--no-color"],
-            cwd,
-          });
-
-          return diff.stdout;
-        },
-        runInternalWork: async (input) => {
-          const result = await control.runInternalWork({
-            assignee: input.assignee,
-            prompt: input.prompt,
-            phaseId: input.phaseId,
-            resume: input.resume,
-          });
-
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        },
-      });
-
-      if (validationResult.status === "MAX_RETRIES_EXCEEDED") {
-        await control.setPhaseStatus({
-          phaseId: completedPhase.id,
-          status: "CI_FAILED",
-          ciStatusContext: validationResult.pendingComments.join("\n"),
-        });
-        console.info(
-          `CI validation loop reached max retries (${validationResult.maxRetries}). Pending comments: ${validationResult.pendingComments.join(" | ")}`,
-        );
-        await notifyLoopEvent(
-          `Review: ${completedPhase.name} needs fixes after ${validationResult.fixAttempts} attempts. Pending: ${validationResult.pendingComments.join(" | ")}`,
-        );
-        throw new Error(
-          "Execution loop stopped after CI validation max retries.",
-        );
-      }
-
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "READY_FOR_REVIEW",
-      });
-
-      console.info(
-        `CI validation loop approved after ${validationResult.reviews.length} review round(s) and ${validationResult.fixAttempts} fix attempt(s).`,
-      );
-      await notifyLoopEvent(
-        `Review: ${completedPhase.name} approved after ${validationResult.reviews.length} round(s).`,
-      );
-    } else if (completedPhase) {
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "DONE",
-      });
-    }
+    await runner.run();
   } finally {
-    rl.close();
-    runtime?.stop();
+    telegramRuntime?.stop();
   }
 }
 
