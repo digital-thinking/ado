@@ -1,16 +1,1 @@
-Implement TASK P15-007 from TASKS.md.
-
-Goal:
-- Extract repeated CLI integration-test harness utilities (spawn wrapper, temp project/bootstrap helpers) into shared test helpers and migrate existing CLI command tests to those helpers.
-
-Requirements:
-- Identify duplicated harness/setup patterns across CLI integration tests.
-- Create shared helper module(s) for process spawning, temporary project scaffolding/bootstrap, and common assertions/log capture where applicable.
-- Migrate existing CLI command integration tests to use the shared helpers without changing test intent/coverage.
-- Keep behavior and test expectations equivalent (refactor-only unless a bug is discovered and explicitly fixed).
-- Ensure helper APIs are clear/typed and avoid introducing global mutable state.
-- Update/add tests as needed to validate helper usage and preserve reliability.
-- Run relevant test suite.
-- Commit all changes on the current feature branch with a clear commit message mentioning P15-007.
-
-Return a concise summary, files changed, and validation results.
+Done.
