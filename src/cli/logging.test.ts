@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { initializeCliLogging, resolveCliLogFilePath } from "./logging";
 import { TestSandbox } from "./test-helpers";
@@ -44,6 +44,23 @@ describe("cli logging", () => {
     );
   });
 
+  test("initializes logging with default project-owned path", () => {
+    const cwd = join(sandbox.projectDir, "project-default");
+    const logFilePath = initializeCliLogging(cwd);
+
+    expect(logFilePath).toBe(join(cwd, ".ixado", "cli.log"));
+    expect(existsSync(logFilePath)).toBe(true);
+  });
+
+  test("initializes logging with explicit writable override path", () => {
+    const customLogFilePath = join(sandbox.projectDir, "override", "cli.log");
+    process.env.IXADO_CLI_LOG_FILE = customLogFilePath;
+
+    const initializedPath = initializeCliLogging(sandbox.projectDir);
+
+    expect(initializedPath).toBe(customLogFilePath);
+    expect(existsSync(customLogFilePath)).toBe(true);
+  });
   test("fails fast with actionable error for invalid override path", () => {
     const badParent = join(sandbox.projectDir, "not-a-dir");
     writeFileSync(badParent, "x", "utf8");
