@@ -1,1 +1,1 @@
-P15-006 — Refactor /api/agents enrichment path to be side-effect free and scalable.
+P15-007 — Extract shared CLI integration-test harness helpers and migrate existing CLI tests.
