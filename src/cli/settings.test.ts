@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   DEFAULT_CLI_SETTINGS,
   loadCliSettings,
+  resolveOnboardSettingsFilePath,
+  resolveOnboardSoulFilePath,
   saveSoulFile,
   runOnboard,
   saveCliSettings,
@@ -40,6 +42,8 @@ describe("cli settings", () => {
   let soulFilePath: string;
   const originalHome = process.env.HOME;
   const originalGlobalConfigPath = process.env.IXADO_GLOBAL_CONFIG_FILE;
+  const originalSettingsPath = process.env.IXADO_SETTINGS_FILE;
+  const originalSoulPath = process.env.IXADO_SOUL_FILE;
 
   beforeEach(async () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-cli-settings-"));
@@ -48,6 +52,8 @@ describe("cli settings", () => {
     soulFilePath = join(sandboxDir, "SOUL.md");
     process.env.HOME = sandboxDir;
     process.env.IXADO_GLOBAL_CONFIG_FILE = globalSettingsFilePath;
+    delete process.env.IXADO_SETTINGS_FILE;
+    delete process.env.IXADO_SOUL_FILE;
   });
 
   afterEach(async () => {
@@ -61,7 +67,37 @@ describe("cli settings", () => {
     } else {
       process.env.IXADO_GLOBAL_CONFIG_FILE = originalGlobalConfigPath;
     }
+    if (originalSettingsPath === undefined) {
+      delete process.env.IXADO_SETTINGS_FILE;
+    } else {
+      process.env.IXADO_SETTINGS_FILE = originalSettingsPath;
+    }
+    if (originalSoulPath === undefined) {
+      delete process.env.IXADO_SOUL_FILE;
+    } else {
+      process.env.IXADO_SOUL_FILE = originalSoulPath;
+    }
     await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  test("onboard defaults to global settings path", () => {
+    expect(resolveOnboardSettingsFilePath()).toBe(globalSettingsFilePath);
+  });
+
+  test("onboard defaults SOUL path next to settings file", () => {
+    expect(resolveOnboardSoulFilePath()).toBe(join(sandboxDir, "SOUL.md"));
+  });
+
+  test("onboard settings and SOUL paths honor environment overrides", () => {
+    const customSettingsPath = join(sandboxDir, "custom", "settings.json");
+    const customSoulPath = join(sandboxDir, "custom", "profile.md");
+
+    process.env.IXADO_SETTINGS_FILE = customSettingsPath;
+    expect(resolveOnboardSettingsFilePath()).toBe(customSettingsPath);
+    expect(resolveOnboardSoulFilePath()).toBe(join(sandboxDir, "custom", "SOUL.md"));
+
+    process.env.IXADO_SOUL_FILE = customSoulPath;
+    expect(resolveOnboardSoulFilePath()).toBe(customSoulPath);
   });
 
   test("returns defaults when settings file is missing", async () => {

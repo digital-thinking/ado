@@ -93,6 +93,25 @@ export function resolveSoulFilePath(): string {
   return resolve(process.cwd(), DEFAULT_SOUL_FILE);
 }
 
+export function resolveOnboardSettingsFilePath(): string {
+  const configuredSettingsPath = process.env.IXADO_SETTINGS_FILE?.trim();
+  if (configuredSettingsPath) {
+    return resolve(configuredSettingsPath);
+  }
+
+  return resolveGlobalSettingsFilePath();
+}
+
+export function resolveOnboardSoulFilePath(): string {
+  const configuredSoulPath = process.env.IXADO_SOUL_FILE?.trim();
+  if (configuredSoulPath) {
+    return resolve(configuredSoulPath);
+  }
+
+  const onboardSettingsFilePath = resolveOnboardSettingsFilePath();
+  return resolve(dirname(onboardSettingsFilePath), "SOUL.md");
+}
+
 async function readSettingsOverrideFile(
   settingsFilePath: string,
 ): Promise<CliSettingsOverride | null> {

@@ -27,8 +27,9 @@ import {
   getAvailableAgents,
   loadCliSettings,
   resolveGlobalSettingsFilePath,
+  resolveOnboardSettingsFilePath,
+  resolveOnboardSoulFilePath,
   resolveSettingsFilePath,
-  resolveSoulFilePath,
   runOnboard,
   saveCliSettings,
 } from "./settings";
@@ -480,7 +481,7 @@ function printHelp(): void {
   );
   console.info("  ixado list      Show all registered projects");
   console.info("  ixado switch <project-name>  Switch active project context");
-  console.info("  ixado onboard   Configure local CLI settings");
+  console.info("  ixado onboard   Configure global CLI settings");
   console.info("  ixado task list  List tasks in active phase with numbers");
   console.info(
     "  ixado task create <title> <description> [assignee]  Create task in active phase",
@@ -522,8 +523,8 @@ function printHelp(): void {
 }
 
 async function runOnboardCommand(): Promise<void> {
-  const settingsFilePath = resolveSettingsFilePath();
-  const soulFilePath = resolveSoulFilePath();
+  const settingsFilePath = resolveOnboardSettingsFilePath();
+  const soulFilePath = resolveOnboardSoulFilePath();
   const rl = createInterface({
     input: stdin,
     output: stdout,
