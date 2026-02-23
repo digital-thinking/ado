@@ -161,7 +161,7 @@ function mergeCliSettings(
   });
 }
 
-function migrateRuntimeConfigToActiveProject(settings: CliSettings): {
+export function migrateRuntimeConfigToActiveProject(settings: CliSettings): {
   settings: CliSettings;
   migrated: boolean;
 } {
