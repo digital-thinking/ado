@@ -1,1 +1,1 @@
-P15-002 — Replace message-string recovery classification with typed exception codes.
+P15-003 — Introduce shared strict JSON extraction/parser utility and reuse across recovery + TASKS import paths.
