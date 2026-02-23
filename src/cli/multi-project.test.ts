@@ -128,7 +128,9 @@ describe("multi-project management", () => {
     await saveCliSettings(globalSettingsFilePath, settings);
 
     const loaded = await loadCliSettings(globalSettingsFilePath);
-    const duplicate = loaded.projects.find((p) => p.rootDir === "/tmp/existing");
+    const duplicate = loaded.projects.find(
+      (p) => p.rootDir === "/tmp/existing",
+    );
     expect(duplicate).toBeDefined();
     expect(duplicate!.name).toBe("existing");
   });
@@ -157,22 +159,32 @@ describe("multi-project management", () => {
   });
 
   test("global config activeProject is preserved through merge with local settings", async () => {
-    await saveCliSettings(globalSettingsFilePath, makeSettings({
-      projects: [
-        { name: "alpha", rootDir: "/tmp/alpha" },
-      ],
-      activeProject: "alpha",
-    }));
+    await saveCliSettings(
+      globalSettingsFilePath,
+      makeSettings({
+        projects: [{ name: "alpha", rootDir: "/tmp/alpha" }],
+        activeProject: "alpha",
+      }),
+    );
 
     const localSettingsFilePath = join(sandboxDir, "local-settings.json");
     await Bun.write(
       localSettingsFilePath,
-      JSON.stringify({ executionLoop: { countdownSeconds: 5 } })
+      JSON.stringify({ executionLoop: { countdownSeconds: 5 } }),
     );
 
     const loaded = await loadCliSettings(localSettingsFilePath);
     expect(loaded.activeProject).toBe("alpha");
-    expect(loaded.projects).toEqual([{ name: "alpha", rootDir: "/tmp/alpha" }]);
+    expect(loaded.projects).toEqual([
+      {
+        name: "alpha",
+        rootDir: "/tmp/alpha",
+        executionSettings: {
+          autoMode: false,
+          defaultAssignee: "CODEX_CLI",
+        },
+      },
+    ]);
     expect(loaded.executionLoop.countdownSeconds).toBe(5);
   });
 
@@ -185,5 +197,72 @@ describe("multi-project management", () => {
     expect(stateFileA).not.toBe(stateFileB);
     expect(stateFileA).toContain("project-a");
     expect(stateFileB).toContain("project-b");
+  });
+
+  test("migrates runtime config into active project executionSettings once", async () => {
+    await saveCliSettings(
+      globalSettingsFilePath,
+      makeSettings({
+        projects: [
+          { name: "alpha", rootDir: "/tmp/alpha" },
+          { name: "beta", rootDir: "/tmp/beta" },
+        ],
+        activeProject: "beta",
+        internalWork: { assignee: "CLAUDE_CLI" },
+        executionLoop: {
+          ...DEFAULT_LOOP_SETTINGS,
+          autoMode: true,
+        },
+      }),
+    );
+
+    const loaded = await loadCliSettings(globalSettingsFilePath);
+    expect(loaded.projects).toEqual([
+      { name: "alpha", rootDir: "/tmp/alpha" },
+      {
+        name: "beta",
+        rootDir: "/tmp/beta",
+        executionSettings: {
+          autoMode: true,
+          defaultAssignee: "CLAUDE_CLI",
+        },
+      },
+    ]);
+
+    const persisted = await loadCliSettings(globalSettingsFilePath);
+    expect(persisted.projects[1]?.executionSettings).toEqual({
+      autoMode: true,
+      defaultAssignee: "CLAUDE_CLI",
+    });
+  });
+
+  test("does not overwrite existing project executionSettings during migration", async () => {
+    await saveCliSettings(
+      globalSettingsFilePath,
+      makeSettings({
+        projects: [
+          {
+            name: "alpha",
+            rootDir: "/tmp/alpha",
+            executionSettings: {
+              autoMode: false,
+              defaultAssignee: "GEMINI_CLI",
+            },
+          },
+        ],
+        activeProject: "alpha",
+        internalWork: { assignee: "CODEX_CLI" },
+        executionLoop: {
+          ...DEFAULT_LOOP_SETTINGS,
+          autoMode: true,
+        },
+      }),
+    );
+
+    const loaded = await loadCliSettings(globalSettingsFilePath);
+    expect(loaded.projects[0]?.executionSettings).toEqual({
+      autoMode: false,
+      defaultAssignee: "GEMINI_CLI",
+    });
   });
 });

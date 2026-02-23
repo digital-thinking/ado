@@ -65,8 +65,9 @@ export class PrivilegedGitActions {
     target: string;
     decision: "allow" | "deny";
     reason: string;
+    auditCwd: string;
   }): Promise<void> {
-    await appendAuditLog(process.cwd(), {
+    await appendAuditLog(input.auditCwd, {
       actor: this.actor,
       role: this.role,
       action: input.action,
@@ -83,8 +84,9 @@ export class PrivilegedGitActions {
     command: string;
     decision: "allow" | "deny";
     reason: string;
+    auditCwd: string;
   }): Promise<void> {
-    await appendAuditLog(process.cwd(), {
+    await appendAuditLog(input.auditCwd, {
       actor: this.actor,
       role: this.role,
       action: input.action,
@@ -105,6 +107,7 @@ export class PrivilegedGitActions {
   private async assertAuthorized(
     action: string,
     target: string,
+    auditCwd: string,
   ): Promise<void> {
     const decision = evaluate(this.role, action, this.policy);
     if (decision.decision === "deny") {
@@ -113,6 +116,7 @@ export class PrivilegedGitActions {
         target,
         decision: "deny",
         reason: decision.reason,
+        auditCwd,
       });
       throw new AuthorizationDeniedError(decision);
     }
@@ -122,6 +126,7 @@ export class PrivilegedGitActions {
       target,
       decision: "allow",
       reason: `matched:${decision.matchedPattern}`,
+      auditCwd,
     });
   }
 
@@ -131,7 +136,7 @@ export class PrivilegedGitActions {
   async createBranch(input: CreateBranchInput): Promise<void> {
     const target = `branch:${input.branchName}`;
     const command = `git checkout -b ${input.branchName} ${input.fromRef ?? "HEAD"}`;
-    await this.assertAuthorized(ACTIONS.GIT_BRANCH_CREATE, target);
+    await this.assertAuthorized(ACTIONS.GIT_BRANCH_CREATE, target, input.cwd);
     await this.git.createBranch(input);
     await this.logPrivilegedCommand({
       action: ACTIONS.GIT_BRANCH_CREATE,
@@ -139,6 +144,7 @@ export class PrivilegedGitActions {
       command,
       decision: "allow",
       reason: "executed",
+      auditCwd: input.cwd,
     });
   }
 
@@ -146,7 +152,7 @@ export class PrivilegedGitActions {
   async rebase(input: RebaseInput): Promise<void> {
     const target = `ref:${input.onto}`;
     const command = `git rebase ${input.onto}`;
-    await this.assertAuthorized(ACTIONS.GIT_REBASE, target);
+    await this.assertAuthorized(ACTIONS.GIT_REBASE, target, input.cwd);
     await this.git.rebase(input);
     await this.logPrivilegedCommand({
       action: ACTIONS.GIT_REBASE,
@@ -154,6 +160,7 @@ export class PrivilegedGitActions {
       command,
       decision: "allow",
       reason: "executed",
+      auditCwd: input.cwd,
     });
   }
 
@@ -164,7 +171,7 @@ export class PrivilegedGitActions {
     const target = `branch:${input.branchName}@${remote}`;
     const command =
       `git push ${upstreamFlag}${remote} ${input.branchName}`.trim();
-    await this.assertAuthorized(ACTIONS.GIT_PUSH, target);
+    await this.assertAuthorized(ACTIONS.GIT_PUSH, target, input.cwd);
     await this.git.pushBranch(input);
     await this.logPrivilegedCommand({
       action: ACTIONS.GIT_PUSH,
@@ -172,6 +179,7 @@ export class PrivilegedGitActions {
       command,
       decision: "allow",
       reason: "executed",
+      auditCwd: input.cwd,
     });
   }
 
@@ -179,7 +187,7 @@ export class PrivilegedGitActions {
   async createPullRequest(input: CreatePullRequestInput): Promise<string> {
     const target = `pr:${input.head}->${input.base}`;
     const command = `gh pr create --base ${input.base} --head ${input.head}`;
-    await this.assertAuthorized(ACTIONS.GIT_PR_OPEN, target);
+    await this.assertAuthorized(ACTIONS.GIT_PR_OPEN, target, input.cwd);
     const url = await this.github.createPullRequest(input);
     await this.logPrivilegedCommand({
       action: ACTIONS.GIT_PR_OPEN,
@@ -187,6 +195,7 @@ export class PrivilegedGitActions {
       command,
       decision: "allow",
       reason: "executed",
+      auditCwd: input.cwd,
     });
     return url;
   }
@@ -196,7 +205,7 @@ export class PrivilegedGitActions {
     const mergeMethod = input.mergeMethod ?? "merge";
     const target = `pr:${input.prNumber}`;
     const command = `gh pr merge ${input.prNumber} --${mergeMethod} --auto`;
-    await this.assertAuthorized(ACTIONS.GIT_PR_MERGE, target);
+    await this.assertAuthorized(ACTIONS.GIT_PR_MERGE, target, input.cwd);
     await this.github.mergePullRequest(input);
     await this.logPrivilegedCommand({
       action: ACTIONS.GIT_PR_MERGE,
@@ -204,6 +213,7 @@ export class PrivilegedGitActions {
       command,
       decision: "allow",
       reason: "executed",
+      auditCwd: input.cwd,
     });
   }
 }

@@ -5,3 +5,5 @@ node_modules/
 coverage/
 dist/
 .ixado/*
+# Windows-style fake paths emitted by tests running on Linux
+C:/

@@ -53,6 +53,29 @@ describe("type contracts", () => {
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
   });
 
+  test("supports optional per-project execution settings", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: {
+        enabled: false,
+      },
+      projects: [
+        {
+          name: "alpha",
+          rootDir: "/tmp/alpha",
+          executionSettings: {
+            autoMode: true,
+            defaultAssignee: "CLAUDE_CLI",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.projects[0]?.executionSettings).toEqual({
+      autoMode: true,
+      defaultAssignee: "CLAUDE_CLI",
+    });
+  });
+
   test("rejects internal work assignee if disabled", () => {
     expect(() =>
       CliSettingsSchema.parse({
@@ -68,7 +91,7 @@ describe("type contracts", () => {
           GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
           MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
         },
-      })
+      }),
     ).toThrow("must be enabled");
   });
 
@@ -80,7 +103,7 @@ describe("type contracts", () => {
         phases: [],
         createdAt: "invalid-date",
         updatedAt: "2026-02-21T00:00:00.000Z",
-      })
+      }),
     ).toThrow();
   });
 });

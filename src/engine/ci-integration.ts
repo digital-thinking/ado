@@ -35,6 +35,7 @@ export async function runCiIntegration(
 
   const decision = await authorizeOrchestratorAction({
     action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+    auditCwd: input.cwd,
     settingsFilePath: "<in-memory-policy>",
     session: { source: "cli" },
     roleConfig: {},

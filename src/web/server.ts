@@ -9,11 +9,17 @@ import {
   createAdapter,
 } from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
-import { loadCliSettings, saveCliSettings } from "../cli/settings";
+import {
+  loadCliSettings,
+  resolveGlobalSettingsFilePath,
+  saveCliSettings,
+} from "../cli/settings";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
   CLI_ADAPTER_IDS,
+  CliSettingsOverrideSchema,
+  ProjectExecutionSettingsSchema,
   type CLIAdapterId,
   type CliAgentSettings,
 } from "../types";
@@ -121,7 +127,23 @@ export async function startWebControlCenter(
     registryFilePath: resolveAgentRegistryFilePath(input.cwd),
   });
   const control = new ControlCenterService(
-    new StateEngine(input.stateFilePath),
+    (projectName) => {
+      const settingsFilePath = input.settingsFilePath;
+      return (async () => {
+        const s = await loadCliSettings(settingsFilePath);
+        const project = s.projects.find((p) => p.name === projectName);
+        if (project) {
+          const stateFilePath = resolve(project.rootDir, ".ixado/state.json");
+          return new StateEngine(stateFilePath);
+        }
+
+        if (projectName === input.projectName) {
+          return new StateEngine(input.stateFilePath);
+        }
+
+        throw new Error(`Project not found: ${projectName}`);
+      })();
+    },
     resolve(input.cwd, "TASKS.md"),
     async (workInput) => {
       const assigneeSettings = input.agentSettings[workInput.assignee];
@@ -167,6 +189,7 @@ export async function startWebControlCenter(
             approvedAdapterSpawn: true,
             phaseId: workInput.phaseId,
             taskId: workInput.taskId,
+            projectName: input.projectName,
           });
           await writeOutputLog({
             outputFilePath: artifacts.outputFilePath,
@@ -226,8 +249,26 @@ export async function startWebControlCenter(
   );
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
   const app = createWebApp({
-    control,
-    agents,
+    control: {
+      getState: (name) => control.getState(name),
+      createPhase: (input) => control.createPhase(input),
+      createTask: (input) => control.createTask(input),
+      setActivePhase: (input) => control.setActivePhase(input),
+      startTask: (input) => control.startTask(input),
+      resetTaskToTodo: (input) => control.resetTaskToTodo(input),
+      failTaskIfInProgress: (input) => control.failTaskIfInProgress(input),
+      importFromTasksMarkdown: (assignee, name) =>
+        control.importFromTasksMarkdown(assignee, name),
+      runInternalWork: (input) => control.runInternalWork(input),
+    },
+    agents: {
+      list: () => agents.list(),
+      start: (input) => agents.start(input),
+      assign: (id, input) => agents.assign(id, input),
+      kill: (id) => agents.kill(id),
+      restart: (id) => agents.restart(id),
+      subscribe: (id, listener) => agents.subscribe(id, listener),
+    },
     usage,
     defaultAgentCwd: input.cwd,
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
@@ -235,7 +276,85 @@ export async function startWebControlCenter(
     availableWorkerAssignees: CLI_ADAPTER_IDS.filter(
       (adapterId) => input.agentSettings[adapterId].enabled,
     ),
+    projectName: input.projectName,
     getRuntimeConfig: async () => runtimeConfig,
+    getProjects: async () => {
+      const s = await loadCliSettings(input.settingsFilePath);
+      return s.projects;
+    },
+    getProjectState: async (name) => {
+      return control.getState(name);
+    },
+    updateProjectSettings: async (name, patch) => {
+      const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+      const s = await loadCliSettings(globalSettingsFilePath);
+      const idx = s.projects.findIndex((p) => p.name === name);
+      if (idx < 0) {
+        throw new Error(`Project not found: ${name}`);
+      }
+      const existing = s.projects[idx];
+      const merged = {
+        ...existing,
+        executionSettings: ProjectExecutionSettingsSchema.parse({
+          ...(existing.executionSettings ?? {}),
+          ...patch,
+        }),
+      };
+      const updatedProjects = [...s.projects];
+      updatedProjects[idx] = merged;
+      await saveCliSettings(globalSettingsFilePath, {
+        ...s,
+        projects: updatedProjects,
+      });
+      return merged;
+    },
+    getGlobalSettings: async () => {
+      return loadCliSettings(input.settingsFilePath);
+    },
+    updateGlobalSettings: async (patch) => {
+      const validatedPatch = CliSettingsOverrideSchema.parse(patch);
+      const current = await loadCliSettings(input.settingsFilePath);
+      const merged = {
+        ...current,
+        ...validatedPatch,
+        telegram: {
+          ...current.telegram,
+          ...(validatedPatch.telegram ?? {}),
+        },
+        internalWork: {
+          ...current.internalWork,
+          ...(validatedPatch.internalWork ?? {}),
+        },
+        executionLoop: {
+          ...current.executionLoop,
+          ...(validatedPatch.executionLoop ?? {}),
+        },
+        usage: {
+          ...current.usage,
+          ...(validatedPatch.usage ?? {}),
+        },
+        agents: {
+          CODEX_CLI: {
+            ...current.agents.CODEX_CLI,
+            ...(validatedPatch.agents?.CODEX_CLI ?? {}),
+          },
+          CLAUDE_CLI: {
+            ...current.agents.CLAUDE_CLI,
+            ...(validatedPatch.agents?.CLAUDE_CLI ?? {}),
+          },
+          GEMINI_CLI: {
+            ...current.agents.GEMINI_CLI,
+            ...(validatedPatch.agents?.GEMINI_CLI ?? {}),
+          },
+          MOCK_CLI: {
+            ...current.agents.MOCK_CLI,
+            ...(validatedPatch.agents?.MOCK_CLI ?? {}),
+          },
+        },
+      };
+
+      return saveCliSettings(input.settingsFilePath, merged);
+    },
     updateRuntimeConfig: async (next) => {
       const currentSettings = await loadCliSettings(input.settingsFilePath);
       const assignee =

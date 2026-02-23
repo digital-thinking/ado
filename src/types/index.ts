@@ -53,76 +53,93 @@ export const ExecutionLoopSettingsSchema = z.object({
 });
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
+export const ProjectExecutionSettingsSchema = z.object({
+  autoMode: z.boolean(),
+  defaultAssignee: CLIAdapterIdSchema,
+});
+export type ProjectExecutionSettings = z.infer<
+  typeof ProjectExecutionSettingsSchema
+>;
+
 // 2. CLI Settings
 export const ProjectRecordSchema = z.object({
   name: z.string().min(1),
   rootDir: z.string().min(1),
+  executionSettings: ProjectExecutionSettingsSchema.optional(),
 });
 export type ProjectRecord = z.infer<typeof ProjectRecordSchema>;
 
-export const CliSettingsSchema = z.object({
-  projects: z.array(ProjectRecordSchema).default([]),
-  activeProject: z.string().min(1).optional(),
-  telegram: z.object({
-    enabled: z.boolean().default(false),
-    botToken: z.string().min(1).optional(),
-    ownerId: z.number().int().positive().optional(),
-  }),
-  internalWork: z.object({
-    assignee: CLIAdapterIdSchema.default("CODEX_CLI"),
-  }).default({
-    assignee: "CODEX_CLI",
-  }),
-  executionLoop: ExecutionLoopSettingsSchema.default({
-    autoMode: false,
-    countdownSeconds: 10,
-    testerCommand: "npm",
-    testerArgs: ["run", "test"],
-    testerTimeoutMs: 600_000,
-    ciEnabled: false,
-    ciBaseBranch: "main",
-    validationMaxRetries: 3,
-  }),
-  usage: z.object({
-    codexbarEnabled: z.boolean().default(true),
-  }).default({
-    codexbarEnabled: true,
-  }),
-  agents: CliAgentSettingsSchema.default({
-    CODEX_CLI: {
-      enabled: true,
-      timeoutMs: 3_600_000,
-    },
-    CLAUDE_CLI: {
-      enabled: true,
-      timeoutMs: 3_600_000,
-    },
-    GEMINI_CLI: {
-      enabled: true,
-      timeoutMs: 3_600_000,
-    },
-    MOCK_CLI: {
-      enabled: true,
-      timeoutMs: 3_600_000,
-    },
-  }),
-}).superRefine((value, context) => {
-  const enabledCount = CLI_ADAPTER_IDS.filter((adapterId) => value.agents[adapterId].enabled).length;
-  if (enabledCount === 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "At least one agent must be enabled in settings.agents.",
-      path: ["agents"],
-    });
-  }
-  if (!value.agents[value.internalWork.assignee].enabled) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `internalWork.assignee '${value.internalWork.assignee}' must be enabled in settings.agents.`,
-      path: ["internalWork", "assignee"],
-    });
-  }
-});
+export const CliSettingsSchema = z
+  .object({
+    projects: z.array(ProjectRecordSchema).default([]),
+    activeProject: z.string().min(1).optional(),
+    telegram: z.object({
+      enabled: z.boolean().default(false),
+      botToken: z.string().min(1).optional(),
+      ownerId: z.number().int().positive().optional(),
+    }),
+    internalWork: z
+      .object({
+        assignee: CLIAdapterIdSchema.default("CODEX_CLI"),
+      })
+      .default({
+        assignee: "CODEX_CLI",
+      }),
+    executionLoop: ExecutionLoopSettingsSchema.default({
+      autoMode: false,
+      countdownSeconds: 10,
+      testerCommand: "npm",
+      testerArgs: ["run", "test"],
+      testerTimeoutMs: 600_000,
+      ciEnabled: false,
+      ciBaseBranch: "main",
+      validationMaxRetries: 3,
+    }),
+    usage: z
+      .object({
+        codexbarEnabled: z.boolean().default(true),
+      })
+      .default({
+        codexbarEnabled: true,
+      }),
+    agents: CliAgentSettingsSchema.default({
+      CODEX_CLI: {
+        enabled: true,
+        timeoutMs: 3_600_000,
+      },
+      CLAUDE_CLI: {
+        enabled: true,
+        timeoutMs: 3_600_000,
+      },
+      GEMINI_CLI: {
+        enabled: true,
+        timeoutMs: 3_600_000,
+      },
+      MOCK_CLI: {
+        enabled: true,
+        timeoutMs: 3_600_000,
+      },
+    }),
+  })
+  .superRefine((value, context) => {
+    const enabledCount = CLI_ADAPTER_IDS.filter(
+      (adapterId) => value.agents[adapterId].enabled,
+    ).length;
+    if (enabledCount === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one agent must be enabled in settings.agents.",
+        path: ["agents"],
+      });
+    }
+    if (!value.agents[value.internalWork.assignee].enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `internalWork.assignee '${value.internalWork.assignee}' must be enabled in settings.agents.`,
+        path: ["internalWork", "assignee"],
+      });
+    }
+  });
 export type CliSettings = z.infer<typeof CliSettingsSchema>;
 
 const CliAgentSettingsItemOverrideSchema = z.object({
@@ -151,18 +168,24 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
 export const CliSettingsOverrideSchema = z.object({
   projects: z.array(ProjectRecordSchema).optional(),
   activeProject: z.string().min(1).optional(),
-  telegram: z.object({
-    enabled: z.boolean().optional(),
-    botToken: z.string().min(1).optional(),
-    ownerId: z.number().int().positive().optional(),
-  }).optional(),
-  internalWork: z.object({
-    assignee: CLIAdapterIdSchema.optional(),
-  }).optional(),
+  telegram: z
+    .object({
+      enabled: z.boolean().optional(),
+      botToken: z.string().min(1).optional(),
+      ownerId: z.number().int().positive().optional(),
+    })
+    .optional(),
+  internalWork: z
+    .object({
+      assignee: CLIAdapterIdSchema.optional(),
+    })
+    .optional(),
   executionLoop: ExecutionLoopSettingsOverrideSchema.optional(),
-  usage: z.object({
-    codexbarEnabled: z.boolean().optional(),
-  }).optional(),
+  usage: z
+    .object({
+      codexbarEnabled: z.boolean().optional(),
+    })
+    .optional(),
   agents: CliAgentSettingsOverrideSchema.optional(),
 });
 export type CliSettingsOverride = z.infer<typeof CliSettingsOverrideSchema>;
@@ -173,7 +196,7 @@ export const WorkerAssigneeSchema = z.enum([
   "CLAUDE_CLI",
   "GEMINI_CLI",
   "CODEX_CLI",
-  "UNASSIGNED"
+  "UNASSIGNED",
 ]);
 export type WorkerAssignee = z.infer<typeof WorkerAssigneeSchema>;
 
@@ -199,7 +222,7 @@ export const TaskStatusSchema = z.enum([
   "IN_PROGRESS",
   "DONE",
   "FAILED",
-  "CI_FIX" // specifically for iterative fixing after a CI failure
+  "CI_FIX", // specifically for iterative fixing after a CI failure
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
@@ -219,13 +242,13 @@ export type Task = z.infer<typeof TaskSchema>;
 // 7. Phase Statuses (The GitOps Lifecycle)
 export const PhaseStatusSchema = z.enum([
   "PLANNING",
-  "BRANCHING",        // Creating the Git feature branch
-  "CODING",           // Delegating Tasks to CLI Workers
-  "CREATING_PR",      // All tasks done, pushing to remote and opening PR
-  "AWAITING_CI",      // Polling GitHub Actions
-  "CI_FAILED",        // CI returned errors, triggering the fix loop
+  "BRANCHING", // Creating the Git feature branch
+  "CODING", // Delegating Tasks to CLI Workers
+  "CREATING_PR", // All tasks done, pushing to remote and opening PR
+  "AWAITING_CI", // Polling GitHub Actions
+  "CI_FAILED", // CI returned errors, triggering the fix loop
   "READY_FOR_REVIEW", // Green CI, awaiting human
-  "DONE"
+  "DONE",
 ]);
 export type PhaseStatus = z.infer<typeof PhaseStatusSchema>;
 
