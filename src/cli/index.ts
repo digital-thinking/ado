@@ -20,6 +20,7 @@ import {
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
+import { CommandRegistry, type CommandActionContext } from "./command-registry";
 import {
   getAvailableAgents,
   loadCliSettings,
@@ -393,7 +394,7 @@ async function runDefaultCommand(): Promise<void> {
   console.info("Telegram command center not started.");
 }
 
-async function runInitCommand(): Promise<void> {
+async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(globalSettingsFilePath);
   const currentDir = process.cwd();
@@ -420,7 +421,7 @@ async function runInitCommand(): Promise<void> {
   );
 }
 
-async function runListCommand(): Promise<void> {
+async function runListCommand(_ctx: CommandActionContext): Promise<void> {
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(globalSettingsFilePath);
   const currentDir = process.cwd();
@@ -444,8 +445,8 @@ async function runListCommand(): Promise<void> {
   }
 }
 
-async function runSwitchCommand(args: string[]): Promise<void> {
-  const projectName = args[1]?.trim() ?? "";
+async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
+  const projectName = args[0]?.trim() ?? "";
   if (!projectName) {
     throw new Error("Usage: ixado switch <project-name>");
   }
@@ -465,59 +466,6 @@ async function runSwitchCommand(args: string[]): Promise<void> {
   console.info(
     `Switched active project to '${project.name}' at ${project.rootDir}.`,
   );
-}
-
-function printHelp(): void {
-  console.info("IxADO CLI");
-  console.info("");
-  console.info("Usage:");
-  console.info("  ixado           Run IxADO with stored settings");
-  console.info("  ixado status    Show project status and running agents");
-  console.info(
-    "  ixado init      Register current directory as project in global config",
-  );
-  console.info("  ixado list      Show all registered projects");
-  console.info("  ixado switch <project-name>  Switch active project context");
-  console.info("  ixado onboard   Configure global CLI settings");
-  console.info("  ixado task list  List tasks in active phase with numbers");
-  console.info(
-    "  ixado task create <title> <description> [assignee]  Create task in active phase",
-  );
-  console.info(
-    "  ixado task start <taskNumber> [assignee]  Start active-phase task",
-  );
-  console.info(
-    "  ixado task retry <taskNumber>  Retry FAILED task with same assignee/session",
-  );
-  console.info(
-    "  ixado task logs <taskNumber>   Show logs/result for task in active phase",
-  );
-  console.info(
-    "  ixado task reset <taskNumber>  Reset FAILED task to TODO and hard-reset repo",
-  );
-  console.info("  ixado phase active <phaseNumber|phaseId>  Set active phase");
-  console.info(
-    "  ixado phase create <name> <branchName>  Create phase and set it active",
-  );
-  console.info(
-    "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO/CI_FIX tasks in active phase sequentially",
-  );
-  console.info("  ixado config                 Show global defaults");
-  console.info(
-    "  ixado config mode <auto|manual>      Set default phase-loop mode",
-  );
-  console.info("  ixado config assignee <CLI_ADAPTER>  Set default coding CLI");
-  console.info(
-    "  ixado config recovery <0-10>         Set exception recovery max attempts",
-  );
-  console.info(
-    "  ixado config usage <on|off>          Enable/disable codexbar usage telemetry",
-  );
-  console.info(
-    "  ixado web start [port]   Start local web control center in background",
-  );
-  console.info("  ixado web stop           Stop local web control center");
-  console.info("  ixado help      Show this help");
 }
 
 async function runOnboardCommand(): Promise<void> {
@@ -566,13 +514,15 @@ function resolveCliEntryScriptPath(): string {
   return resolve(scriptPath);
 }
 
-async function runWebStartCommand(args: string[]): Promise<void> {
+async function runWebStartCommand({
+  args,
+}: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const portFromArgs = parseWebPort(args[2]);
+  const portFromArgs = parseWebPort(args[0]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
   const port = portFromArgs ?? portFromEnv;
 
@@ -595,7 +545,7 @@ async function runWebStartCommand(args: string[]): Promise<void> {
   console.info("Use `ixado web stop` to stop it.");
 }
 
-async function runWebStopCommand(): Promise<void> {
+async function runWebStopCommand(_ctx: CommandActionContext): Promise<void> {
   const projectRootDir = await resolveProjectRootDir();
   const result = await stopWebDaemon(projectRootDir);
   if (result.status === "stopped") {
@@ -622,13 +572,15 @@ async function runWebStopCommand(): Promise<void> {
   console.info("Web control center is not running.");
 }
 
-async function runWebServeCommand(args: string[]): Promise<void> {
+async function runWebServeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const portFromArgs = parseWebPort(args[2]);
+  const portFromArgs = parseWebPort(args[0]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
   const port = portFromArgs ?? portFromEnv;
 
@@ -648,29 +600,6 @@ async function runWebServeCommand(args: string[]): Promise<void> {
   );
   console.info(`Web logs: ${runtime.logFilePath}`);
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
-}
-
-async function runWebCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-
-  if (subcommand === "start") {
-    await runWebStartCommand(args);
-    return;
-  }
-
-  if (subcommand === "stop") {
-    await runWebStopCommand();
-    return;
-  }
-
-  if (subcommand === "serve") {
-    await runWebServeCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown web command. Use `ixado web start [port]` or `ixado web stop`.",
-  );
 }
 
 type PhaseRunMode = "AUTO" | "MANUAL";
@@ -752,8 +681,10 @@ async function resolveActivePhaseTaskForNumber(
   return { phase, task };
 }
 
-async function runTaskStartCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskStartCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
     throw new Error("Usage: ixado task start <taskNumber> [assignee]");
@@ -772,7 +703,7 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   );
   await control.ensureInitialized(projectName, projectRootDir);
 
-  const explicitAssignee = args[3]?.trim();
+  const explicitAssignee = args[1]?.trim();
   let assigneeCandidate = explicitAssignee || settings.internalWork.assignee;
   if (!explicitAssignee) {
     const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
@@ -814,16 +745,18 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   }
 }
 
-async function runTaskCreateCommand(args: string[]): Promise<void> {
-  const title = args[2]?.trim() ?? "";
-  const description = args[3]?.trim() ?? "";
+async function runTaskCreateCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const title = args[0]?.trim() ?? "";
+  const description = args[1]?.trim() ?? "";
   if (!title || !description) {
     throw new Error(
       "Usage: ixado task create <title> <description> [assignee]",
     );
   }
 
-  const rawAssignee = args[4]?.trim();
+  const rawAssignee = args[2]?.trim();
   const parsedAssignee = rawAssignee
     ? WorkerAssigneeSchema.safeParse(rawAssignee)
     : { success: true as const, data: "UNASSIGNED" as const };
@@ -860,7 +793,7 @@ async function runTaskCreateCommand(args: string[]): Promise<void> {
   );
 }
 
-async function runTaskListCommand(): Promise<void> {
+async function runTaskListCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
@@ -887,8 +820,10 @@ async function runTaskListCommand(): Promise<void> {
   }
 }
 
-async function runTaskRetryCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskRetryCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
     throw new Error("Usage: ixado task retry <taskNumber>");
@@ -952,8 +887,10 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
   }
 }
 
-async function runTaskLogsCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskLogsCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
     throw new Error("Usage: ixado task logs <taskNumber>");
@@ -986,8 +923,10 @@ async function runTaskLogsCommand(args: string[]): Promise<void> {
   console.info("Task has no terminal logs yet.");
 }
 
-async function runTaskResetCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskResetCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
     throw new Error("Usage: ixado task reset <taskNumber>");
@@ -1025,60 +964,9 @@ async function runTaskResetCommand(args: string[]): Promise<void> {
   );
 }
 
-async function runTaskCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-  if (
-    !subcommand ||
-    subcommand === "help" ||
-    subcommand === "--help" ||
-    subcommand === "-h"
-  ) {
-    console.info("Task commands:");
-    console.info("  ixado task list");
-    console.info("  ixado task create <title> <description> [assignee]");
-    console.info("  ixado task start <taskNumber> [assignee]");
-    console.info("  ixado task retry <taskNumber>");
-    console.info("  ixado task logs <taskNumber>");
-    console.info("  ixado task reset <taskNumber>");
-    return;
-  }
-
-  if (subcommand === "list") {
-    await runTaskListCommand();
-    return;
-  }
-
-  if (subcommand === "start") {
-    await runTaskStartCommand(args);
-    return;
-  }
-
-  if (subcommand === "create") {
-    await runTaskCreateCommand(args);
-    return;
-  }
-
-  if (subcommand === "retry") {
-    await runTaskRetryCommand(args);
-    return;
-  }
-
-  if (subcommand === "logs") {
-    await runTaskLogsCommand(args);
-    return;
-  }
-
-  if (subcommand === "reset") {
-    await runTaskResetCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown task command. Use `ixado task list`, `ixado task create <title> <description> [assignee]`, `ixado task start <taskNumber> [assignee]`, `ixado task retry <taskNumber>`, `ixado task logs <taskNumber>`, or `ixado task reset <taskNumber>`.",
-  );
-}
-
-async function runPhaseRunCommand(args: string[]): Promise<void> {
+async function runPhaseRunCommand({
+  args,
+}: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const policy = await loadAuthPolicy(settingsFilePath);
@@ -1093,9 +981,9 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   );
   await control.ensureInitialized(projectName, projectRootDir);
 
-  const mode = resolvePhaseRunMode(args[2], settings.executionLoop.autoMode);
+  const mode = resolvePhaseRunMode(args[0], settings.executionLoop.autoMode);
   const countdownSeconds = resolveCountdownSeconds(
-    args[3],
+    args[1],
     settings.executionLoop.countdownSeconds,
   );
   const loopControl = new PhaseLoopControl();
@@ -1166,8 +1054,10 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   }
 }
 
-async function runPhaseActiveCommand(args: string[]): Promise<void> {
-  const phaseId = args[2]?.trim() ?? "";
+async function runPhaseActiveCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const phaseId = args[0]?.trim() ?? "";
   if (!phaseId) {
     throw new Error("Usage: ixado phase active <phaseNumber|phaseId>");
   }
@@ -1193,9 +1083,11 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
   console.info(`Active phase set to ${active.name} (${active.id}).`);
 }
 
-async function runPhaseCreateCommand(args: string[]): Promise<void> {
-  const name = args[2]?.trim() ?? "";
-  const branchName = args[3]?.trim() ?? "";
+async function runPhaseCreateCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const name = args[0]?.trim() ?? "";
+  const branchName = args[1]?.trim() ?? "";
   if (!name || !branchName) {
     throw new Error("Usage: ixado phase create <name> <branchName>");
   }
@@ -1222,41 +1114,6 @@ async function runPhaseCreateCommand(args: string[]): Promise<void> {
   }
 
   console.info(`Created phase ${createdPhase.name} (${createdPhase.id}).`);
-}
-
-async function runPhaseCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-  if (
-    !subcommand ||
-    subcommand === "help" ||
-    subcommand === "--help" ||
-    subcommand === "-h"
-  ) {
-    console.info("Phase commands:");
-    console.info("  ixado phase create <name> <branchName>");
-    console.info("  ixado phase active <phaseNumber|phaseId>");
-    console.info("  ixado phase run [auto|manual] [countdownSeconds]");
-    return;
-  }
-
-  if (subcommand === "run") {
-    await runPhaseRunCommand(args);
-    return;
-  }
-
-  if (subcommand === "create") {
-    await runPhaseCreateCommand(args);
-    return;
-  }
-
-  if (subcommand === "active") {
-    await runPhaseActiveCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown phase command. Use `ixado phase create <name> <branchName>`, `ixado phase active <phaseNumber|phaseId>`, or `ixado phase run [auto|manual] [countdownSeconds]`.",
-  );
 }
 
 function resolveAssignedTaskLabel(
@@ -1353,19 +1210,7 @@ function parseConfigRecoveryMaxAttempts(rawValue: string): number {
   return maxAttempts;
 }
 
-function printConfigHelp(): void {
-  console.info("Config commands:");
-  console.info("  ixado config");
-  console.info("  ixado config show");
-  console.info("  ixado config mode <auto|manual>");
-  console.info(
-    "  ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
-  );
-  console.info("  ixado config recovery <maxAttempts:0-10>");
-  console.info("  ixado config usage <on|off>");
-}
-
-async function runConfigShowCommand(): Promise<void> {
+async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   console.info(`Settings: ${settingsFilePath}`);
@@ -1381,8 +1226,10 @@ async function runConfigShowCommand(): Promise<void> {
   );
 }
 
-async function runConfigModeCommand(args: string[]): Promise<void> {
-  const rawMode = args[2]?.trim() ?? "";
+async function runConfigModeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawMode = args[0]?.trim() ?? "";
   if (!rawMode) {
     throw new Error("Usage: ixado config mode <auto|manual>");
   }
@@ -1403,8 +1250,10 @@ async function runConfigModeCommand(args: string[]): Promise<void> {
   console.info(`Settings saved to ${settingsFilePath}.`);
 }
 
-async function runConfigAssigneeCommand(args: string[]): Promise<void> {
-  const rawAssignee = args[2]?.trim() ?? "";
+async function runConfigAssigneeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawAssignee = args[0]?.trim() ?? "";
   if (!rawAssignee) {
     throw new Error(
       "Usage: ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
@@ -1431,8 +1280,10 @@ async function runConfigAssigneeCommand(args: string[]): Promise<void> {
   console.info(`Settings saved to ${settingsFilePath}.`);
 }
 
-async function runConfigUsageCommand(args: string[]): Promise<void> {
-  const rawValue = args[2]?.trim() ?? "";
+async function runConfigUsageCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
     throw new Error("Usage: ixado config usage <on|off>");
   }
@@ -1457,8 +1308,10 @@ async function runConfigUsageCommand(args: string[]): Promise<void> {
   console.info(`Settings saved to ${settingsFilePath}.`);
 }
 
-async function runConfigRecoveryCommand(args: string[]): Promise<void> {
-  const rawValue = args[2]?.trim() ?? "";
+async function runConfigRecoveryCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
     throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
   }
@@ -1480,102 +1333,167 @@ async function runConfigRecoveryCommand(args: string[]): Promise<void> {
   console.info(`Settings saved to ${settingsFilePath}.`);
 }
 
-async function runConfigCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-  if (!subcommand || subcommand === "show") {
-    await runConfigShowCommand();
-    return;
-  }
-
-  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
-    printConfigHelp();
-    return;
-  }
-
-  if (subcommand === "mode") {
-    await runConfigModeCommand(args);
-    return;
-  }
-
-  if (subcommand === "assignee") {
-    await runConfigAssigneeCommand(args);
-    return;
-  }
-
-  if (subcommand === "usage") {
-    await runConfigUsageCommand(args);
-    return;
-  }
-
-  if (subcommand === "recovery") {
-    await runConfigRecoveryCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`, `ixado config recovery <maxAttempts:0-10>`, or `ixado config usage <on|off>`.",
-  );
-}
-
 async function runCli(args: string[]): Promise<void> {
-  const command = args[0];
+  const registry = new CommandRegistry([
+    {
+      name: "",
+      description: "Run IxADO with stored settings",
+      action: async () => runDefaultCommand(),
+    },
+    {
+      name: "status",
+      description: "Show project status and running agents",
+      action: runStatusCommand,
+    },
+    {
+      name: "init",
+      description: "Register current directory as project in global config",
+      action: runInitCommand,
+    },
+    {
+      name: "list",
+      description: "Show all registered projects",
+      action: runListCommand,
+    },
+    {
+      name: "switch",
+      description: "Switch active project context",
+      usage: "switch <project-name>",
+      action: runSwitchCommand,
+    },
+    {
+      name: "onboard",
+      description: "Configure global CLI settings",
+      action: runOnboardCommand,
+    },
+    {
+      name: "task",
+      description: "Manage tasks",
+      subcommands: [
+        {
+          name: "list",
+          description: "List tasks in active phase with numbers",
+          action: runTaskListCommand,
+        },
+        {
+          name: "create",
+          description: "Create task in active phase",
+          usage: "create <title> <description> [assignee]",
+          action: runTaskCreateCommand,
+        },
+        {
+          name: "start",
+          description: "Start active-phase task",
+          usage: "start <taskNumber> [assignee]",
+          action: runTaskStartCommand,
+        },
+        {
+          name: "retry",
+          description: "Retry FAILED task with same assignee/session",
+          usage: "retry <taskNumber>",
+          action: runTaskRetryCommand,
+        },
+        {
+          name: "logs",
+          description: "Show logs/result for task in active phase",
+          usage: "logs <taskNumber>",
+          action: runTaskLogsCommand,
+        },
+        {
+          name: "reset",
+          description: "Reset FAILED task to TODO and hard-reset repo",
+          usage: "reset <taskNumber>",
+          action: runTaskResetCommand,
+        },
+      ],
+    },
+    {
+      name: "phase",
+      description: "Manage phases",
+      subcommands: [
+        {
+          name: "create",
+          description: "Create phase and set it active",
+          usage: "create <name> <branchName>",
+          action: runPhaseCreateCommand,
+        },
+        {
+          name: "active",
+          description: "Set active phase",
+          usage: "active <phaseNumber|phaseId>",
+          action: runPhaseActiveCommand,
+        },
+        {
+          name: "run",
+          description: "Run TODO/CI_FIX tasks in active phase sequentially",
+          usage: "run [auto|manual] [countdownSeconds]",
+          action: runPhaseRunCommand,
+        },
+      ],
+    },
+    {
+      name: "config",
+      description: "Manage configuration",
+      usage: "config",
+      action: runConfigShowCommand,
+      subcommands: [
+        {
+          name: "show",
+          description: "Show global defaults",
+          action: runConfigShowCommand,
+        },
+        {
+          name: "mode",
+          description: "Set default phase-loop mode",
+          usage: "mode <auto|manual>",
+          action: runConfigModeCommand,
+        },
+        {
+          name: "assignee",
+          description: "Set default coding CLI",
+          usage: "assignee <CLI_ADAPTER>",
+          action: runConfigAssigneeCommand,
+        },
+        {
+          name: "recovery",
+          description: "Set exception recovery max attempts",
+          usage: "recovery <maxAttempts:0-10>",
+          action: runConfigRecoveryCommand,
+        },
+        {
+          name: "usage",
+          description: "Enable/disable codexbar usage telemetry",
+          usage: "usage <on|off>",
+          action: runConfigUsageCommand,
+        },
+      ],
+    },
+    {
+      name: "web",
+      description: "Manage web control center",
+      subcommands: [
+        {
+          name: "start",
+          description: "Start local web control center in background",
+          usage: "start [port]",
+          action: runWebStartCommand,
+        },
+        {
+          name: "stop",
+          description: "Stop local web control center",
+          action: runWebStopCommand,
+        },
+        {
+          name: "serve",
+          description: "Run web control center in foreground",
+          usage: "serve [port]",
+          action: runWebServeCommand,
+        },
+      ],
+    },
+  ]);
 
-  if (!command) {
-    await runDefaultCommand();
-    return;
-  }
-
-  if (command === "init") {
-    await runInitCommand();
-    return;
-  }
-
-  if (command === "list") {
-    await runListCommand();
-    return;
-  }
-
-  if (command === "switch") {
-    await runSwitchCommand(args);
-    return;
-  }
-
-  if (command === "onboard") {
-    await runOnboardCommand();
-    return;
-  }
-
-  if (command === "status") {
-    await runStatusCommand();
-    return;
-  }
-
-  if (command === "web") {
-    await runWebCommand(args);
-    return;
-  }
-
-  if (command === "task") {
-    await runTaskCommand(args);
-    return;
-  }
-
-  if (command === "phase") {
-    await runPhaseCommand(args);
-    return;
-  }
-
-  if (command === "config") {
-    await runConfigCommand(args);
-    return;
-  }
-
-  if (command === "help" || command === "--help" || command === "-h") {
-    printHelp();
-    return;
-  }
-
-  throw new Error(`Unknown command: ${command}`);
+  await registry.run(args);
 }
 
 await runCli(process.argv.slice(2)).catch((error) => {

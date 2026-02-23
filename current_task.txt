@@ -1,1 +1,2 @@
-P15-004 Refactor CLI command routing (`task`, `phase`, `config`) to a table-driven command registry with centralized usage/help rendering and argument validation to reduce branching duplication and improve help consistency.
+Done: P15-004 Refactor CLI command routing to a table-driven registry.
+Next: P15-005 Split web control-center frontend script in src/web/app.ts into focused modules/functions.
