@@ -4,10 +4,12 @@ import { DEFAULT_AUTH_POLICY } from "./policy";
 import { authorizeOrchestratorAction } from "./orchestration-authorizer";
 import { ORCHESTRATOR_ACTIONS } from "./workflow-profiles";
 
+const TEST_CWD = process.cwd();
+
 describe("authorizeOrchestratorAction fail-closed behavior", () => {
   const baseInput = {
     action: ORCHESTRATOR_ACTIONS.STATUS_READ,
-    auditCwd: "/repo",
+    auditCwd: TEST_CWD,
     settingsFilePath: "/tmp/nonexistent.json",
     session: { source: "cli" as const },
     roleConfig: {},
@@ -62,7 +64,7 @@ describe("authorizeOrchestratorAction fail-closed behavior", () => {
     const decision = await authorizeOrchestratorAction({
       ...baseInput,
       action: "orchestrator:missing" as typeof ORCHESTRATOR_ACTIONS.STATUS_READ,
-      auditCwd: "/repo",
+      auditCwd: TEST_CWD,
       loadPolicy: async () => DEFAULT_AUTH_POLICY,
       resolveSessionRole: () => "owner",
     });
