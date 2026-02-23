@@ -398,6 +398,23 @@ function controlCenterHtml(): string {
     .compact-table { font-size: 0.82rem; }
     .compact-table th, .compact-table td { padding: 4px 8px; }
     .hidden { display: none !important; }
+    details summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 1.1rem;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    details summary::-webkit-details-marker { display: none; }
+    details summary .arrow {
+      transition: transform 0.2s;
+      display: inline-block;
+    }
+    details[open] summary .arrow {
+      transform: rotate(90deg);
+    }
   </style>
 </head>
 <body>
@@ -423,27 +440,34 @@ function controlCenterHtml(): string {
     <div class="tabs" id="tabStrip"></div>
 
     <div id="projectContent" class="wide" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+      <details class="card wide" id="executionSettingsPanel">
+        <summary>
+          <span class="arrow">▶</span> Execution Settings
+        </summary>
+        <div style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+          <form id="runtimeSettingsForm">
+            <label class="small" for="runtimeMode">Phase Loop Mode</label>
+            <select id="runtimeMode" required style="width: 100%;">
+              <option value="manual">Manual</option>
+              <option value="auto">Auto</option>
+            </select>
+            <label class="small" for="runtimeDefaultAssignee" style="margin-top: 8px; display: block;">Default Coding CLI</label>
+            <select id="runtimeDefaultAssignee" required style="width: 100%;"></select>
+            <button type="submit" style="margin-top: 12px; width: 100%;">Save Settings</button>
+          </form>
+          <div>
+            <div class="small">Configure how this project executes tasks. Loop mode 'Auto' will automatically proceed to the next available task.</div>
+            <div id="runtimeSettingsStatus" class="small" style="margin-top: 8px; font-weight: 600;"></div>
+            <div id="runtimeSettingsError" class="error"></div>
+          </div>
+        </div>
+      </details>
+
       <section class="card wide">
         <h2>Phase Kanban</h2>
         <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED). Dependencies are shown on each task.</div>
         <div id="kanbanBoard" class="kanban"></div>
         <div id="kanbanError" class="error"></div>
-      </section>
-
-      <section class="card">
-        <h2>Execution Settings</h2>
-        <form id="runtimeSettingsForm">
-          <label class="small" for="runtimeMode">Phase Loop Mode</label>
-          <select id="runtimeMode" required>
-            <option value="manual">Manual</option>
-            <option value="auto">Auto</option>
-          </select>
-          <label class="small" for="runtimeDefaultAssignee">Default Coding CLI</label>
-          <select id="runtimeDefaultAssignee" required></select>
-          <button type="submit">Save Settings</button>
-        </form>
-        <div id="runtimeSettingsStatus" class="small"></div>
-        <div id="runtimeSettingsError" class="error"></div>
       </section>
 
       <section class="card">
