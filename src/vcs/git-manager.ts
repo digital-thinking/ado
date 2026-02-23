@@ -32,6 +32,31 @@ export type RebaseInput = {
   cwd: string;
 };
 
+export type CommitInput = {
+  cwd: string;
+  message: string;
+};
+
+function normalizeStatusPath(rawPath: string): string {
+  let value = rawPath.trim();
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.slice(1, -1);
+  }
+
+  if (value.includes(" -> ")) {
+    const parts = value.split(" -> ");
+    value = parts[parts.length - 1] ?? value;
+  }
+
+  return value;
+}
+
+function isIgnoredRuntimeArtifact(statusLine: string): boolean {
+  const payload = statusLine.length > 3 ? statusLine.slice(3) : statusLine;
+  const path = normalizeStatusPath(payload);
+  return path === ".ixado/cli.log";
+}
+
 export class GitManager {
   private readonly runner: ProcessRunner;
 
@@ -46,7 +71,13 @@ export class GitManager {
       cwd,
     });
 
-    if (result.stdout.trim()) {
+    const dirtyEntries = result.stdout
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
+      .filter((line) => !isIgnoredRuntimeArtifact(line));
+
+    if (dirtyEntries.length > 0) {
       throw new Error("Git working tree is not clean.");
     }
   }
@@ -156,6 +187,36 @@ export class GitManager {
     await this.runner.run({
       command: "git",
       args,
+      cwd: input.cwd,
+    });
+  }
+
+  async stageAll(cwd: string): Promise<void> {
+    await this.runner.run({
+      command: "git",
+      args: ["add", "--all"],
+      cwd,
+    });
+  }
+
+  async hasStagedChanges(cwd: string): Promise<boolean> {
+    const result = await this.runner.run({
+      command: "git",
+      args: ["diff", "--cached", "--name-only"],
+      cwd,
+    });
+
+    return result.stdout.trim().length > 0;
+  }
+
+  async commit(input: CommitInput): Promise<void> {
+    if (!input.message.trim()) {
+      throw new Error("commit message must not be empty.");
+    }
+
+    await this.runner.run({
+      command: "git",
+      args: ["commit", "-m", input.message],
       cwd: input.cwd,
     });
   }

@@ -78,6 +78,9 @@ describe("P11-008 integration coverage", () => {
 
   test("privileged git actions are authorized and executed when policy allows", async () => {
     const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "feature/p11-008\n" },
       { stdout: "" },
       { stdout: "https://github.com/org/repo/pull/1108\n" },
@@ -100,16 +103,16 @@ describe("P11-008 integration coverage", () => {
     expect(result.prUrl).toBe("https://github.com/org/repo/pull/1108");
     expect(capturedPrUrls).toEqual(["https://github.com/org/repo/pull/1108"]);
 
-    expect(runner.calls[1]?.command).toBe("git");
-    expect(runner.calls[1]?.args).toEqual([
+    expect(runner.calls[4]?.command).toBe("git");
+    expect(runner.calls[4]?.args).toEqual([
       "push",
       "-u",
       "origin",
       "feature/p11-008",
     ]);
-    expect(runner.calls[2]?.command).toBe("gh");
-    expect(runner.calls[2]?.args).toContain("pr");
-    expect(runner.calls[2]?.args).toContain("create");
+    expect(runner.calls[5]?.command).toBe("gh");
+    expect(runner.calls[5]?.args).toContain("pr");
+    expect(runner.calls[5]?.args).toContain("create");
   });
 
   test("audit log writes to target project cwd even when process cwd is elsewhere", async () => {
@@ -121,6 +124,9 @@ describe("P11-008 integration coverage", () => {
     const previousAuditPath = process.env.IXADO_AUDIT_LOG_FILE;
 
     const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "feature/p11-008\n" },
       { stdout: "" },
       { stdout: "https://github.com/org/repo/pull/1108\n" },
@@ -316,6 +322,9 @@ describe("P11-008 integration coverage", () => {
   describe("owner role — wildcard allowlist permits full CI integration flow", () => {
     test("owner succeeds: push and PR create execute, result contains prUrl", async () => {
       const runner = new MockProcessRunner([
+        { stdout: "" },
+        { stdout: "src/a.ts\n" },
+        { stdout: "" },
         { stdout: "feature/p11-008\n" },
         { stdout: "" },
         { stdout: "https://github.com/org/repo/pull/42\n" },
@@ -335,14 +344,16 @@ describe("P11-008 integration coverage", () => {
       expect(result.prUrl).toBe("https://github.com/org/repo/pull/42");
       expect(result.phaseId).toBe(PHASE.id);
       expect(result.baseBranch).toBe("main");
-      // getCurrentBranch + pushBranch + createPullRequest = 3 subprocess calls
-      expect(runner.calls).toHaveLength(3);
-      expect(runner.calls[1]?.command).toBe("git");
-      expect(runner.calls[2]?.command).toBe("gh");
+      expect(runner.calls).toHaveLength(6);
+      expect(runner.calls[4]?.command).toBe("git");
+      expect(runner.calls[5]?.command).toBe("gh");
     });
 
     test("owner setPhasePrUrl callback receives the correct prUrl", async () => {
       const runner = new MockProcessRunner([
+        { stdout: "" },
+        { stdout: "src/a.ts\n" },
+        { stdout: "" },
         { stdout: "feature/p11-008\n" },
         { stdout: "" },
         { stdout: "https://github.com/org/repo/pull/99\n" },

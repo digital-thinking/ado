@@ -18,7 +18,7 @@ import {
 import { runTesterWorkflow } from "../engine/tester-workflow";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
-import { CLIAdapterIdSchema } from "../types";
+import { CLIAdapterIdSchema, WorkerAssigneeSchema } from "../types";
 import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
@@ -483,6 +483,9 @@ function printHelp(): void {
   console.info("  ixado onboard   Configure local CLI settings");
   console.info("  ixado task list  List tasks in active phase with numbers");
   console.info(
+    "  ixado task create <title> <description> [assignee]  Create task in active phase",
+  );
+  console.info(
     "  ixado task start <taskNumber> [assignee]  Start active-phase task",
   );
   console.info(
@@ -495,6 +498,9 @@ function printHelp(): void {
     "  ixado task reset <taskNumber>  Reset FAILED task to TODO and hard-reset repo",
   );
   console.info("  ixado phase active <phaseNumber|phaseId>  Set active phase");
+  console.info(
+    "  ixado phase create <name> <branchName>  Create phase and set it active",
+  );
   console.info(
     "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO tasks in active phase sequentially",
   );
@@ -855,6 +861,52 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   }
 }
 
+async function runTaskCreateCommand(args: string[]): Promise<void> {
+  const title = args[2]?.trim() ?? "";
+  const description = args[3]?.trim() ?? "";
+  if (!title || !description) {
+    throw new Error(
+      "Usage: ixado task create <title> <description> [assignee]",
+    );
+  }
+
+  const rawAssignee = args[4]?.trim();
+  const parsedAssignee = rawAssignee
+    ? WorkerAssigneeSchema.safeParse(rawAssignee)
+    : { success: true as const, data: "UNASSIGNED" as const };
+  if (!parsedAssignee.success) {
+    throw new Error(
+      "Usage: ixado task create <title> <description> [assignee]\nassignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
+    );
+  }
+  const assignee = parsedAssignee.data;
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const state = await control.getState();
+  const activePhase = resolveActivePhaseFromState(state);
+  const updated = await control.createTask({
+    phaseId: activePhase.id,
+    title,
+    description,
+    assignee,
+  });
+  const refreshedPhase =
+    updated.phases.find((phase) => phase.id === activePhase.id) ?? activePhase;
+  console.info(
+    `Created task #${refreshedPhase.tasks.length} in ${refreshedPhase.name}: ${title}.`,
+  );
+}
+
 async function runTaskListCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1022,6 +1074,22 @@ async function runTaskResetCommand(args: string[]): Promise<void> {
 
 async function runTaskCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
+  if (
+    !subcommand ||
+    subcommand === "help" ||
+    subcommand === "--help" ||
+    subcommand === "-h"
+  ) {
+    console.info("Task commands:");
+    console.info("  ixado task list");
+    console.info("  ixado task create <title> <description> [assignee]");
+    console.info("  ixado task start <taskNumber> [assignee]");
+    console.info("  ixado task retry <taskNumber>");
+    console.info("  ixado task logs <taskNumber>");
+    console.info("  ixado task reset <taskNumber>");
+    return;
+  }
+
   if (subcommand === "list") {
     await runTaskListCommand();
     return;
@@ -1029,6 +1097,11 @@ async function runTaskCommand(args: string[]): Promise<void> {
 
   if (subcommand === "start") {
     await runTaskStartCommand(args);
+    return;
+  }
+
+  if (subcommand === "create") {
+    await runTaskCreateCommand(args);
     return;
   }
 
@@ -1048,7 +1121,7 @@ async function runTaskCommand(args: string[]): Promise<void> {
   }
 
   throw new Error(
-    "Unknown task command. Use `ixado task list`, `ixado task start <taskNumber> [assignee]`, `ixado task retry <taskNumber>`, `ixado task logs <taskNumber>`, or `ixado task reset <taskNumber>`.",
+    "Unknown task command. Use `ixado task list`, `ixado task create <title> <description> [assignee]`, `ixado task start <taskNumber> [assignee]`, `ixado task retry <taskNumber>`, `ixado task logs <taskNumber>`, or `ixado task reset <taskNumber>`.",
   );
 }
 
@@ -1197,11 +1270,11 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
       const state = await control.getState();
       const phase = resolveActivePhaseFromState(state);
       const nextTaskIndex = phase.tasks.findIndex(
-        (task) => task.status === "TODO",
+        (task) => task.status === "TODO" || task.status === "CI_FIX",
       );
       if (nextTaskIndex < 0) {
         console.info(
-          `Execution loop finished. No TODO tasks in active phase ${phase.name}.`,
+          `Execution loop finished. No TODO or CI_FIX tasks in active phase ${phase.name}.`,
         );
         completedPhase = phase;
         break;
@@ -1287,6 +1360,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
             description: input.description,
             assignee: activeAssignee,
             dependencies: input.dependencies,
+            status: input.status,
           });
         },
       });
@@ -1454,10 +1528,59 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
   console.info(`Active phase set to ${active.name} (${active.id}).`);
 }
 
+async function runPhaseCreateCommand(args: string[]): Promise<void> {
+  const name = args[2]?.trim() ?? "";
+  const branchName = args[3]?.trim() ?? "";
+  if (!name || !branchName) {
+    throw new Error("Usage: ixado phase create <name> <branchName>");
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const nextState = await control.createPhase({
+    name,
+    branchName,
+  });
+  const createdPhase = nextState.phases[nextState.phases.length - 1];
+  if (!createdPhase) {
+    throw new Error("Phase creation failed.");
+  }
+
+  console.info(`Created phase ${createdPhase.name} (${createdPhase.id}).`);
+}
+
 async function runPhaseCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
+  if (
+    !subcommand ||
+    subcommand === "help" ||
+    subcommand === "--help" ||
+    subcommand === "-h"
+  ) {
+    console.info("Phase commands:");
+    console.info("  ixado phase create <name> <branchName>");
+    console.info("  ixado phase active <phaseNumber|phaseId>");
+    console.info("  ixado phase run [auto|manual] [countdownSeconds]");
+    return;
+  }
+
   if (subcommand === "run") {
     await runPhaseRunCommand(args);
+    return;
+  }
+
+  if (subcommand === "create") {
+    await runPhaseCreateCommand(args);
     return;
   }
 
@@ -1467,7 +1590,7 @@ async function runPhaseCommand(args: string[]): Promise<void> {
   }
 
   throw new Error(
-    "Unknown phase command. Use `ixado phase active <phaseNumber|phaseId>` or `ixado phase run [auto|manual] [countdownSeconds]`.",
+    "Unknown phase command. Use `ixado phase create <name> <branchName>`, `ixado phase active <phaseNumber|phaseId>`, or `ixado phase run [auto|manual] [countdownSeconds]`.",
   );
 }
 

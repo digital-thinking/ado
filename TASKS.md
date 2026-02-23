@@ -135,11 +135,11 @@ Restructure the web UI around multi-project navigation: a persistent **Control C
 
 ## Phase 13: Post-Release Bugfixes (CLI QA)
 
-- [ ] `P13-001` Fix `phase run` clean-tree false positives caused by IxADO-owned runtime artifacts (`.ixado/cli.log`) so a clean repo does not fail due to IxADO startup side effects. Deps: `P12-012`.
-- [ ] `P13-002` Implement missing CLI creation flows for planning bootstrap: `phase create` and `task create` command paths (with validation and help output parity). Deps: `P12-012`.
-- [ ] `P13-003` Close commit-flow gap: enforce explicit commit creation before CI integration push/PR step, and fail fast with actionable error when there is nothing to commit or commit preconditions fail. Deps: `P12-012`.
-- [ ] `P13-004` Fix tester/fixer status reconciliation so phases recover from `CI_FAILED` when auto-created fix tasks complete successfully. Deps: `P12-012`.
-- [ ] `P13-005` Add regression tests for all Phase 13 bugfixes (clean-tree/logging interaction, new CLI create commands, commit-before-PR enforcement, and phase status transition after fix-task success). Deps: `P13-001`, `P13-002`, `P13-003`, `P13-004`.
+- [x] `P13-001` Fix `phase run` clean-tree false positives caused by IxADO-owned runtime artifacts (`.ixado/cli.log`) so a clean repo does not fail due to IxADO startup side effects. **Status: Done**. Deps: `P12-012`.
+- [x] `P13-002` Implement missing CLI creation flows for planning bootstrap: `phase create` and `task create` command paths (with validation and help output parity). **Status: Done**. Deps: `P12-012`.
+- [x] `P13-003` Close commit-flow gap: enforce explicit commit creation before CI integration push/PR step, and fail fast with actionable error when there is nothing to commit or commit preconditions fail. **Status: Done**. Deps: `P12-012`.
+- [x] `P13-004` Fix tester/fixer status reconciliation so phases recover from `CI_FAILED` when auto-created fix tasks complete successfully. **Status: Done**. Deps: `P12-012`.
+- [x] `P13-005` Add regression tests for all Phase 13 bugfixes (clean-tree/logging interaction, new CLI create commands, commit-before-PR enforcement, and phase status transition after fix-task success). **Status: Done**. Deps: `P13-001`, `P13-002`, `P13-003`, `P13-004`.
 - [ ] `P13-006` Create PR Task: open Phase 13 PR after coding tasks are done. Deps: `P13-005`.
 
 ## Phase 14: AI-Assisted Exception Recovery Workflow

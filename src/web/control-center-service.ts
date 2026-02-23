@@ -59,6 +59,7 @@ export type CreateTaskInput = {
   description: string;
   assignee?: WorkerAssignee;
   dependencies?: string[];
+  status?: Task["status"];
 };
 
 export type RunInternalWorkInput = {
@@ -281,6 +282,10 @@ function taskExecutionKey(phaseId: string, taskId: string): string {
   return `${phaseId}:${taskId}`;
 }
 
+function isRecoveringFixTaskStatus(status: Task["status"]): boolean {
+  return status === "CI_FIX";
+}
+
 function truncateForState(value: string): string {
   if (value.length <= MAX_STORED_CONTEXT_LENGTH) {
     return value;
@@ -446,7 +451,7 @@ export class ControlCenterService {
       description: input.description.trim(),
       assignee: input.assignee ?? "UNASSIGNED",
       dependencies: input.dependencies ?? [],
-      status: "TODO",
+      status: input.status ?? "TODO",
     });
 
     const nextPhases = [...state.phases];
@@ -654,9 +659,13 @@ export class ControlCenterService {
     }
 
     const task = phase.tasks[taskIndex];
-    if (task.status !== "TODO" && task.status !== "FAILED") {
+    if (
+      task.status !== "TODO" &&
+      task.status !== "FAILED" &&
+      task.status !== "CI_FIX"
+    ) {
       throw new Error(
-        `Task must be TODO or FAILED before start. Current status: ${task.status}`,
+        `Task must be TODO, FAILED, or CI_FIX before start. Current status: ${task.status}`,
       );
     }
     if (task.status === "FAILED" && task.assignee !== assignee) {
@@ -733,6 +742,7 @@ export class ControlCenterService {
       assignee,
       prompt,
       resume: shouldResume,
+      startedFromStatus: task.status,
       projectName: input.projectName,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
@@ -891,6 +901,7 @@ export class ControlCenterService {
     assignee: CLIAdapterId;
     prompt: string;
     resume: boolean;
+    startedFromStatus: Task["status"];
     projectName?: string;
   }): Promise<void> {
     try {
@@ -914,6 +925,7 @@ export class ControlCenterService {
           "DONE",
           combinedResult || "Task finished without textual output.",
           undefined,
+          input.startedFromStatus,
           input.projectName,
         );
       } catch (updateError) {
@@ -934,6 +946,7 @@ export class ControlCenterService {
           "FAILED",
           undefined,
           message,
+          input.startedFromStatus,
           input.projectName,
         );
       } catch (updateError) {
@@ -954,6 +967,7 @@ export class ControlCenterService {
     status: "DONE" | "FAILED",
     resultContext: string | undefined,
     errorLogs: string | undefined,
+    startedFromStatus: Task["status"],
     projectName?: string,
   ): Promise<void> {
     const engine = await this.getEngine(projectName);
@@ -1014,10 +1028,18 @@ export class ControlCenterService {
     const nextPhases = [...state.phases];
     const nextTasks = [...phase.tasks];
     nextTasks[taskIndex] = updatedTask;
-    nextPhases[phaseIndex] = {
+    const shouldRecoverFromCiFailed =
+      status === "DONE" &&
+      phase.status === "CI_FAILED" &&
+      isRecoveringFixTaskStatus(startedFromStatus);
+    nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
+      status: shouldRecoverFromCiFailed ? "CODING" : phase.status,
+      ciStatusContext: shouldRecoverFromCiFailed
+        ? undefined
+        : phase.ciStatusContext,
       tasks: nextTasks,
-    };
+    });
 
     await engine.writeProjectState({
       ...state,
