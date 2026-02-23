@@ -134,10 +134,14 @@ export type ActivePhaseTasksView = {
 };
 
 type InternalWorkRunner = (
-  input: RunInternalWorkInput
+  input: RunInternalWorkInput,
 ) => Promise<Omit<RunInternalWorkResult, "assignee">>;
 
 type RepositoryResetRunner = () => Promise<void>;
+
+export type StateEngineFactory = (
+  projectName: string,
+) => StateEngine | Promise<StateEngine>;
 
 type ImportedTaskDraft = ImportedTaskPlan & {
   id: string;
@@ -187,13 +191,13 @@ function extractFirstJsonObject(raw: string): string | null {
         escaping = true;
         continue;
       }
-      if (char === "\"") {
+      if (char === '"') {
         inString = false;
       }
       continue;
     }
 
-    if (char === "\"") {
+    if (char === '"') {
       inString = true;
       continue;
     }
@@ -301,7 +305,10 @@ function resolveActivePhaseOrThrow(state: ProjectState): Phase {
   return firstPhase;
 }
 
-function resolvePhaseIdForReference(state: ProjectState, phaseReference: string): string {
+function resolvePhaseIdForReference(
+  state: ProjectState,
+  phaseReference: string,
+): string {
   const exactMatch = state.phases.find((phase) => phase.id === phaseReference);
   if (exactMatch) {
     return exactMatch.id;
@@ -319,27 +326,57 @@ function resolvePhaseIdForReference(state: ProjectState, phaseReference: string)
 }
 
 export class ControlCenterService {
-  private readonly state: StateEngine;
+  private readonly stateEngineFactory: StateEngineFactory;
+  private readonly projectStateEngines = new Map<string, StateEngine>();
   private readonly tasksMarkdownFilePath: string;
   private readonly internalWorkRunner?: InternalWorkRunner;
   private readonly repositoryResetRunner?: RepositoryResetRunner;
   private readonly runningTaskExecutions = new Map<string, Promise<void>>();
+  private defaultProjectName?: string;
 
   constructor(
-    state: StateEngine,
+    stateOrFactory: StateEngine | StateEngineFactory,
     tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
     internalWorkRunner?: InternalWorkRunner,
-    repositoryResetRunner?: RepositoryResetRunner
+    repositoryResetRunner?: RepositoryResetRunner,
   ) {
-    this.state = state;
+    if (typeof stateOrFactory === "function") {
+      this.stateEngineFactory = stateOrFactory;
+    } else {
+      this.stateEngineFactory = () => stateOrFactory;
+    }
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
     this.repositoryResetRunner = repositoryResetRunner;
   }
 
-  async ensureInitialized(projectName: string, rootDir: string): Promise<ProjectState> {
+  private async getEngine(projectName?: string): Promise<StateEngine> {
+    const name = projectName || this.defaultProjectName;
+    if (!name) {
+      throw new Error(
+        "No project name specified and no default project initialized.",
+      );
+    }
+
+    let engine = this.projectStateEngines.get(name);
+    if (!engine) {
+      engine = await this.stateEngineFactory(name);
+      this.projectStateEngines.set(name, engine);
+    }
+    return engine;
+  }
+
+  async ensureInitialized(
+    projectName: string,
+    rootDir: string,
+  ): Promise<ProjectState> {
+    if (!this.defaultProjectName) {
+      this.defaultProjectName = projectName;
+    }
+
+    const engine = await this.getEngine(projectName);
     try {
-      return await this.state.readProjectState();
+      return await engine.readProjectState();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.includes("State file not found")) {
@@ -347,14 +384,16 @@ export class ControlCenterService {
       }
     }
 
-    return this.state.initialize({ projectName, rootDir });
+    return engine.initialize({ projectName, rootDir });
   }
 
-  async getState(): Promise<ProjectState> {
-    return this.state.readProjectState();
+  async getState(projectName?: string): Promise<ProjectState> {
+    return (await this.getEngine(projectName)).readProjectState();
   }
 
-  async createPhase(input: CreatePhaseInput): Promise<ProjectState> {
+  async createPhase(
+    input: CreatePhaseInput & { projectName?: string },
+  ): Promise<ProjectState> {
     if (!input.name.trim()) {
       throw new Error("phase name must not be empty.");
     }
@@ -362,7 +401,8 @@ export class ControlCenterService {
       throw new Error("branch name must not be empty.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const phase = PhaseSchema.parse({
       id: randomUUID(),
       name: input.name.trim(),
@@ -371,14 +411,16 @@ export class ControlCenterService {
       tasks: [],
     });
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       activePhaseId: phase.id,
       phases: [...state.phases, phase],
     });
   }
 
-  async createTask(input: CreateTaskInput): Promise<ProjectState> {
+  async createTask(
+    input: CreateTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
     if (!input.phaseId.trim()) {
       throw new Error("phaseId must not be empty.");
     }
@@ -389,8 +431,11 @@ export class ControlCenterService {
       throw new Error("task description must not be empty.");
     }
 
-    const state = await this.state.readProjectState();
-    const phaseIndex = state.phases.findIndex((phase) => phase.id === input.phaseId);
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex(
+      (phase) => phase.id === input.phaseId,
+    );
     if (phaseIndex < 0) {
       throw new Error(`Phase not found: ${input.phaseId}`);
     }
@@ -410,28 +455,33 @@ export class ControlCenterService {
       tasks: [...nextPhases[phaseIndex].tasks, task],
     };
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
   }
 
-  async setActivePhase(input: SetActivePhaseInput): Promise<ProjectState> {
+  async setActivePhase(
+    input: SetActivePhaseInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const phaseReference = input.phaseId.trim();
     if (!phaseReference) {
       throw new Error("phaseId must not be empty.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const phaseId = resolvePhaseIdForReference(state, phaseReference);
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       activePhaseId: phaseId,
     });
   }
 
-  async setPhasePrUrl(input: SetPhasePrUrlInput): Promise<ProjectState> {
+  async setPhasePrUrl(
+    input: SetPhasePrUrlInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const phaseId = input.phaseId.trim();
     const prUrl = input.prUrl.trim();
     if (!phaseId) {
@@ -441,7 +491,8 @@ export class ControlCenterService {
       throw new Error("prUrl must not be empty.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
     if (phaseIndex < 0) {
       throw new Error(`Phase not found: ${phaseId}`);
@@ -454,20 +505,23 @@ export class ControlCenterService {
       prUrl,
     });
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
   }
 
-  async setPhaseStatus(input: SetPhaseStatusInput): Promise<ProjectState> {
+  async setPhaseStatus(
+    input: SetPhaseStatusInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const phaseId = input.phaseId.trim();
     const status = PhaseStatusSchema.parse(input.status);
     if (!phaseId) {
       throw new Error("phaseId must not be empty.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
     if (phaseIndex < 0) {
       throw new Error(`Phase not found: ${phaseId}`);
@@ -486,14 +540,17 @@ export class ControlCenterService {
       ciStatusContext,
     });
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
   }
 
-  async listActivePhaseTasks(): Promise<ActivePhaseTasksView> {
-    const state = await this.state.readProjectState();
+  async listActivePhaseTasks(
+    projectName?: string,
+  ): Promise<ActivePhaseTasksView> {
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
     const activePhase = resolveActivePhaseOrThrow(state);
 
     return {
@@ -508,18 +565,21 @@ export class ControlCenterService {
     };
   }
 
-  async startActiveTask(input: StartActiveTaskInput): Promise<ProjectState> {
+  async startActiveTask(
+    input: StartActiveTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const taskNumber = Number(input.taskNumber);
     if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
       throw new Error("taskNumber must be a positive integer.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const activePhase = resolveActivePhaseOrThrow(state);
     const task = activePhase.tasks[taskNumber - 1];
     if (!task) {
       throw new Error(
-        `Task number ${taskNumber} not found in active phase ${activePhase.name}.`
+        `Task number ${taskNumber} not found in active phase ${activePhase.name}.`,
       );
     }
 
@@ -528,21 +588,25 @@ export class ControlCenterService {
       taskId: task.id,
       assignee: input.assignee,
       resume: input.resume,
+      projectName: input.projectName,
     });
   }
 
-  async startActiveTaskAndWait(input: StartActiveTaskInput): Promise<ProjectState> {
+  async startActiveTaskAndWait(
+    input: StartActiveTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const taskNumber = Number(input.taskNumber);
     if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
       throw new Error("taskNumber must be a positive integer.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const activePhase = resolveActivePhaseOrThrow(state);
     const task = activePhase.tasks[taskNumber - 1];
     if (!task) {
       throw new Error(
-        `Task number ${taskNumber} not found in active phase ${activePhase.name}.`
+        `Task number ${taskNumber} not found in active phase ${activePhase.name}.`,
       );
     }
 
@@ -551,10 +615,13 @@ export class ControlCenterService {
       taskId: task.id,
       assignee: input.assignee,
       resume: input.resume,
+      projectName: input.projectName,
     });
   }
 
-  async startTask(input: StartTaskInput): Promise<ProjectState> {
+  async startTask(
+    input: StartTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
@@ -573,7 +640,8 @@ export class ControlCenterService {
       throw new Error(`Task is already running: ${taskId}`);
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
     if (phaseIndex < 0) {
       throw new Error(`Phase not found: ${phaseId}`);
@@ -588,12 +656,12 @@ export class ControlCenterService {
     const task = phase.tasks[taskIndex];
     if (task.status !== "TODO" && task.status !== "FAILED") {
       throw new Error(
-        `Task must be TODO or FAILED before start. Current status: ${task.status}`
+        `Task must be TODO or FAILED before start. Current status: ${task.status}`,
       );
     }
     if (task.status === "FAILED" && task.assignee !== assignee) {
       throw new Error(
-        `FAILED task must be retried with the same assignee (${task.assignee}). Reset the task to TODO before assigning a different agent.`
+        `FAILED task must be retried with the same assignee (${task.assignee}). Reset the task to TODO before assigning a different agent.`,
       );
     }
 
@@ -606,8 +674,8 @@ export class ControlCenterService {
             taskTitle: candidateTask.title,
             status: candidateTask.status,
           },
-        ])
-      )
+        ]),
+      ),
     );
     const blockingDependency = task.dependencies.find((dependencyId) => {
       const dependency = dependencyMap.get(dependencyId);
@@ -617,12 +685,12 @@ export class ControlCenterService {
       const dependency = dependencyMap.get(blockingDependency);
       if (!dependency) {
         throw new Error(
-          "Task has an invalid dependency reference. Dependency task is missing in project state."
+          "Task has an invalid dependency reference. Dependency task is missing in project state.",
         );
       }
 
       throw new Error(
-        `Task has incomplete dependency: ${dependency.taskTitle} (${dependency.phaseName}, status: ${dependency.status}). Dependencies must be DONE before starting.`
+        `Task has incomplete dependency: ${dependency.taskTitle} (${dependency.phaseName}, status: ${dependency.status}). Dependencies must be DONE before starting.`,
       );
     }
 
@@ -650,13 +718,14 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    const nextState = await this.state.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
 
     const shouldResume =
-      Boolean(input.resume) || (task.status === "FAILED" && task.assignee === assignee);
+      Boolean(input.resume) ||
+      (task.status === "FAILED" && task.assignee === assignee);
 
     const executionPromise = this.executeTaskRun({
       phaseId,
@@ -664,6 +733,7 @@ export class ControlCenterService {
       assignee,
       prompt,
       resume: shouldResume,
+      projectName: input.projectName,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });
@@ -672,7 +742,9 @@ export class ControlCenterService {
     return nextState;
   }
 
-  async startTaskAndWait(input: StartTaskInput): Promise<ProjectState> {
+  async startTaskAndWait(
+    input: StartTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
     await this.startTask(input);
     const runKey = taskExecutionKey(input.phaseId.trim(), input.taskId.trim());
     const running = this.runningTaskExecutions.get(runKey);
@@ -680,10 +752,12 @@ export class ControlCenterService {
       await running;
     }
 
-    return this.state.readProjectState();
+    return (await this.getEngine(input.projectName)).readProjectState();
   }
 
-  async runInternalWork(input: RunInternalWorkInput): Promise<RunInternalWorkResult> {
+  async runInternalWork(
+    input: RunInternalWorkInput,
+  ): Promise<RunInternalWorkResult> {
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
     const prompt = input.prompt.trim();
 
@@ -713,7 +787,10 @@ export class ControlCenterService {
     };
   }
 
-  async importFromTasksMarkdown(assignee: CLIAdapterId): Promise<ImportTasksMarkdownResult> {
+  async importFromTasksMarkdown(
+    assignee: CLIAdapterId,
+    projectName?: string,
+  ): Promise<ImportTasksMarkdownResult> {
     const validAssignee = CLIAdapterIdSchema.parse(assignee);
     const markdown = await readFile(this.tasksMarkdownFilePath, "utf8");
     const prompt = buildTasksMarkdownImportPrompt(markdown);
@@ -734,7 +811,8 @@ export class ControlCenterService {
       }
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
     let importedPhaseCount = 0;
     let importedTaskCount = 0;
     let lastImportedPhaseId: string | undefined;
@@ -751,10 +829,12 @@ export class ControlCenterService {
           dependencies: draftTask.dependencies
             .map((taskCode) => taskCodeToId.get(taskCode))
             .filter((taskId): taskId is string => typeof taskId === "string"),
-        })
+        }),
       );
 
-      const existingPhaseIndex = nextPhases.findIndex((phase) => phase.name === draftPhase.name);
+      const existingPhaseIndex = nextPhases.findIndex(
+        (phase) => phase.name === draftPhase.name,
+      );
       if (existingPhaseIndex < 0) {
         const createdPhase = PhaseSchema.parse({
           id: draftPhase.id,
@@ -772,8 +852,12 @@ export class ControlCenterService {
       }
 
       const existingPhase = nextPhases[existingPhaseIndex];
-      const existingTaskTitles = new Set(existingPhase.tasks.map((task) => task.title));
-      const tasksToAppend = mappedTasks.filter((task) => !existingTaskTitles.has(task.title));
+      const existingTaskTitles = new Set(
+        existingPhase.tasks.map((task) => task.title),
+      );
+      const tasksToAppend = mappedTasks.filter(
+        (task) => !existingTaskTitles.has(task.title),
+      );
       if (tasksToAppend.length === 0) {
         continue;
       }
@@ -786,7 +870,7 @@ export class ControlCenterService {
       lastImportedPhaseId = existingPhase.id;
     }
 
-    const nextState = await this.state.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
       activePhaseId: state.activePhaseId ?? lastImportedPhaseId,
@@ -807,6 +891,7 @@ export class ControlCenterService {
     assignee: CLIAdapterId;
     prompt: string;
     resume: boolean;
+    projectName?: string;
   }): Promise<void> {
     try {
       const result = await this.runInternalWork({
@@ -828,20 +913,36 @@ export class ControlCenterService {
           input.taskId,
           "DONE",
           combinedResult || "Task finished without textual output.",
-          undefined
+          undefined,
+          input.projectName,
         );
       } catch (updateError) {
-        const message = updateError instanceof Error ? updateError.message : String(updateError);
-        console.error(`Failed to persist DONE state for task ${input.taskId}: ${message}`);
+        const message =
+          updateError instanceof Error
+            ? updateError.message
+            : String(updateError);
+        console.error(
+          `Failed to persist DONE state for task ${input.taskId}: ${message}`,
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       try {
-        await this.updateTaskResult(input.phaseId, input.taskId, "FAILED", undefined, message);
+        await this.updateTaskResult(
+          input.phaseId,
+          input.taskId,
+          "FAILED",
+          undefined,
+          message,
+          input.projectName,
+        );
       } catch (updateError) {
-        const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+        const updateMessage =
+          updateError instanceof Error
+            ? updateError.message
+            : String(updateError);
         console.error(
-          `Failed to persist FAILED state for task ${input.taskId}: ${updateMessage}`
+          `Failed to persist FAILED state for task ${input.taskId}: ${updateMessage}`,
         );
       }
     }
@@ -852,9 +953,11 @@ export class ControlCenterService {
     taskId: string,
     status: "DONE" | "FAILED",
     resultContext: string | undefined,
-    errorLogs: string | undefined
+    errorLogs: string | undefined,
+    projectName?: string,
   ): Promise<void> {
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
     const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
     if (phaseIndex < 0) {
       throw new Error(`Phase not found while updating task result: ${phaseId}`);
@@ -867,21 +970,31 @@ export class ControlCenterService {
     }
 
     const currentTask = phase.tasks[taskIndex];
-    const normalizedResultContext = resultContext ? truncateForState(resultContext) : undefined;
-    const normalizedErrorLogs = errorLogs ? truncateForState(errorLogs) : undefined;
+    const normalizedResultContext = resultContext
+      ? truncateForState(resultContext)
+      : undefined;
+    const normalizedErrorLogs = errorLogs
+      ? truncateForState(errorLogs)
+      : undefined;
 
     if (currentTask.status === status) {
       if (status === "DONE") {
-        if (!normalizedResultContext || currentTask.resultContext === normalizedResultContext) {
+        if (
+          !normalizedResultContext ||
+          currentTask.resultContext === normalizedResultContext
+        ) {
           return;
         }
-      } else if (!normalizedErrorLogs || currentTask.errorLogs === normalizedErrorLogs) {
+      } else if (
+        !normalizedErrorLogs ||
+        currentTask.errorLogs === normalizedErrorLogs
+      ) {
         return;
       }
     }
     if (currentTask.status !== status && currentTask.status !== "IN_PROGRESS") {
       throw new Error(
-        `Task must be IN_PROGRESS before completion update. Current status: ${currentTask.status}`
+        `Task must be IN_PROGRESS before completion update. Current status: ${currentTask.status}`,
       );
     }
 
@@ -890,11 +1003,11 @@ export class ControlCenterService {
       status,
       resultContext:
         status === "DONE"
-          ? normalizedResultContext ?? currentTask.resultContext
+          ? (normalizedResultContext ?? currentTask.resultContext)
           : undefined,
       errorLogs:
         status === "FAILED"
-          ? normalizedErrorLogs ?? currentTask.errorLogs
+          ? (normalizedErrorLogs ?? currentTask.errorLogs)
           : undefined,
     });
 
@@ -906,13 +1019,17 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    await this.state.writeProjectState({
+    await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
   }
 
-  async failTaskIfInProgress(input: { taskId: string; reason: string }): Promise<ProjectState> {
+  async failTaskIfInProgress(input: {
+    taskId: string;
+    reason: string;
+    projectName?: string;
+  }): Promise<ProjectState> {
     const taskId = input.taskId.trim();
     const reason = input.reason.trim();
     if (!taskId) {
@@ -922,11 +1039,14 @@ export class ControlCenterService {
       throw new Error("reason must not be empty.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     let phaseIndex = -1;
     let taskIndex = -1;
     for (let index = 0; index < state.phases.length; index += 1) {
-      const foundTaskIndex = state.phases[index].tasks.findIndex((task) => task.id === taskId);
+      const foundTaskIndex = state.phases[index].tasks.findIndex(
+        (task) => task.id === taskId,
+      );
       if (foundTaskIndex >= 0) {
         phaseIndex = index;
         taskIndex = foundTaskIndex;
@@ -958,13 +1078,15 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
   }
 
-  async resetTaskToTodo(input: ResetTaskInput): Promise<ProjectState> {
+  async resetTaskToTodo(
+    input: ResetTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     if (!phaseId) {
@@ -982,7 +1104,8 @@ export class ControlCenterService {
       throw new Error("Cannot reset a running task.");
     }
 
-    const state = await this.state.readProjectState();
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
     const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
     if (phaseIndex < 0) {
       throw new Error(`Phase not found: ${phaseId}`);
@@ -994,7 +1117,9 @@ export class ControlCenterService {
     }
     const task = phase.tasks[taskIndex];
     if (task.status !== "FAILED") {
-      throw new Error(`Task must be FAILED before reset. Current status: ${task.status}`);
+      throw new Error(
+        `Task must be FAILED before reset. Current status: ${task.status}`,
+      );
     }
 
     await this.repositoryResetRunner();
@@ -1015,7 +1140,7 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return this.state.writeProjectState({
+    return engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });

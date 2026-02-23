@@ -98,6 +98,23 @@ async function resolveProjectAwareStateFilePath(): Promise<string> {
   return resolve(process.cwd(), DEFAULT_STATE_FILE);
 }
 
+async function resolveProjectName(): Promise<string> {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(globalSettingsFilePath);
+
+  if (settings.activeProject) {
+    return settings.activeProject;
+  }
+
+  const currentDir = process.cwd();
+  const project = settings.projects.find((p) => p.rootDir === currentDir);
+  if (project) {
+    return project.name;
+  }
+
+  return basename(currentDir) || "IxADO";
+}
+
 async function resolveProjectRootDir(): Promise<string> {
   const activeRootDir = await resolveActiveProjectRootDir();
   return activeRootDir ?? process.cwd();
@@ -107,6 +124,7 @@ async function loadOrInitializeState(
   engine: StateEngine,
   stateFilePath: string,
   projectRootDir: string,
+  projectName: string,
 ): Promise<{
   phaseCount: number;
   initialized: boolean;
@@ -126,7 +144,7 @@ async function loadOrInitializeState(
   }
 
   const state = await engine.initialize({
-    projectName: "IxADO",
+    projectName,
     rootDir: projectRootDir,
   });
 
@@ -181,8 +199,10 @@ function createControlCenterService(
   stateFilePath: string,
   projectRootDir: string,
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
+  projectName: string,
 ): ControlCenterService {
-  return createServices(stateFilePath, projectRootDir, settings).control;
+  return createServices(stateFilePath, projectRootDir, settings, projectName)
+    .control;
 }
 
 function createControlCenterServiceWithAgentTracking(
@@ -191,6 +211,7 @@ function createControlCenterServiceWithAgentTracking(
   processManager: ProcessManager,
   agents: AgentSupervisor,
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
+  projectName: string,
 ): ControlCenterService {
   return new ControlCenterService(
     new StateEngine(stateFilePath),
@@ -233,6 +254,7 @@ function createControlCenterServiceWithAgentTracking(
           approvedAdapterSpawn: true,
           phaseId: workInput.phaseId,
           taskId: workInput.taskId,
+          projectName,
         });
         await writeOutputLog({
           outputFilePath: artifacts.outputFilePath,
@@ -280,6 +302,7 @@ function createServices(
   stateFilePath: string,
   projectRootDir: string,
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
+  projectName: string,
 ): {
   control: ControlCenterService;
   agents: AgentSupervisor;
@@ -294,6 +317,7 @@ function createServices(
     processManager,
     agents,
     settings,
+    projectName,
   );
   return { control, agents };
 }
@@ -304,17 +328,20 @@ async function runDefaultCommand(): Promise<void> {
   const policy = await loadAuthPolicy(settingsFilePath);
   const telegram = resolveTelegramConfig(settings.telegram);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const stateEngine = new StateEngine(stateFilePath);
   const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
   const stateSummary = await loadOrInitializeState(
     stateEngine,
     stateFilePath,
     projectRootDir,
+    projectName,
   );
   const availableAgents = getAvailableAgents(settings);
 
@@ -538,6 +565,7 @@ async function runWebStartCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const portFromArgs = parseWebPort(args[2]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
@@ -546,7 +574,7 @@ async function runWebStartCommand(args: string[]): Promise<void> {
   const runtime = await startWebDaemon({
     cwd: projectRootDir,
     stateFilePath,
-    projectName: "IxADO",
+    projectName,
     entryScriptPath: resolveCliEntryScriptPath(),
     port,
   });
@@ -591,6 +619,7 @@ async function runWebStopCommand(): Promise<void> {
 
 async function runWebServeCommand(args: string[]): Promise<void> {
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -602,7 +631,7 @@ async function runWebServeCommand(args: string[]): Promise<void> {
     cwd: projectRootDir,
     stateFilePath,
     settingsFilePath,
-    projectName: "IxADO",
+    projectName,
     defaultInternalWorkAssignee: settings.internalWork.assignee,
     defaultAutoMode: settings.executionLoop.autoMode,
     agentSettings: settings.agents,
@@ -774,13 +803,15 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
 
   const explicitAssignee = args[3]?.trim();
   let assigneeCandidate = explicitAssignee || settings.internalWork.assignee;
@@ -828,13 +859,15 @@ async function runTaskListCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
   const tasksView = await control.listActivePhaseTasks();
   console.info(`Active phase: ${tasksView.phaseName}`);
   if (tasksView.items.length === 0) {
@@ -859,13 +892,15 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
 
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
   if (task.status !== "FAILED") {
@@ -922,13 +957,15 @@ async function runTaskLogsCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
 
   console.info(`Task #${taskNumber}: ${task.title} [${task.status}]`);
@@ -954,13 +991,15 @@ async function runTaskResetCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
   const { phase, task } = await resolveActivePhaseTaskForNumber(
     control,
     taskNumber,
@@ -1018,11 +1057,13 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settings = await loadCliSettings(settingsFilePath);
   const policy = await loadAuthPolicy(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
   await control.ensureInitialized("IxADO", projectRootDir);
 
@@ -1395,13 +1436,15 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.setActivePhase({ phaseId });
   const active = state.phases.find((phase) => phase.id === state.activePhaseId);
   if (!active) {
@@ -1451,11 +1494,13 @@ async function runStatusCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
+    projectName,
   );
   await control.ensureInitialized("IxADO", projectRootDir);
   const state = await control.getState();

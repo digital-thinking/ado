@@ -1,4 +1,9 @@
-import type { AgentView, AssignAgentInput, StartAgentInput } from "./agent-supervisor";
+import type {
+  AgentEvent,
+  AgentView,
+  AssignAgentInput,
+  StartAgentInput,
+} from "./agent-supervisor";
 import type {
   ControlCenterService,
   CreatePhaseInput,
@@ -10,7 +15,13 @@ import type {
   StartTaskInput,
 } from "./control-center-service";
 import type { UsageService } from "./usage-service";
-import type { CLIAdapterId } from "../types";
+import type {
+  CLIAdapterId,
+  CliSettings,
+  CliSettingsOverride,
+  ProjectRecord,
+  ProjectState,
+} from "../types";
 
 type AgentControl = {
   list(): AgentView[];
@@ -18,20 +29,39 @@ type AgentControl = {
   assign(id: string, input: AssignAgentInput): AgentView;
   kill(id: string): AgentView;
   restart(id: string): AgentView;
+  subscribe(agentId: string, listener: (event: AgentEvent) => void): () => void;
 };
 
 type ControlCenterControl = {
-  getState(): ReturnType<ControlCenterService["getState"]>;
-  createPhase(input: CreatePhaseInput): ReturnType<ControlCenterService["createPhase"]>;
-  createTask(input: CreateTaskInput): ReturnType<ControlCenterService["createTask"]>;
-  setActivePhase(input: SetActivePhaseInput): ReturnType<ControlCenterService["setActivePhase"]>;
-  startTask(input: StartTaskInput): ReturnType<ControlCenterService["startTask"]>;
-  resetTaskToTodo(input: { phaseId: string; taskId: string }): ReturnType<ControlCenterService["resetTaskToTodo"]>;
-  failTaskIfInProgress(input: {
-    taskId: string;
-    reason: string;
-  }): ReturnType<ControlCenterService["failTaskIfInProgress"]>;
-  importFromTasksMarkdown(assignee: CLIAdapterId): Promise<ImportTasksMarkdownResult>;
+  getState(projectName?: string): ReturnType<ControlCenterService["getState"]>;
+  createPhase(
+    input: CreatePhaseInput & { projectName?: string },
+  ): ReturnType<ControlCenterService["createPhase"]>;
+  createTask(
+    input: CreateTaskInput & { projectName?: string },
+  ): ReturnType<ControlCenterService["createTask"]>;
+  setActivePhase(
+    input: SetActivePhaseInput & { projectName?: string },
+  ): ReturnType<ControlCenterService["setActivePhase"]>;
+  startTask(
+    input: StartTaskInput & { projectName?: string },
+  ): ReturnType<ControlCenterService["startTask"]>;
+  resetTaskToTodo(
+    input: {
+      phaseId: string;
+      taskId: string;
+    } & { projectName?: string },
+  ): ReturnType<ControlCenterService["resetTaskToTodo"]>;
+  failTaskIfInProgress(
+    input: {
+      taskId: string;
+      reason: string;
+    } & { projectName?: string },
+  ): ReturnType<ControlCenterService["failTaskIfInProgress"]>;
+  importFromTasksMarkdown(
+    assignee: CLIAdapterId,
+    projectName?: string,
+  ): Promise<ImportTasksMarkdownResult>;
   runInternalWork(input: RunInternalWorkInput): Promise<RunInternalWorkResult>;
 };
 
@@ -48,11 +78,20 @@ export type WebAppDependencies = {
   defaultInternalWorkAssignee: CLIAdapterId;
   defaultAutoMode: boolean;
   availableWorkerAssignees: CLIAdapterId[];
+  projectName: string;
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   updateRuntimeConfig: (input: {
     defaultInternalWorkAssignee?: CLIAdapterId;
     autoMode?: boolean;
   }) => Promise<RuntimeConfig>;
+  getProjects: () => Promise<ProjectRecord[]>;
+  getProjectState: (name: string) => Promise<ProjectState>;
+  updateProjectSettings: (
+    name: string,
+    patch: { autoMode?: boolean; defaultAssignee?: CLIAdapterId },
+  ) => Promise<ProjectRecord>;
+  getGlobalSettings: () => Promise<CliSettings>;
+  updateGlobalSettings: (patch: CliSettingsOverride) => Promise<CliSettings>;
   webLogFilePath: string;
   cliLogFilePath: string;
 };
@@ -67,7 +106,11 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function text(content: string, status = 200, contentType = "text/plain; charset=utf-8"): Response {
+function text(
+  content: string,
+  status = 200,
+  contentType = "text/plain; charset=utf-8",
+): Response {
   return new Response(content, {
     status,
     headers: {
@@ -90,23 +133,42 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-type InternalAdapterAssignee = "MOCK_CLI" | "CODEX_CLI" | "GEMINI_CLI" | "CLAUDE_CLI";
+type InternalAdapterAssignee =
+  | "MOCK_CLI"
+  | "CODEX_CLI"
+  | "GEMINI_CLI"
+  | "CLAUDE_CLI";
 
-function asInternalAdapterAssignee(value: unknown): InternalAdapterAssignee | undefined {
-  if (value === "MOCK_CLI" || value === "CODEX_CLI" || value === "GEMINI_CLI" || value === "CLAUDE_CLI") {
+function asInternalAdapterAssignee(
+  value: unknown,
+): InternalAdapterAssignee | undefined {
+  if (
+    value === "MOCK_CLI" ||
+    value === "CODEX_CLI" ||
+    value === "GEMINI_CLI" ||
+    value === "CLAUDE_CLI"
+  ) {
     return value;
   }
 
   return undefined;
 }
 
-function ensureAllowedAssignee(assignee: CLIAdapterId, availableAssignees: CLIAdapterId[]): void {
+function ensureAllowedAssignee(
+  assignee: CLIAdapterId,
+  availableAssignees: CLIAdapterId[],
+): void {
   if (!availableAssignees.includes(assignee)) {
-    throw new Error(`assignee '${assignee}' is disabled. Available: ${availableAssignees.join(", ")}.`);
+    throw new Error(
+      `assignee '${assignee}' is disabled. Available: ${availableAssignees.join(", ")}.`,
+    );
   }
 }
 
-function buildAgentFailureReason(agent: AgentView, action: "terminated" | "killed"): string {
+function buildAgentFailureReason(
+  agent: AgentView,
+  action: "terminated" | "killed",
+): string {
   const lines = [`Agent '${agent.name}' ${action} before task completion.`];
   if (typeof agent.lastExitCode === "number") {
     lines.push(`Exit code: ${agent.lastExitCode}`);
@@ -290,6 +352,41 @@ function controlCenterHtml(): string {
       color: #7a2618;
     }
     .muted { opacity: 0.75; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+      grid-column: 1 / -1;
+    }
+    .tab {
+      padding: 8px 16px;
+      border-radius: 8px 8px 0 0;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      background: #e7ece6;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--ink);
+      opacity: 0.7;
+    }
+    .tab.active {
+      background: var(--surface);
+      border-bottom: 2px solid var(--surface);
+      margin-bottom: -10px;
+      opacity: 1;
+    }
+    .tab-plus {
+      background: none;
+      border: 1px dashed var(--line);
+      color: var(--ink);
+      opacity: 0.5;
+    }
+    .tab-settings {
+      margin-left: auto;
+    }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -299,80 +396,93 @@ function controlCenterHtml(): string {
       <div class="small">Web log: <span id="webLogPath" class="mono"></span> | CLI log: <span id="cliLogPath" class="mono"></span></div>
     </section>
 
-    <section class="card">
-      <h2>Usage / Quota</h2>
-      <div id="usageStatus" class="small">Loading...</div>
-      <pre id="usageRaw" class="mono small"></pre>
-    </section>
+    <div class="tabs" id="tabStrip"></div>
 
-    <section class="card">
-      <h2>Execution Settings</h2>
-      <form id="runtimeSettingsForm">
-        <label class="small" for="runtimeMode">Phase Loop Mode</label>
-        <select id="runtimeMode" required>
-          <option value="manual">Manual</option>
-          <option value="auto">Auto</option>
-        </select>
-        <label class="small" for="runtimeDefaultAssignee">Default Coding CLI</label>
-        <select id="runtimeDefaultAssignee" required></select>
-        <button type="submit">Save Settings</button>
-      </form>
-      <div id="runtimeSettingsStatus" class="small"></div>
-      <div id="runtimeSettingsError" class="error"></div>
-    </section>
+    <div id="projectContent" class="wide" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+      <section class="card wide">
+        <h2>Phase Kanban</h2>
+        <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED). Dependencies are shown on each task.</div>
+        <div id="kanbanBoard" class="kanban"></div>
+        <div id="kanbanError" class="error"></div>
+      </section>
 
-    <section class="card wide">
-      <h2>Phase Kanban</h2>
-      <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED). Dependencies are shown on each task.</div>
-      <div id="kanbanBoard" class="kanban"></div>
-      <div id="kanbanError" class="error"></div>
-    </section>
+      <section class="card">
+        <h2>Execution Settings</h2>
+        <form id="runtimeSettingsForm">
+          <label class="small" for="runtimeMode">Phase Loop Mode</label>
+          <select id="runtimeMode" required>
+            <option value="manual">Manual</option>
+            <option value="auto">Auto</option>
+          </select>
+          <label class="small" for="runtimeDefaultAssignee">Default Coding CLI</label>
+          <select id="runtimeDefaultAssignee" required></select>
+          <button type="submit">Save Settings</button>
+        </form>
+        <div id="runtimeSettingsStatus" class="small"></div>
+        <div id="runtimeSettingsError" class="error"></div>
+      </section>
 
-    <section class="card">
-      <h2>Create Phase</h2>
-      <form id="phaseForm">
-        <input id="phaseName" placeholder="Phase Name" required />
-        <input id="phaseBranch" placeholder="Branch Name (e.g. phase-x-name)" required />
-        <button type="submit">Create Phase</button>
-      </form>
-      <div id="phaseError" class="error"></div>
-    </section>
+      <section class="card">
+        <h2>Usage / Quota</h2>
+        <div id="usageStatus" class="small">Loading...</div>
+        <pre id="usageRaw" class="mono small"></pre>
+      </section>
 
-    <section class="card">
-      <h2>Create Task</h2>
-      <form id="taskForm">
-        <select id="taskPhase" required></select>
-        <input id="taskTitle" placeholder="Task title" required />
-        <textarea id="taskDescription" rows="3" placeholder="Task description" required></textarea>
-        <label class="small" for="taskDependencies">Dependencies (optional, selected phase)</label>
-        <select id="taskDependencies" multiple size="6"></select>
-        <button type="submit">Create Task</button>
-      </form>
-      <div id="taskError" class="error"></div>
-    </section>
+      <section class="card">
+        <h2>Create Phase</h2>
+        <form id="phaseForm">
+          <input id="phaseName" placeholder="Phase Name" required />
+          <input id="phaseBranch" placeholder="Branch Name (e.g. phase-x-name)" required />
+          <button type="submit">Create Phase</button>
+        </form>
+        <div id="phaseError" class="error"></div>
+      </section>
+
+      <section class="card">
+        <h2>Create Task</h2>
+        <form id="taskForm">
+          <select id="taskPhase" required></select>
+          <input id="taskTitle" placeholder="Task title" required />
+          <textarea id="taskDescription" rows="3" placeholder="Task description" required></textarea>
+          <label class="small" for="taskDependencies">Dependencies (optional, selected phase)</label>
+          <select id="taskDependencies" multiple size="6"></select>
+          <button type="submit">Create Task</button>
+        </form>
+        <div id="taskError" class="error"></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Import TASKS.md</h2>
+        <div class="small">Create missing phases and tasks from <span class="mono">TASKS.md</span>.</div>
+        <div class="small">If import hangs, check logs shown above.</div>
+        <div class="row" style="margin-top: 10px;">
+          <button id="importTasksButton" class="secondary" type="button">Import</button>
+        </div>
+        <div id="importTasksStatus" class="small" style="margin-top: 8px;"></div>
+        <div id="importTasksError" class="error"></div>
+      </section>
+    </div>
+
+    <div id="settingsContent" class="wide hidden">
+      <section class="card wide">
+        <h2>Global Settings</h2>
+        <p>Global configuration for all projects.</p>
+        <!-- Implementation for settings sections will come in P12-008 -->
+        <div class="muted small">Global settings implementation pending.</div>
+      </section>
+    </div>
 
     <section class="card wide">
       <h2>Running Agents</h2>
       <div id="agentError" class="error"></div>
       <table id="agentTable">
         <thead>
-          <tr><th>Name</th><th>Status</th><th>PID</th><th>Task</th><th>Actions</th><th>Output Tail</th></tr>
+          <tr><th>Project</th><th>Name</th><th>Status</th><th>PID</th><th>Task</th><th>Actions</th><th>Output Tail</th></tr>
         </thead>
         <tbody></tbody>
       </table>
       <div class="small" style="margin-top: 10px;">Selected Agent Logs</div>
       <pre id="agentLogs" class="mono small">Select an agent and click Logs.</pre>
-    </section>
-
-    <section class="card wide">
-      <h2>Import TASKS.md</h2>
-      <div class="small">Create missing phases and tasks from <span class="mono">TASKS.md</span>.</div>
-      <div class="small">If import hangs, check logs shown above.</div>
-      <div class="row" style="margin-top: 10px;">
-        <button id="importTasksButton" class="secondary" type="button">Import</button>
-      </div>
-      <div id="importTasksStatus" class="small" style="margin-top: 8px;"></div>
-      <div id="importTasksError" class="error"></div>
     </section>
   </main>
   <script>
@@ -391,17 +501,27 @@ function controlCenterHtml(): string {
     const agentLogs = document.getElementById("agentLogs");
     const importTasksStatus = document.getElementById("importTasksStatus");
     const importTasksButton = document.getElementById("importTasksButton");
+    const tabStrip = document.getElementById("tabStrip");
+    const projectContent = document.getElementById("projectContent");
+    const settingsContent = document.getElementById("settingsContent");
+
     const defaultInternalWorkAssignee = ${JSON.stringify("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}")};
     const defaultAutoMode = {{DEFAULT_AUTO_MODE}};
     const defaultWebLogFilePath = ${JSON.stringify("{{DEFAULT_WEB_LOG_FILE_PATH}}")};
     const defaultCliLogFilePath = ${JSON.stringify("{{DEFAULT_CLI_LOG_FILE_PATH}}")};
     const WORKER_ASSIGNEES = {{AVAILABLE_WORKER_ASSIGNEES_JSON}};
+    const INITIAL_PROJECT_NAME = ${JSON.stringify("{{PROJECT_NAME}}")};
+
     let latestAgents = [];
     let latestState = null;
     let latestRuntimeConfig = {
       defaultInternalWorkAssignee,
       autoMode: Boolean(defaultAutoMode),
     };
+    let projects = [];
+    let activeProjectName = INITIAL_PROJECT_NAME;
+    let isSettingsActive = false;
+
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
 
@@ -446,6 +566,79 @@ function controlCenterHtml(): string {
       }
 
       return text.slice(0, 120) + "...";
+    }
+
+    function renderTabs() {
+      tabStrip.innerHTML = "";
+      projects.forEach((project) => {
+        const btn = document.createElement("button");
+        btn.className = "tab" + (activeProjectName === project.name && !isSettingsActive ? " active" : "");
+        btn.textContent = project.name;
+        btn.onclick = () => switchProject(project.name);
+        tabStrip.appendChild(btn);
+      });
+
+      const addBtn = document.createElement("button");
+      addBtn.className = "tab tab-plus";
+      addBtn.textContent = "+";
+      addBtn.onclick = () => alert("To register a new project, run \`ixado init\` in the project root directory.");
+      tabStrip.appendChild(addBtn);
+
+      const settingsBtn = document.createElement("button");
+      settingsBtn.className = "tab tab-settings" + (isSettingsActive ? " active" : "");
+      settingsBtn.textContent = "Settings";
+      settingsBtn.onclick = () => switchSettings();
+      tabStrip.appendChild(settingsBtn);
+    }
+
+    async function switchProject(name) {
+      activeProjectName = name;
+      isSettingsActive = false;
+      projectContent.classList.remove("hidden");
+      settingsContent.classList.add("hidden");
+      renderTabs();
+      await refreshActiveProject();
+    }
+
+    async function switchSettings() {
+      isSettingsActive = true;
+      projectContent.classList.add("hidden");
+      settingsContent.classList.remove("hidden");
+      renderTabs();
+      // Settings refresh logic will come in P12-008
+    }
+
+    async function refreshProjects() {
+      try {
+        projects = await api("/api/projects");
+        renderTabs();
+      } catch (error) {
+        console.error("Failed to refresh projects:", error);
+      }
+    }
+
+    async function refreshActiveProject() {
+      if (isSettingsActive) return;
+      try {
+        const state = await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/state");
+        renderState(state);
+        renderKanban(state);
+        
+        // Mock runtime config from executionSettings for now
+        const project = projects.find(p => p.name === activeProjectName);
+        if (project && project.executionSettings) {
+          renderRuntimeConfig({
+            autoMode: project.executionSettings.autoMode,
+            defaultInternalWorkAssignee: project.executionSettings.defaultAssignee
+          });
+        } else {
+          // Fallback to global runtime config
+          const config = await api("/api/runtime-config");
+          renderRuntimeConfig(config);
+        }
+      } catch (error) {
+        setError("kanbanError", error.message);
+      }
     }
 
     function renderState(state) {
@@ -538,7 +731,7 @@ function controlCenterHtml(): string {
       }
 
       const activePhaseId =
-        state.phases.some((phase) => phase.id === state.activePhaseId)
+        state.phases.some((phase) => phase.id === activePhaseId)
           ? state.activePhaseId
           : state.phases[0].id;
       const html = state.phases.map((phase) => {
@@ -686,6 +879,7 @@ function controlCenterHtml(): string {
       agents.forEach((agent) => {
         const row = document.createElement("tr");
         row.innerHTML = \`
+          <td>\${agent.projectName || "-"}</td>
           <td>\${agent.name}<div class="small mono">\${agent.command} \${agent.args.join(" ")}</div></td>
           <td>\${agent.status}</td>
           <td>\${agent.pid === undefined || agent.pid === null ? "-" : agent.pid}</td>
@@ -703,17 +897,12 @@ function controlCenterHtml(): string {
       });
     }
 
-    async function refresh() {
-      const [state, agents, usage, runtimeConfig] = await Promise.all([
-        api("/api/state"),
+    async function globalRefresh() {
+      const [agents, usage] = await Promise.all([
         api("/api/agents"),
         api("/api/usage"),
-        api("/api/runtime-config"),
       ]);
-      renderState(state);
-      renderKanban(state);
       renderAgents(agents);
-      renderRuntimeConfig(runtimeConfig);
       usageStatus.textContent = usage.available ? "Available" : ("Unavailable: " + (usage.message || "unknown"));
       usageRaw.textContent = usage.snapshot ? JSON.stringify(usage.snapshot.payload, null, 2) : "";
     }
@@ -730,11 +919,12 @@ function controlCenterHtml(): string {
         await api("/api/phases", {
           method: "POST",
           body: JSON.stringify({
+            projectName: activeProjectName,
             name: document.getElementById("phaseName").value,
             branchName: document.getElementById("phaseBranch").value,
           }),
         });
-        await refresh();
+        await refreshActiveProject();
       } catch (error) {
         setError("phaseError", error.message);
       }
@@ -755,14 +945,16 @@ function controlCenterHtml(): string {
           runtimeDefaultAssignee instanceof HTMLSelectElement
             ? runtimeDefaultAssignee.value
             : latestRuntimeConfig.defaultInternalWorkAssignee;
-        const updated = await api("/api/runtime-config", {
-          method: "POST",
+        
+        const updated = await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/settings", {
+          method: "PATCH",
           body: JSON.stringify({
             autoMode: modeValue === "auto",
-            defaultInternalWorkAssignee: assigneeValue,
+            defaultAssignee: assigneeValue,
           }),
         });
-        renderRuntimeConfig(updated);
+        await refreshProjects();
+        await refreshActiveProject();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setError("runtimeSettingsError", message);
@@ -783,13 +975,14 @@ function controlCenterHtml(): string {
         await api("/api/tasks", {
           method: "POST",
           body: JSON.stringify({
+            projectName: activeProjectName,
             phaseId: document.getElementById("taskPhase").value,
             title: document.getElementById("taskTitle").value,
             description: document.getElementById("taskDescription").value,
             dependencies,
           }),
         });
-        await refresh();
+        await refreshActiveProject();
       } catch (error) {
         setError("taskError", error.message);
       }
@@ -811,7 +1004,9 @@ function controlCenterHtml(): string {
       try {
         const result = await api("/api/import/tasks-md", {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({
+            projectName: activeProjectName
+          }),
         });
         importTasksStatus.textContent =
           "Imported " +
@@ -823,7 +1018,7 @@ function controlCenterHtml(): string {
           " from " +
           result.sourceFilePath +
           ".";
-        await refresh();
+        await refreshActiveProject();
       } catch (error) {
         importTasksStatus.textContent = "";
         setError("importTasksError", error instanceof Error ? error.message : String(error));
@@ -849,9 +1044,9 @@ function controlCenterHtml(): string {
         try {
           await api("/api/phases/active", {
             method: "POST",
-            body: JSON.stringify({ phaseId }),
+            body: JSON.stringify({ phaseId, projectName: activeProjectName }),
           });
-          await refresh();
+          await refreshActiveProject();
         } catch (error) {
           setError("kanbanError", error.message);
         } finally {
@@ -897,9 +1092,10 @@ function controlCenterHtml(): string {
               phaseId,
               taskId,
               assignee,
+              projectName: activeProjectName,
             }),
           });
-          await refresh();
+          await refreshActiveProject();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setError("kanbanError", message);
@@ -934,9 +1130,10 @@ function controlCenterHtml(): string {
             body: JSON.stringify({
               phaseId,
               taskId,
+              projectName: activeProjectName,
             }),
           });
-          await refresh();
+          await refreshActiveProject();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setError("kanbanError", message);
@@ -971,14 +1168,25 @@ function controlCenterHtml(): string {
       setError("agentError", "");
       try {
         await api("/api/agents/" + id + "/" + action, { method: "POST" });
-        await refresh();
+        await globalRefresh();
+        await refreshActiveProject();
       } catch (error) {
         setError("agentError", error.message);
       }
     });
 
-    refresh().catch(handleRefreshError);
-    setInterval(() => refresh().catch(handleRefreshError), 5000);
+    async function init() {
+      await refreshProjects();
+      await switchProject(activeProjectName);
+      await globalRefresh();
+      
+      setInterval(() => {
+        globalRefresh().catch(handleRefreshError);
+        refreshActiveProject().catch(handleRefreshError);
+      }, 5000);
+    }
+
+    init().catch(handleRefreshError);
   </script>
 </body>
 </html>`;
@@ -988,14 +1196,27 @@ export function createWebApp(deps: WebAppDependencies): {
   fetch(request: Request): Promise<Response>;
 } {
   const html = controlCenterHtml()
-    .replace("{{DEFAULT_AGENT_CWD}}", deps.defaultAgentCwd.replace(/\\/g, "\\\\"))
-    .replace("{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}", deps.defaultInternalWorkAssignee)
+    .replace(
+      "{{DEFAULT_AGENT_CWD}}",
+      deps.defaultAgentCwd.replace(/\\/g, "\\\\"),
+    )
+    .replace(
+      "{{DEFAULT_INTERNAL_WORK_ASSIGNEE}}",
+      deps.defaultInternalWorkAssignee,
+    )
     .replace("{{DEFAULT_AUTO_MODE}}", deps.defaultAutoMode ? "true" : "false")
-    .replace("{{DEFAULT_WEB_LOG_FILE_PATH}}", deps.webLogFilePath.replace(/\\/g, "\\\\"))
-    .replace("{{DEFAULT_CLI_LOG_FILE_PATH}}", deps.cliLogFilePath.replace(/\\/g, "\\\\"))
+    .replace(
+      "{{DEFAULT_WEB_LOG_FILE_PATH}}",
+      deps.webLogFilePath.replace(/\\/g, "\\\\"),
+    )
+    .replace(
+      "{{DEFAULT_CLI_LOG_FILE_PATH}}",
+      deps.cliLogFilePath.replace(/\\/g, "\\\\"),
+    )
+    .replace("{{PROJECT_NAME}}", deps.projectName)
     .replace(
       "{{AVAILABLE_WORKER_ASSIGNEES_JSON}}",
-      JSON.stringify(deps.availableWorkerAssignees)
+      JSON.stringify(deps.availableWorkerAssignees),
     );
 
   return {
@@ -1011,19 +1232,30 @@ export function createWebApp(deps: WebAppDependencies): {
           return json(await deps.control.getState());
         }
 
-        if (request.method === "GET" && url.pathname === "/api/runtime-config") {
+        if (
+          request.method === "GET" &&
+          url.pathname === "/api/runtime-config"
+        ) {
           return json(await deps.getRuntimeConfig());
         }
 
-        if (request.method === "POST" && url.pathname === "/api/runtime-config") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/runtime-config"
+        ) {
           const body = await readJson(request);
-          const candidateAssignee = asInternalAdapterAssignee(body.defaultInternalWorkAssignee);
+          const candidateAssignee = asInternalAdapterAssignee(
+            body.defaultInternalWorkAssignee,
+          );
           if (!candidateAssignee) {
             throw new Error(
-              `defaultInternalWorkAssignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`
+              `defaultInternalWorkAssignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`,
             );
           }
-          ensureAllowedAssignee(candidateAssignee, deps.availableWorkerAssignees);
+          ensureAllowedAssignee(
+            candidateAssignee,
+            deps.availableWorkerAssignees,
+          );
           if (typeof body.autoMode !== "boolean") {
             throw new Error("autoMode must be a boolean.");
           }
@@ -1033,7 +1265,7 @@ export function createWebApp(deps: WebAppDependencies): {
               autoMode: body.autoMode,
               defaultInternalWorkAssignee: candidateAssignee,
             }),
-            200
+            200,
           );
         }
 
@@ -1046,7 +1278,10 @@ export function createWebApp(deps: WebAppDependencies): {
           return json(state, 201);
         }
 
-        if (request.method === "POST" && url.pathname === "/api/phases/active") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/phases/active"
+        ) {
           const body = await readJson(request);
           const state = await deps.control.setActivePhase({
             phaseId: asString(body.phaseId) ?? "",
@@ -1058,7 +1293,9 @@ export function createWebApp(deps: WebAppDependencies): {
           const body = await readJson(request);
           const dependenciesRaw = body.dependencies;
           const dependencies = Array.isArray(dependenciesRaw)
-            ? dependenciesRaw.filter((value): value is string => typeof value === "string")
+            ? dependenciesRaw.filter(
+                (value): value is string => typeof value === "string",
+              )
             : [];
 
           const state = await deps.control.createTask({
@@ -1081,7 +1318,9 @@ export function createWebApp(deps: WebAppDependencies): {
           const body = await readJson(request);
           const assignee = asInternalAdapterAssignee(body.assignee);
           if (!assignee) {
-            throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
+            throw new Error(
+              `assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`,
+            );
           }
           ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
@@ -1102,24 +1341,41 @@ export function createWebApp(deps: WebAppDependencies): {
           return json(state, 200);
         }
 
-        if (request.method === "POST" && url.pathname === "/api/import/tasks-md") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/import/tasks-md"
+        ) {
           const body = await readJson(request);
           const runtimeConfig = await deps.getRuntimeConfig();
-          const assignee = asInternalAdapterAssignee(body.assignee) ?? runtimeConfig.defaultInternalWorkAssignee;
+          const assignee =
+            asInternalAdapterAssignee(body.assignee) ??
+            runtimeConfig.defaultInternalWorkAssignee;
           if (!assignee) {
-            throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
+            throw new Error(
+              `assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`,
+            );
           }
           ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
-          return json(await deps.control.importFromTasksMarkdown(assignee), 200);
+          return json(
+            await deps.control.importFromTasksMarkdown(assignee),
+            200,
+          );
         }
 
-        if (request.method === "POST" && url.pathname === "/api/internal-work/run") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/internal-work/run"
+        ) {
           const body = await readJson(request);
           const runtimeConfig = await deps.getRuntimeConfig();
-          const assignee = asInternalAdapterAssignee(body.assignee) ?? runtimeConfig.defaultInternalWorkAssignee;
+          const assignee =
+            asInternalAdapterAssignee(body.assignee) ??
+            runtimeConfig.defaultInternalWorkAssignee;
           if (!assignee) {
-            throw new Error(`assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`);
+            throw new Error(
+              `assignee must be one of ${deps.availableWorkerAssignees.join(", ")}.`,
+            );
           }
           ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
@@ -1128,7 +1384,7 @@ export function createWebApp(deps: WebAppDependencies): {
               assignee,
               prompt: asString(body.prompt) ?? "",
             }),
-            200
+            200,
           );
         }
 
@@ -1166,7 +1422,9 @@ export function createWebApp(deps: WebAppDependencies): {
         if (request.method === "POST" && url.pathname === "/api/agents/start") {
           const body = await readJson(request);
           const args = Array.isArray(body.args)
-            ? body.args.filter((value): value is string => typeof value === "string")
+            ? body.args.filter(
+                (value): value is string => typeof value === "string",
+              )
             : [];
 
           const agent = deps.agents.start({
@@ -1176,6 +1434,8 @@ export function createWebApp(deps: WebAppDependencies): {
             cwd: asString(body.cwd) ?? deps.defaultAgentCwd,
             phaseId: asString(body.phaseId),
             taskId: asString(body.taskId),
+            projectName: deps.projectName,
+            approvedAdapterSpawn: true,
           });
 
           return json(agent, 201);
@@ -1197,24 +1457,124 @@ export function createWebApp(deps: WebAppDependencies): {
           return json(killed);
         }
 
-        const assignMatch = /^\/api\/agents\/([^/]+)\/assign$/.exec(url.pathname);
+        const assignMatch = /^\/api\/agents\/([^/]+)\/assign$/.exec(
+          url.pathname,
+        );
         if (request.method === "POST" && assignMatch) {
           const body = await readJson(request);
           return json(
             deps.agents.assign(assignMatch[1], {
               phaseId: asString(body.phaseId),
               taskId: asString(body.taskId),
-            })
+            }),
           );
         }
 
-        const restartMatch = /^\/api\/agents\/([^/]+)\/restart$/.exec(url.pathname);
+        const restartMatch = /^\/api\/agents\/([^/]+)\/restart$/.exec(
+          url.pathname,
+        );
         if (request.method === "POST" && restartMatch) {
           return json(deps.agents.restart(restartMatch[1]));
         }
 
+        const logStreamMatch = /^\/api\/agents\/([^/]+)\/logs\/stream$/.exec(
+          url.pathname,
+        );
+        if (request.method === "GET" && logStreamMatch) {
+          const agentId = logStreamMatch[1];
+          const agent = deps.agents.list().find((a) => a.id === agentId);
+          if (!agent) {
+            throw new Error(`Agent not found: ${agentId}`);
+          }
+
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              const send = (data: unknown) => {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(data)}\n\n`),
+                );
+              };
+
+              // Send initial backlog
+              agent.outputTail.forEach((line) => {
+                send({ type: "output", agentId, line });
+              });
+
+              if (agent.status !== "RUNNING") {
+                send({ type: "status", agentId, status: agent.status });
+                controller.close();
+                return;
+              }
+
+              const unsubscribe = deps.agents.subscribe(agentId, (event) => {
+                send(event);
+                if (event.type === "status" && event.status !== "RUNNING") {
+                  unsubscribe();
+                  controller.close();
+                }
+              });
+
+              request.signal.addEventListener("abort", () => {
+                unsubscribe();
+              });
+            },
+          });
+
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          });
+        }
+
         if (request.method === "GET" && url.pathname === "/api/usage") {
           return json(await deps.usage.getLatest());
+        }
+
+        if (request.method === "GET" && url.pathname === "/api/projects") {
+          return json(await deps.getProjects());
+        }
+
+        const projectStateMatch = /^\/api\/projects\/([^/]+)\/state$/.exec(
+          url.pathname,
+        );
+        if (request.method === "GET" && projectStateMatch) {
+          return json(
+            await deps.getProjectState(
+              decodeURIComponent(projectStateMatch[1]),
+            ),
+          );
+        }
+
+        const projectSettingsMatch =
+          /^\/api\/projects\/([^/]+)\/settings$/.exec(url.pathname);
+        if (request.method === "PATCH" && projectSettingsMatch) {
+          const name = decodeURIComponent(projectSettingsMatch[1]);
+          const body = await readJson(request);
+          const patch: { autoMode?: boolean; defaultAssignee?: CLIAdapterId } =
+            {};
+          if (typeof body.autoMode === "boolean") {
+            patch.autoMode = body.autoMode;
+          }
+          const rawAssignee = asInternalAdapterAssignee(body.defaultAssignee);
+          if (rawAssignee !== undefined) {
+            patch.defaultAssignee = rawAssignee;
+          }
+          return json(await deps.updateProjectSettings(name, patch));
+        }
+
+        if (request.method === "GET" && url.pathname === "/api/settings") {
+          return json(await deps.getGlobalSettings());
+        }
+
+        if (request.method === "PATCH" && url.pathname === "/api/settings") {
+          const body = await readJson(request);
+          return json(
+            await deps.updateGlobalSettings(body as CliSettingsOverride),
+          );
         }
 
         return text("Not found", 404);

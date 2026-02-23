@@ -4,6 +4,7 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -24,6 +25,7 @@ export type StartAgentInput = {
   cwd: string;
   phaseId?: string;
   taskId?: string;
+  projectName?: string;
   /** Runtime guard: only adapter-template builders may set this to true. */
   approvedAdapterSpawn?: boolean;
 };
@@ -54,6 +56,10 @@ export type AssignAgentInput = {
   taskId?: string;
 };
 
+export type AgentEvent =
+  | { type: "output"; agentId: string; line: string }
+  | { type: "status"; agentId: string; status: AgentStatus };
+
 type AgentRecord = {
   id: string;
   name: string;
@@ -62,6 +68,7 @@ type AgentRecord = {
   cwd: string;
   phaseId?: string;
   taskId?: string;
+  projectName?: string;
   status: AgentStatus;
   pid?: number;
   startedAt: string;
@@ -97,7 +104,7 @@ function truncateTailLine(line: string): string {
   return `${line.slice(0, MAX_TAIL_LINE_LENGTH)}...`;
 }
 
-function tailPush(lines: string[], value: string): void {
+function tailPush(lines: string[], value: string): string[] {
   const chunks = value
     .split(/\r?\n/)
     .map((line) => truncateTailLine(line.trimEnd()))
@@ -107,6 +114,7 @@ function tailPush(lines: string[], value: string): void {
   if (lines.length > 50) {
     lines.splice(0, lines.length - 50);
   }
+  return chunks;
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -152,6 +160,10 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     phaseId:
       typeof candidate.phaseId === "string" ? candidate.phaseId : undefined,
     taskId: typeof candidate.taskId === "string" ? candidate.taskId : undefined,
+    projectName:
+      typeof candidate.projectName === "string"
+        ? candidate.projectName
+        : undefined,
     status,
     pid: typeof candidate.pid === "number" ? candidate.pid : undefined,
     startedAt: candidate.startedAt,
@@ -171,6 +183,7 @@ export class AgentSupervisor {
   private readonly spawnFn: SpawnFn;
   private readonly registryFilePath?: string;
   private readonly records = new Map<string, AgentRecord>();
+  private readonly emitter = new EventEmitter();
 
   constructor(
     spawnOrOptions: SpawnFn | AgentSupervisorOptions = spawn,
@@ -184,6 +197,21 @@ export class AgentSupervisor {
 
     this.spawnFn = spawnOrOptions.spawnFn ?? spawn;
     this.registryFilePath = spawnOrOptions.registryFilePath;
+  }
+
+  subscribe(
+    agentId: string,
+    listener: (event: AgentEvent) => void,
+  ): () => void {
+    const wrapper = (event: AgentEvent) => {
+      if (event.agentId === agentId) {
+        listener(event);
+      }
+    };
+    this.emitter.on("event", wrapper);
+    return () => {
+      this.emitter.off("event", wrapper);
+    };
   }
 
   private readPersistedAgents(): AgentView[] {
@@ -290,12 +318,17 @@ export class AgentSupervisor {
       cwd: input.cwd,
       phaseId: input.phaseId,
       taskId: input.taskId,
+      projectName: input.projectName,
       status: "RUNNING",
       startedAt: nowIso(),
       outputTail: [],
       runToken: 0,
       stopRequested: false,
     };
+  }
+
+  private emit(event: AgentEvent): void {
+    this.emitter.emit("event", event);
   }
 
   private spawnRecord(
@@ -338,8 +371,11 @@ export class AgentSupervisor {
         return;
       }
       const value = chunk.toString();
-      tailPush(record.outputTail, value);
+      const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
+      lines.forEach((line) =>
+        this.emit({ type: "output", agentId: record.id, line }),
+      );
       options.onStdout?.(value);
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -347,8 +383,11 @@ export class AgentSupervisor {
         return;
       }
       const value = chunk.toString();
-      tailPush(record.outputTail, value);
+      const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
+      lines.forEach((line) =>
+        this.emit({ type: "output", agentId: record.id, line }),
+      );
       options.onStderr?.(value);
     });
     child.on("close", (exitCode, signal) => {
@@ -366,6 +405,7 @@ export class AgentSupervisor {
       record.child = undefined;
       record.stopRequested = false;
       this.persistRecord(record);
+      this.emit({ type: "status", agentId: record.id, status: record.status });
       options.onClose?.(exitCode, signal);
     });
     child.on("error", (error) => {
@@ -375,10 +415,14 @@ export class AgentSupervisor {
       }
       record.status = "FAILED";
       record.stoppedAt = nowIso();
-      tailPush(record.outputTail, error.message);
+      const lines = tailPush(record.outputTail, error.message);
       record.child = undefined;
       record.stopRequested = false;
       this.persistRecord(record);
+      lines.forEach((line) =>
+        this.emit({ type: "output", agentId: record.id, line }),
+      );
+      this.emit({ type: "status", agentId: record.id, status: record.status });
       options.onError?.(error);
     });
 
@@ -489,11 +533,15 @@ export class AgentSupervisor {
 
     if (record.status === "RUNNING" && record.child) {
       record.stopRequested = true;
-      tailPush(record.outputTail, "Agent kill requested.");
+      const lines = tailPush(record.outputTail, "Agent kill requested.");
       record.child.kill();
       record.status = "STOPPED";
       record.lastExitCode = -1;
       record.stoppedAt = nowIso();
+      lines.forEach((line) =>
+        this.emit({ type: "output", agentId: record.id, line }),
+      );
+      this.emit({ type: "status", agentId: record.id, status: record.status });
     }
     this.persistRecord(record);
 
@@ -517,6 +565,7 @@ export class AgentSupervisor {
     record.lastExitCode = undefined;
     this.persistRecord(record);
     this.spawnRecord(record);
+    this.emit({ type: "status", agentId: record.id, status: record.status });
 
     return toView(record);
   }
