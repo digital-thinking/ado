@@ -166,6 +166,31 @@ Restructure the web UI around multi-project navigation: a persistent **Control C
 - [x] `P15-008` Add targeted non-regression tests for refactors: phase-run happy path + recovery fallback, typed error classification coverage, JSON-parser utility coverage, command help/usage snapshots, and `/api/agents` enrichment behavior under multi-project polling. **Status: Done**. Deps: `P15-002`, `P15-003`, `P15-004`, `P15-006`, `P15-007`.
 - [x] `P15-009` Create PR Task: open Phase 15 PR after coding tasks are done. **Status: Done**. Deps: `P15-008`.
 
+## Phase 17: Bug Fixes – Recovery Loop, State Verification, Tester Defaults (BUGS.md)
+
+### Bug #1 – DIRTY_WORKTREE recovery can loop indefinitely
+
+The `prepareBranch` method has an unbounded `while(true)` loop (`phase-runner.ts:109`). When `ensureCleanWorkingTree` throws, the catch block calls `attemptExceptionRecovery`. If the AI adapter reports `status: "fixed"` but the working tree is still dirty, the outer loop does `continue`, hits `ensureCleanWorkingTree` again, re-enters recovery, and repeats forever. Recovery is declared successful (`phase-runner.ts:533`) with no postcondition re-check.
+
+### Bug #2 – Recovery result is trusted without verifying claimed git actions
+
+`attemptExceptionRecovery` accepts the AI-reported `status: "fixed"` and returns (`phase-runner.ts:596–602`) without verifying actual repository state. The AI adapter may claim commits were created or the tree was cleaned while `git status` and `git log` show otherwise. No postcondition validation exists in `exception-recovery.ts:129` or the call site.
+
+### Bug #3 – Default tester profile causes guaranteed first-run CI_FIX on non-Node repos
+
+`testerCommand` defaults to `"npm"` and `testerArgs` defaults to `["run", "test"]` in both `src/cli/settings.ts:31` and `src/types/index.ts:47`. On repos without a `package.json`, this produces a deterministic ENOENT failure and triggers an avoidable CI_FIX task on every first run.
+
+---
+
+- [ ] `P17-001` Fix unbounded recovery retry in `prepareBranch`: after `attemptExceptionRecovery` returns for a `DIRTY_WORKTREE` exception, re-run `ensureCleanWorkingTree` as a postcondition check before allowing `continue`; if the check still fails, throw immediately instead of re-entering the recovery path. Code: `phase-runner.ts:120` (retry loop), `phase-runner.ts:533` (recovery entry). Deps: `P15-009`.
+- [ ] `P17-002` Add git-state verification after recovery reports `status: "fixed"`: in `attemptExceptionRecovery` (`phase-runner.ts:596`), dispatch a category-specific postcondition verifier (e.g., call `ensureCleanWorkingTree` for `DIRTY_WORKTREE`); treat a failing verifier as a recovery failure rather than success. Code: `exception-recovery.ts:129`, `phase-runner.ts:596`. Deps: `P17-001`.
+- [ ] `P17-003` Change default tester to be project-agnostic: in `src/cli/settings.ts:31` and `src/types/index.ts:47`, replace the hardcoded `npm`/`["run","test"]` defaults with `null` (no tester) or an auto-detect probe (check for `package.json` → npm, `Makefile` → make, otherwise skip); surface a clear "no tester configured" warning instead of executing a command that will deterministically fail. Deps: `P15-009`.
+- [ ] `P17-006` Add explicit "definition of done" to the Coder worker prompt in `src/engine/worker-prompts.ts:42-45`: append two requirements to the Requirements list — "Commit all changes with a descriptive git commit message before declaring the task done." and "Leave the repository in a clean state (no untracked or unstaged changes after your commit)." — so agents cannot declare success while leaving dirty trees or uncommitted work. Deps: `P15-009`.
+- [ ] `P17-007` For `DIRTY_WORKTREE` recovery, make attempt 1 resume the original coder session with a targeted natural-language cleanup nudge instead of spawning a fresh JSON-schema recovery worker: in `exception-recovery.ts:85-106` (`buildRecoveryPrompt`) and the call site at line 176, branch on `attemptNumber === 1` for `DIRTY_WORKTREE` — pass `resume: true` with a plain-text prompt ("You left uncommitted changes. Please `git add` and `git commit` all your work with a descriptive message, then verify the repository is clean.") and skip the JSON output contract; only use the full recovery-worker prompt (new session, JSON schema) for attempts 2+. CLI resume flags confirmed via `--help`: Claude `--continue`, Codex `exec resume --last`, Gemini `--resume latest`. Deps: `P17-001`.
+- [ ] `P17-008` Add regression tests for P17-006 and P17-007: (1) Coder prompt string includes commit and clean-repo requirements; (2) `runExceptionRecovery` with `attemptNumber=1` and `DIRTY_WORKTREE` passes `resume: true` and the plain cleanup nudge (not the JSON schema prompt); (3) `runExceptionRecovery` with `attemptNumber=2` uses the JSON recovery-worker prompt; (4) plain nudge response is not parsed as JSON (no `parseRecoveryResultFromOutput` called on attempt 1). Deps: `P17-006`, `P17-007`.
+- [ ] `P17-004` Add regression tests for P17-001, P17-002, P17-003: (1) `prepareBranch` recovery loop breaks after one failed postcondition re-check rather than cycling indefinitely; (2) `attemptExceptionRecovery` rejects `status: "fixed"` when the category-specific verifier still fails; (3) tester execution is skipped (no CI_FIX task created) when the default tester is null and no `package.json` exists. Deps: `P17-001`, `P17-002`, `P17-003`.
+- [ ] `P17-005` Create PR Task: open Phase 17 PR after coding tasks are done. Deps: `P17-004`, `P17-008`.
+
 ## Phase 16: Runtime Stability Refactor (BUGS.md)
 
 - [ ] `P16-001` Refactor CLI logging initialization to guarantee writable default log paths under project-owned `.ixado/` (create parent dirs if missing) and fail fast with actionable error if explicit env override paths are invalid/unwritable. Remove startup `EACCES` on `ixado status` with default env. Deps: `P15-009`.

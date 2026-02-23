@@ -1,51 +1,58 @@
-# IxADO Bugs (Reproduced on Current Version)
+# BUGS
 
-## 1) CLI startup fails without env overrides (`EACCES` in logging)
-
-- Severity: High
-- Repro:
-
-1. In this repo, run `ixado status` with default env.
-2. CLI exits before command handling with:
-   - `EACCES: permission denied, open`
-   - stack at `appendLogLine` / `initializeCliLogging`.
-
-- Observed workaround:
-  - Set `IXADO_CLI_LOG_FILE` and `IXADO_AUDIT_LOG_FILE` to writable paths (for example `/tmp/...`).
-- Code references:
-  - `/root/scm/ado/src/cli/logging.ts:25`
-  - `/root/scm/ado/src/cli/logging.ts:36`
-  - `/root/scm/ado/src/cli/index.ts:53`
-
-## 2) `phase run` fails on fresh project because `.ixado/` is untracked and trips clean-tree gate
+## 1) DIRTY_WORKTREE recovery can loop indefinitely
 
 - Severity: High
-- Repro:
+- Reproduced on: February 23, 2026
+- Symptom:
+  - `ixado phase run auto 1` repeatedly prints:
+    - `Recovery attempt 1/1 ... DIRTY_WORKTREE`
+    - `Recovery fixed: ...`
+    - `Execution loop: recovery succeeded ... retrying.`
+  - Then it immediately re-enters the same `DIRTY_WORKTREE` recovery path again.
+- Why this is a bug:
+  - Recovery is declared "fixed" but the branching precondition never becomes true.
+  - The loop can continue without progressing to execution completion.
+- Minimal repro:
 
-1. Use CLI to create phase and task.
+1. Create phase/task with ixado.
 2. Run `ixado phase run auto 1`.
-3. Loop reports `DIRTY_WORKTREE` before task execution; repo shows `?? .ixado/`.
+3. Observe repeated `DIRTY_WORKTREE` recovery cycles with no forward progress.
 
-- Impact:
-  - Phase execution does not start cleanly unless `.ixado/` is ignored/committed.
-- Code references:
-  - Clean-tree check in loop: `/root/scm/ado/src/cli/index.ts:1325`
-  - Git check implementation: `/root/scm/ado/src/vcs/git-manager.ts:67`
+- Code pointers:
+  - Branching retry loop: `/root/scm/ado/src/engine/phase-runner.ts:120`
+  - Recovery returns success with no postcondition validation: `/root/scm/ado/src/engine/phase-runner.ts:533`
 
-## 3) Recovery path uses forced bypass args for Codex adapter
+## 2) Recovery result is trusted without verifying claimed git actions
 
-- Severity: Critical in constrained/sandboxed environments
-- Repro:
+- Severity: High
+- Symptom:
+  - Recovery messages claim local commits were created.
+  - Repo state contradicts this (`git status` still shows untracked files; `git log` does not show the claimed recovery commits).
+- Why this is a bug:
+  - The orchestrator accepts model-declared recovery success without validating the repository actually satisfies the required state.
+  - This directly enables false-positive recovery and contributes to repeated retry loops.
+- Minimal repro:
 
-1. Trigger recovery path (for example after `DIRTY_WORKTREE`).
-2. Recovery attempts call Codex with:
-   - `codex exec resume --last --dangerously-bypass-approvals-and-sandbox -`
-3. In restricted environments this fails immediately and recovery exhausts.
+1. Trigger dirty worktree recovery in `phase run`.
+2. After "Recovery fixed" message claiming commits, run:
+   - `git status --short`
+   - `git log --oneline -n 8`
+3. Observe unchanged dirty state and missing claimed commits.
 
-- Impact:
-  - Exception recovery cannot execute where policy disallows bypass flags.
-- Evidence:
-  - Runtime error output from `phase run` includes the exact command above.
-- Code references:
-  - Required Codex args include bypass flag: `/root/scm/ado/src/adapters/codex-adapter.ts:9`
-  - Recovery exception categories and flow: `/root/scm/ado/src/engine/exception-recovery.ts:31`
+- Code pointers:
+  - Recovery output parse/accept flow: `/root/scm/ado/src/engine/exception-recovery.ts:129`
+  - No git-state verification after `status: "fixed"` before returning: `/root/scm/ado/src/engine/phase-runner.ts:596`
+
+## 3) Default tester profile causes guaranteed first-run CI_FIX on non-Node repos
+
+- Severity: Medium
+- Symptom:
+  - Initial task can finish `DONE`, but tester fails immediately with npm ENOENT because repo has no `package.json`.
+  - Ixado creates a CI_FIX task to add test scaffolding.
+- Why this is problematic:
+  - For plain static repos, default test command (`npm run test`) yields deterministic initial failure unless users preconfigure settings.
+  - This adds avoidable recovery churn in first-run UX.
+- Code pointers:
+  - Default tester settings: `/root/scm/ado/src/cli/settings.ts:31`
+  - Default schema values: `/root/scm/ado/src/types/index.ts:47`
