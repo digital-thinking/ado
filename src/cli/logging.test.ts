@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveCliLogFilePath } from "./logging";
+import { initializeCliLogging, resolveCliLogFilePath } from "./logging";
 import { TestSandbox } from "./test-helpers";
 
 describe("cli logging", () => {
@@ -28,11 +29,9 @@ describe("cli logging", () => {
     await sandbox.cleanup();
   });
 
-  test("defaults CLI log path to global .ixado folder", () => {
-    process.env.IXADO_GLOBAL_CONFIG_FILE = sandbox.globalConfigFile;
-
+  test("defaults CLI log path to project-owned .ixado folder", () => {
     expect(resolveCliLogFilePath(join(sandbox.projectDir, "project"))).toBe(
-      join(sandbox.projectDir, ".ixado", "cli.log"),
+      join(sandbox.projectDir, "project", ".ixado", "cli.log"),
     );
   });
 
@@ -42,6 +41,16 @@ describe("cli logging", () => {
 
     expect(resolveCliLogFilePath(join(sandbox.projectDir, "project"))).toBe(
       customLogFilePath,
+    );
+  });
+
+  test("fails fast with actionable error for invalid override path", () => {
+    const badParent = join(sandbox.projectDir, "not-a-dir");
+    writeFileSync(badParent, "x", "utf8");
+    process.env.IXADO_CLI_LOG_FILE = join(badParent, "child", "cli.log");
+
+    expect(() => initializeCliLogging(sandbox.projectDir)).toThrow(
+      /Failed to initialize CLI logging.*Set IXADO_CLI_LOG_FILE to a writable file path\./,
     );
   });
 });
