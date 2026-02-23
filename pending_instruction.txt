@@ -1,0 +1,14 @@
+Implement TASK P15-003 from TASKS.md.
+
+Goal:
+- Introduce a shared strict JSON extraction/parser utility for model outputs in src/engine/.
+- Reuse it across recovery and TASKS.md import paths.
+- Remove duplicated extraction logic and keep one contract-compliant parser path.
+
+Requirements:
+- Preserve existing behavior/contracts except where needed to centralize parser logic.
+- Add/adjust tests to cover the shared parser utility and callsites.
+- Run relevant test suite.
+- Commit all changes on the current feature branch with a clear commit message mentioning P15-003.
+
+Return a concise summary, files changed, and validation results.

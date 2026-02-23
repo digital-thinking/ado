@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 import { buildWorkerPrompt } from "../engine/worker-prompts";
+import { parseJsonFromModelOutput } from "../engine/json-parser";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
@@ -190,88 +191,6 @@ function buildTasksMarkdownImportPrompt(markdown: string): string {
     "TASKS.md:",
     markdown,
   ].join("\n\n");
-}
-
-function extractFirstJsonObject(raw: string): string | null {
-  const startIndex = raw.indexOf("{");
-  if (startIndex < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-
-  for (let index = startIndex; index < raw.length; index += 1) {
-    const char = raw[index];
-
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaping = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return raw.slice(startIndex, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseJsonFromModelOutput(rawOutput: string): unknown {
-  const direct = rawOutput.trim();
-  if (!direct) {
-    throw new Error("Internal work returned empty output.");
-  }
-
-  try {
-    return JSON.parse(direct);
-  } catch {
-    // Continue.
-  }
-
-  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(rawOutput);
-  if (fencedMatch) {
-    try {
-      return JSON.parse(fencedMatch[1].trim());
-    } catch {
-      // Continue.
-    }
-  }
-
-  const objectPayload = extractFirstJsonObject(rawOutput);
-  if (objectPayload) {
-    try {
-      return JSON.parse(objectPayload);
-    } catch {
-      // Continue.
-    }
-  }
-
-  throw new Error("Internal work did not return valid JSON.");
 }
 
 function createDraftsFromPlan(plan: ImportedTasksPlan): ImportedPhaseDraft[] {
@@ -984,7 +903,10 @@ export class ControlCenterService {
       timeoutMs: TASKS_IMPORT_TIMEOUT_MS,
     });
 
-    const parsed = parseJsonFromModelOutput(internalResult.stdout);
+    const parsed = parseJsonFromModelOutput(
+      internalResult.stdout,
+      "Internal work did not return valid JSON.",
+    );
     const plan = ImportedTasksPlanSchema.parse(parsed);
     const draftPhases = createDraftsFromPlan(plan);
 

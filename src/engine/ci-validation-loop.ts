@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { buildWorkerPrompt } from "./worker-prompts";
+import { parseJsonFromModelOutput } from "./json-parser";
 import type { CLIAdapterId, Phase, Task } from "../types";
 
 const REVIEWER_RESPONSE_SCHEMA = z.object({
@@ -15,7 +16,8 @@ function createReviewerTask(): Task {
   return {
     id: REVIEWER_TASK_ID,
     title: "CI validation review",
-    description: "Review current git diff and produce concrete blocking comments.",
+    description:
+      "Review current git diff and produce concrete blocking comments.",
     status: "TODO",
     assignee: "UNASSIGNED",
     dependencies: [],
@@ -33,90 +35,10 @@ function createFixerTask(comments: string[]): Task {
   };
 }
 
-function extractFirstJsonObject(raw: string): string | null {
-  const startIndex = raw.indexOf("{");
-  if (startIndex < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-
-  for (let index = startIndex; index < raw.length; index += 1) {
-    const char = raw[index];
-
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaping = true;
-        continue;
-      }
-      if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return raw.slice(startIndex, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseJsonFromModelOutput(rawOutput: string): unknown {
-  const direct = rawOutput.trim();
-  if (!direct) {
-    throw new Error("Reviewer returned empty output.");
-  }
-
-  try {
-    return JSON.parse(direct);
-  } catch {
-    // Continue.
-  }
-
-  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(rawOutput);
-  if (fencedMatch) {
-    try {
-      return JSON.parse(fencedMatch[1].trim());
-    } catch {
-      // Continue.
-    }
-  }
-
-  const objectPayload = extractFirstJsonObject(rawOutput);
-  if (objectPayload) {
-    try {
-      return JSON.parse(objectPayload);
-    } catch {
-      // Continue.
-    }
-  }
-
-  throw new Error("Reviewer output is not valid JSON.");
-}
-
 function normalizeComments(comments: string[]): string[] {
-  return comments.map((comment) => comment.trim()).filter((comment) => comment.length > 0);
+  return comments
+    .map((comment) => comment.trim())
+    .filter((comment) => comment.length > 0);
 }
 
 function buildReviewerPrompt(input: {
@@ -211,7 +133,7 @@ export type RunCiValidationLoopResult =
     };
 
 export async function runCiValidationLoop(
-  input: RunCiValidationLoopInput
+  input: RunCiValidationLoopInput,
 ): Promise<RunCiValidationLoopResult> {
   if (!input.projectName.trim()) {
     throw new Error("projectName must not be empty.");
@@ -250,11 +172,19 @@ export async function runCiValidationLoop(
     });
 
     const reviewerPayload = REVIEWER_RESPONSE_SCHEMA.parse(
-      parseJsonFromModelOutput(reviewerResult.stdout)
+      parseJsonFromModelOutput(
+        reviewerResult.stdout,
+        "Reviewer output is not valid JSON.",
+      ),
     );
     const comments = normalizeComments(reviewerPayload.comments);
-    if (reviewerPayload.verdict === "CHANGES_REQUESTED" && comments.length === 0) {
-      throw new Error("Reviewer verdict CHANGES_REQUESTED requires at least one comment.");
+    if (
+      reviewerPayload.verdict === "CHANGES_REQUESTED" &&
+      comments.length === 0
+    ) {
+      throw new Error(
+        "Reviewer verdict CHANGES_REQUESTED requires at least one comment.",
+      );
     }
 
     reviews.push({

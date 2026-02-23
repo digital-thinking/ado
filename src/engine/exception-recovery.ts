@@ -15,6 +15,7 @@ import {
   type ExceptionRecoveryResult,
   type RecoveryAttemptRecord,
 } from "../types";
+import { parseJsonFromModelOutput } from "./json-parser";
 
 export function classifyRecoveryException(input: {
   message: string;
@@ -67,90 +68,18 @@ export function validateRecoveryActions(actionsTaken: string[]): void {
   }
 }
 
-function extractFirstJsonObject(raw: string): string | null {
-  const startIndex = raw.indexOf("{");
-  if (startIndex < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-  for (let index = startIndex; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaping = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return raw.slice(startIndex, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
 export function parseRecoveryResultFromOutput(
   rawOutput: string,
 ): ExceptionRecoveryResult {
-  const trimmed = rawOutput.trim();
-  if (!trimmed) {
-    throw new Error("Recovery adapter returned empty output.");
+  const parsed = parseJsonFromModelOutput(
+    rawOutput,
+    "Recovery adapter output is not contract-compliant JSON.",
+  );
+  try {
+    return ExceptionRecoveryResultSchema.parse(parsed);
+  } catch {
+    throw new Error("Recovery adapter output is not contract-compliant JSON.");
   }
-
-  const tryParse = (payload: string): ExceptionRecoveryResult | undefined => {
-    try {
-      const parsed = JSON.parse(payload);
-      return ExceptionRecoveryResultSchema.parse(parsed);
-    } catch {
-      return undefined;
-    }
-  };
-
-  const direct = tryParse(trimmed);
-  if (direct) {
-    return direct;
-  }
-
-  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(rawOutput);
-  if (fencedMatch) {
-    const fenced = tryParse(fencedMatch[1].trim());
-    if (fenced) {
-      return fenced;
-    }
-  }
-
-  const objectPayload = extractFirstJsonObject(rawOutput);
-  if (objectPayload) {
-    const objectParsed = tryParse(objectPayload);
-    if (objectParsed) {
-      return objectParsed;
-    }
-  }
-
-  throw new Error("Recovery adapter output is not contract-compliant JSON.");
 }
 
 function buildRecoveryPrompt(input: {
