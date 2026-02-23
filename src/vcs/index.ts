@@ -3,6 +3,7 @@ export type {
   CreateBranchInput,
   CreateWorktreeInput,
   PushBranchInput,
+  RebaseInput,
   RemoveWorktreeInput,
 } from "./git-manager";
 
@@ -12,5 +13,9 @@ export type {
   CiCheckState,
   CiStatusSummary,
   CreatePullRequestInput,
+  MergePullRequestInput,
   PollCiStatusInput,
 } from "./github-manager";
+
+export { PrivilegedGitActions } from "./privileged-git-actions";
+export type { PrivilegedGitActionsOptions } from "./privileged-git-actions";

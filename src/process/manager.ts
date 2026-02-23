@@ -13,6 +13,23 @@ export class ProcessExecutionError extends Error {
   }
 }
 
+/**
+ * Thrown when code attempts to spawn a child process without going through an
+ * approved command builder (e.g. GitManager, GitHubManager, BaseCliAdapter).
+ * Set `approvedCommandBuilder: true` in {@link ProcessRunOptions} only from
+ * within a typed command-builder class.
+ */
+export class UnapprovedCommandError extends Error {
+  constructor(command: string) {
+    super(
+      `Unapproved command execution blocked: "${command}". ` +
+        "Route through an approved command builder (GitManager, GitHubManager, BaseCliAdapter, etc.) " +
+        "and set approvedCommandBuilder: true in ProcessRunOptions.",
+    );
+    this.name = "UnapprovedCommandError";
+  }
+}
+
 export class ProcessManager {
   private readonly spawnFn: SpawnFn;
 
@@ -85,8 +102,8 @@ export class ProcessManager {
           reject(
             new ProcessExecutionError(
               `Command failed with exit code ${result.exitCode}: ${command} ${args.join(" ")}`.trim(),
-              result
-            )
+              result,
+            ),
           );
           return;
         }
@@ -108,7 +125,11 @@ export class ProcessManager {
           child.kill();
           settled = true;
 
-          reject(new Error(`Command timed out after ${options.timeoutMs}ms: ${command}`));
+          reject(
+            new Error(
+              `Command timed out after ${options.timeoutMs}ms: ${command}`,
+            ),
+          );
         }, options.timeoutMs);
       }
     });

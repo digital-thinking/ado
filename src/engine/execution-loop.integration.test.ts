@@ -51,6 +51,22 @@ describe("execution loop integration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       runner,
+      role: "admin",
+      policy: {
+        version: "1",
+        roles: {
+          owner: { allowlist: ["*"], denylist: [] },
+          admin: { allowlist: ["*"], denylist: [] },
+          operator: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+          viewer: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+        },
+      },
       setPhasePrUrl: async (input) => {
         setPrCalls.push(input);
       },
@@ -73,6 +89,39 @@ describe("execution loop integration", () => {
 
     expect(validationResult.status).toBe("APPROVED");
     expect(validationResult.fixAttempts).toBe(0);
+  });
+
+  test("denies CI integration in fail-closed mode when role resolution fails", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "phase-5-ci-execution-loop\n" },
+    ]);
+
+    await expect(
+      runCiIntegration({
+        phaseId: TEST_PHASE.id,
+        phaseName: TEST_PHASE.name,
+        cwd: "C:/repo",
+        baseBranch: "main",
+        runner,
+        role: null,
+        policy: {
+          version: "1",
+          roles: {
+            owner: { allowlist: ["*"], denylist: [] },
+            admin: { allowlist: ["*"], denylist: [] },
+            operator: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+            viewer: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+          },
+        },
+        setPhasePrUrl: async () => {},
+      }),
+    ).rejects.toThrow("reason: role-resolution-failed");
   });
 
   test("stops at tester failure and skips CI/validation", async () => {

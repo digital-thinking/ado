@@ -68,14 +68,17 @@ export function resolveSettingsFilePath(): string {
 }
 
 export function resolveGlobalSettingsFilePath(): string {
-  const configuredGlobalSettingsPath = process.env.IXADO_GLOBAL_CONFIG_FILE?.trim();
+  const configuredGlobalSettingsPath =
+    process.env.IXADO_GLOBAL_CONFIG_FILE?.trim();
   if (configuredGlobalSettingsPath) {
     return resolve(configuredGlobalSettingsPath);
   }
 
   const homeDirectory = homedir().trim();
   if (!homeDirectory) {
-    throw new Error("Could not resolve home directory for global settings path.");
+    throw new Error(
+      "Could not resolve home directory for global settings path.",
+    );
   }
 
   return resolve(homeDirectory, DEFAULT_GLOBAL_SETTINGS_FILE);
@@ -90,7 +93,9 @@ export function resolveSoulFilePath(): string {
   return resolve(process.cwd(), DEFAULT_SOUL_FILE);
 }
 
-async function readSettingsOverrideFile(settingsFilePath: string): Promise<CliSettingsOverride | null> {
+async function readSettingsOverrideFile(
+  settingsFilePath: string,
+): Promise<CliSettingsOverride | null> {
   try {
     await access(settingsFilePath, fsConstants.F_OK);
   } catch (error) {
@@ -112,7 +117,10 @@ async function readSettingsOverrideFile(settingsFilePath: string): Promise<CliSe
   return CliSettingsOverrideSchema.parse(parsed);
 }
 
-function mergeCliSettings(base: CliSettings, override: CliSettingsOverride): CliSettings {
+function mergeCliSettings(
+  base: CliSettings,
+  override: CliSettingsOverride,
+): CliSettings {
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
     activeProject: override.activeProject ?? base.activeProject,
@@ -153,11 +161,14 @@ function mergeCliSettings(base: CliSettings, override: CliSettingsOverride): Cli
   });
 }
 
-export async function loadCliSettings(settingsFilePath: string): Promise<CliSettings> {
+export async function loadCliSettings(
+  settingsFilePath: string,
+): Promise<CliSettings> {
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
-  const globalOverride = settingsFilePath === globalSettingsFilePath
-    ? null
-    : await readSettingsOverrideFile(globalSettingsFilePath);
+  const globalOverride =
+    settingsFilePath === globalSettingsFilePath
+      ? null
+      : await readSettingsOverrideFile(globalSettingsFilePath);
   const localOverride = await readSettingsOverrideFile(settingsFilePath);
 
   let settings = DEFAULT_CLI_SETTINGS;
@@ -173,17 +184,24 @@ export async function loadCliSettings(settingsFilePath: string): Promise<CliSett
 
 export async function saveCliSettings(
   settingsFilePath: string,
-  settings: CliSettings
+  settings: CliSettings,
 ): Promise<CliSettings> {
   const validated = CliSettingsSchema.parse(settings);
 
   await mkdir(dirname(settingsFilePath), { recursive: true });
-  await writeFile(settingsFilePath, `${JSON.stringify(validated, null, 2)}\n`, "utf8");
+  await writeFile(
+    settingsFilePath,
+    `${JSON.stringify(validated, null, 2)}\n`,
+    "utf8",
+  );
 
   return validated;
 }
 
-export async function saveSoulFile(soulFilePath: string, personality: string): Promise<void> {
+export async function saveSoulFile(
+  soulFilePath: string,
+  personality: string,
+): Promise<void> {
   const trimmedPersonality = personality.trim();
   if (!trimmedPersonality) {
     throw new Error("personality must not be empty.");
@@ -193,7 +211,7 @@ export async function saveSoulFile(soulFilePath: string, personality: string): P
   await writeFile(
     soulFilePath,
     `# SOUL\n\nPersonality: ${trimmedPersonality}\n`,
-    "utf8"
+    "utf8",
   );
 }
 
@@ -204,7 +222,7 @@ type TelegramOnboardChoice = {
 
 function parseTelegramOnboardChoice(
   rawAnswer: string,
-  currentEnabled: boolean
+  currentEnabled: boolean,
 ): TelegramOnboardChoice | null {
   const normalized = rawAnswer.trim().toLowerCase();
 
@@ -240,7 +258,9 @@ function isSkipAnswer(rawAnswer: string): boolean {
   return normalized === "" || normalized === ONBOARD_SKIP_KEY;
 }
 
-async function loadSoulPersonality(soulFilePath: string): Promise<string | null> {
+async function loadSoulPersonality(
+  soulFilePath: string,
+): Promise<string | null> {
   try {
     const soul = await readFile(soulFilePath, "utf8");
     const match = /Personality:\s*(.+)/i.exec(soul);
@@ -261,7 +281,7 @@ async function loadSoulPersonality(soulFilePath: string): Promise<string | null>
 
 function parseInternalWorkAssignee(
   rawAnswer: string,
-  availableAgents: CLIAdapterId[]
+  availableAgents: CLIAdapterId[],
 ): CLIAdapterId | null {
   const normalized = rawAnswer.trim().toLowerCase();
 
@@ -290,7 +310,10 @@ function parseInternalWorkAssignee(
   return null;
 }
 
-function parseEnabledChoice(rawAnswer: string, currentEnabled: boolean): { skip: boolean; enabled: boolean } | null {
+function parseEnabledChoice(
+  rawAnswer: string,
+  currentEnabled: boolean,
+): { skip: boolean; enabled: boolean } | null {
   const normalized = rawAnswer.trim().toLowerCase();
 
   if (normalized === ONBOARD_SKIP_KEY) {
@@ -333,17 +356,29 @@ export async function runOnboard(
   prompt: Prompt,
   output: Output = (line) => {
     console.info(line);
-  }
+  },
 ): Promise<CliSettings> {
   const existingSettings = await loadCliSettings(settingsFilePath);
   const existingSoulPersonality = await loadSoulPersonality(soulFilePath);
 
-  await output("Setup: Telegram mode enables remote /status and /tasks commands through your bot.");
-  await output("Setup: SOUL.md stores IxADO's behavior/personality profile for future prompts.");
-  await output("Setup: Internal work adapter is used by the web UI for AI-assisted transformations.");
-  await output("Setup: configure which agents are available and set per-agent timeout (milliseconds).");
-  await output("Setup: make sure the selected internal-work CLI command is installed and available in PATH.");
-  await output("Setup: press Enter to keep the current value for a field (S also works).");
+  await output(
+    "Setup: Telegram mode enables remote /status and /tasks commands through your bot.",
+  );
+  await output(
+    "Setup: SOUL.md stores IxADO's behavior/personality profile for future prompts.",
+  );
+  await output(
+    "Setup: Internal work adapter is used by the web UI for AI-assisted transformations.",
+  );
+  await output(
+    "Setup: configure which agents are available and set per-agent timeout (milliseconds).",
+  );
+  await output(
+    "Setup: make sure the selected internal-work CLI command is installed and available in PATH.",
+  );
+  await output(
+    "Setup: press Enter to keep the current value for a field (S also works).",
+  );
 
   const configuredAgents = {
     CODEX_CLI: { ...existingSettings.agents.CODEX_CLI },
@@ -357,9 +392,12 @@ export async function runOnboard(
       let enabledChoice: { skip: boolean; enabled: boolean } | null = null;
       while (!enabledChoice) {
         const answer = await prompt(
-          `Enable ${agentId}? [y/n/Enter=keep ${configuredAgents[agentId].enabled ? "enabled" : "disabled"}]: `
+          `Enable ${agentId}? [y/n/Enter=keep ${configuredAgents[agentId].enabled ? "enabled" : "disabled"}]: `,
         );
-        enabledChoice = parseEnabledChoice(answer, configuredAgents[agentId].enabled);
+        enabledChoice = parseEnabledChoice(
+          answer,
+          configuredAgents[agentId].enabled,
+        );
       }
       configuredAgents[agentId].enabled = enabledChoice.enabled;
 
@@ -370,7 +408,7 @@ export async function runOnboard(
       let timeoutMs: number | null = null;
       while (timeoutMs === null) {
         const answer = await prompt(
-          `Timeout for ${agentId} in ms [Enter=keep ${configuredAgents[agentId].timeoutMs}]: `
+          `Timeout for ${agentId} in ms [Enter=keep ${configuredAgents[agentId].timeoutMs}]: `,
         );
         if (isSkipAnswer(answer)) {
           timeoutMs = configuredAgents[agentId].timeoutMs;
@@ -381,7 +419,9 @@ export async function runOnboard(
       configuredAgents[agentId].timeoutMs = timeoutMs;
     }
 
-    const enabledCount = CLI_ADAPTER_IDS.filter((agentId) => configuredAgents[agentId].enabled).length;
+    const enabledCount = CLI_ADAPTER_IDS.filter(
+      (agentId) => configuredAgents[agentId].enabled,
+    ).length;
     if (enabledCount > 0) {
       break;
     }
@@ -391,13 +431,17 @@ export async function runOnboard(
 
   let internalWorkAssignee: CLIAdapterId | null = null;
   while (internalWorkAssignee === null) {
-    const availableAgents = CLI_ADAPTER_IDS.filter((agentId) => configuredAgents[agentId].enabled);
+    const availableAgents = CLI_ADAPTER_IDS.filter(
+      (agentId) => configuredAgents[agentId].enabled,
+    );
     const answer = await prompt(
-      `Select internal-work CLI [${availableAgents.map((agentId, index) => `${index + 1}=${agentId}`).join(", ")}, Enter=keep ${existingSettings.internalWork.assignee}]: `
+      `Select internal-work CLI [${availableAgents.map((agentId, index) => `${index + 1}=${agentId}`).join(", ")}, Enter=keep ${existingSettings.internalWork.assignee}]: `,
     );
     if (isSkipAnswer(answer)) {
       if (!configuredAgents[existingSettings.internalWork.assignee].enabled) {
-        await output(`Cannot keep ${existingSettings.internalWork.assignee}: this agent is disabled.`);
+        await output(
+          `Cannot keep ${existingSettings.internalWork.assignee}: this agent is disabled.`,
+        );
         continue;
       }
       internalWorkAssignee = existingSettings.internalWork.assignee;
@@ -411,10 +455,14 @@ export async function runOnboard(
 
   let personality: string | null = null;
   while (!personality) {
-    const answer = await prompt("Short personality description for IxADO [Enter=keep current]: ");
+    const answer = await prompt(
+      "Short personality description for IxADO [Enter=keep current]: ",
+    );
     if (isSkipAnswer(answer)) {
       if (!existingSoulPersonality) {
-        await output("No existing SOUL profile found. Enter a new personality description.");
+        await output(
+          "No existing SOUL profile found. Enter a new personality description.",
+        );
         continue;
       }
 
@@ -434,9 +482,12 @@ export async function runOnboard(
 
   while (true) {
     const answer = await prompt(
-      `Enable Telegram integration? [y/n/Enter=keep ${existingSettings.telegram.enabled ? "enabled" : "disabled"}]: `
+      `Enable Telegram integration? [y/n/Enter=keep ${existingSettings.telegram.enabled ? "enabled" : "disabled"}]: `,
     );
-    const choice = parseTelegramOnboardChoice(answer, existingSettings.telegram.enabled);
+    const choice = parseTelegramOnboardChoice(
+      answer,
+      existingSettings.telegram.enabled,
+    );
 
     if (!choice) {
       continue;
@@ -444,6 +495,7 @@ export async function runOnboard(
 
     if (choice.skip) {
       const settings: CliSettings = {
+        projects: existingSettings.projects,
         telegram: {
           enabled: existingSettings.telegram.enabled,
           botToken: existingSettings.telegram.botToken,
@@ -462,6 +514,7 @@ export async function runOnboard(
 
     if (!choice.enabled) {
       const settings: CliSettings = {
+        projects: existingSettings.projects,
         telegram: {
           enabled: false,
         },
@@ -479,7 +532,9 @@ export async function runOnboard(
     await output("Enter your Telegram bot token from BotFather.");
     let botToken = "";
     while (!botToken) {
-      const tokenAnswer = await prompt("Telegram bot token [Enter=keep current]: ");
+      const tokenAnswer = await prompt(
+        "Telegram bot token [Enter=keep current]: ",
+      );
       if (isSkipAnswer(tokenAnswer)) {
         if (existingSettings.telegram.botToken?.trim()) {
           botToken = existingSettings.telegram.botToken.trim();
@@ -493,17 +548,23 @@ export async function runOnboard(
       botToken = tokenAnswer.trim();
     }
 
-    await output("Enter your Telegram owner user ID (only this account can use bot commands).");
+    await output(
+      "Enter your Telegram owner user ID (only this account can use bot commands).",
+    );
     let ownerId: number | null = null;
     while (ownerId === null) {
-      const ownerAnswer = await prompt("Telegram owner ID [Enter=keep current]: ");
+      const ownerAnswer = await prompt(
+        "Telegram owner ID [Enter=keep current]: ",
+      );
       if (isSkipAnswer(ownerAnswer)) {
         if (existingSettings.telegram.ownerId !== undefined) {
           ownerId = existingSettings.telegram.ownerId;
           break;
         }
 
-        await output("No existing Telegram owner ID found. Enter a valid owner ID.");
+        await output(
+          "No existing Telegram owner ID found. Enter a valid owner ID.",
+        );
         continue;
       }
 
@@ -511,6 +572,7 @@ export async function runOnboard(
     }
 
     const settings: CliSettings = {
+      projects: existingSettings.projects,
       telegram: {
         enabled: true,
         botToken,

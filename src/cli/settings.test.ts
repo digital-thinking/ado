@@ -71,6 +71,7 @@ describe("cli settings", () => {
 
   test("saves and loads settings", async () => {
     await saveCliSettings(settingsFilePath, {
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "abc",
@@ -112,7 +113,7 @@ describe("cli settings", () => {
         internalWork: {
           assignee: "CLAUDE_CLI",
         },
-      })
+      }),
     );
 
     const settings = await loadCliSettings(settingsFilePath);
@@ -143,7 +144,7 @@ describe("cli settings", () => {
             timeoutMs: 5000,
           },
         },
-      })
+      }),
     );
     await Bun.write(
       settingsFilePath,
@@ -156,7 +157,7 @@ describe("cli settings", () => {
             timeoutMs: 7000,
           },
         },
-      })
+      }),
     );
 
     const settings = await loadCliSettings(settingsFilePath);
@@ -173,7 +174,7 @@ describe("cli settings", () => {
         usage: {
           codexbarEnabled: false,
         },
-      })
+      }),
     );
     await Bun.write(
       settingsFilePath,
@@ -181,7 +182,7 @@ describe("cli settings", () => {
         usage: {
           codexbarEnabled: true,
         },
-      })
+      }),
     );
 
     const settings = await loadCliSettings(settingsFilePath);
@@ -191,7 +192,7 @@ describe("cli settings", () => {
   test("fails for invalid settings json", async () => {
     await Bun.write(settingsFilePath, "{invalid");
     await expect(loadCliSettings(settingsFilePath)).rejects.toThrow(
-      `Settings file contains invalid JSON: ${settingsFilePath}`
+      `Settings file contains invalid JSON: ${settingsFilePath}`,
     );
   });
 
@@ -228,7 +229,7 @@ describe("cli settings", () => {
       async () => answers[idx++] ?? "",
       async (line) => {
         output.push(line);
-      }
+      },
     );
 
     expect(settings).toEqual({
@@ -252,9 +253,15 @@ describe("cli settings", () => {
     });
     expect(output[0]).toContain("Setup: Telegram mode enables remote");
     expect(output[1]).toContain("Setup: SOUL.md stores IxADO");
-    expect(output.some((line) => line.includes("Setup: Internal work adapter"))).toBe(true);
-    expect(output.some((line) => line.includes("installed and available in PATH"))).toBe(true);
-    expect(output.some((line) => line.includes("press Enter to keep"))).toBe(true);
+    expect(
+      output.some((line) => line.includes("Setup: Internal work adapter")),
+    ).toBe(true);
+    expect(
+      output.some((line) => line.includes("installed and available in PATH")),
+    ).toBe(true);
+    expect(output.some((line) => line.includes("press Enter to keep"))).toBe(
+      true,
+    );
     await expect(loadCliSettings(settingsFilePath)).resolves.toEqual(settings);
     const soul = await Bun.file(soulFilePath).text();
     expect(soul).toContain("Personality: Concise and pragmatic");
@@ -282,7 +289,7 @@ describe("cli settings", () => {
       settingsFilePath,
       soulFilePath,
       async () => answers[idx++] ?? "",
-      async () => {}
+      async () => {},
     );
 
     expect(settings).toEqual({
@@ -325,7 +332,7 @@ describe("cli settings", () => {
       settingsFilePath,
       soulFilePath,
       async () => answers[idx++] ?? "",
-      async () => {}
+      async () => {},
     );
 
     expect(settings).toEqual({
@@ -351,6 +358,7 @@ describe("cli settings", () => {
 
   test("onboard supports pressing enter to keep existing values", async () => {
     await saveCliSettings(settingsFilePath, {
+      projects: [],
       telegram: {
         enabled: true,
         botToken: "existing-token",
@@ -365,26 +373,14 @@ describe("cli settings", () => {
     });
     await saveSoulFile(soulFilePath, "Existing soul");
 
-    const answers = [
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-    ];
+    const answers = ["", "", "", "", "", "", "", "", "", "", ""];
     let idx = 0;
 
     const settings = await runOnboard(
       settingsFilePath,
       soulFilePath,
       async () => answers[idx++] ?? "",
-      async () => {}
+      async () => {},
     );
 
     expect(settings).toEqual({
@@ -434,7 +430,7 @@ describe("cli settings", () => {
       async () => answers[idx++] ?? "",
       async (line) => {
         output.push(line);
-      }
+      },
     );
 
     expect(settings).toEqual({
@@ -451,8 +447,18 @@ describe("cli settings", () => {
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
-    expect(output.some((line) => line.includes("No existing SOUL profile found"))).toBe(true);
-    expect(output.some((line) => line.includes("No existing Telegram bot token found"))).toBe(true);
-    expect(output.some((line) => line.includes("No existing Telegram owner ID found"))).toBe(true);
+    expect(
+      output.some((line) => line.includes("No existing SOUL profile found")),
+    ).toBe(true);
+    expect(
+      output.some((line) =>
+        line.includes("No existing Telegram bot token found"),
+      ),
+    ).toBe(true);
+    expect(
+      output.some((line) =>
+        line.includes("No existing Telegram owner ID found"),
+      ),
+    ).toBe(true);
   });
 });

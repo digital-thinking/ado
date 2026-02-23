@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { OrchestrationAuthorizationDeniedError } from "../security/orchestration-authorizer";
 import { MockProcessRunner } from "../vcs/test-utils";
 import { runCiIntegration } from "./ci-integration";
 
@@ -18,6 +19,22 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       runner,
+      role: "admin",
+      policy: {
+        version: "1",
+        roles: {
+          owner: { allowlist: ["*"], denylist: [] },
+          admin: { allowlist: ["*"], denylist: [] },
+          operator: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+          viewer: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+        },
+      },
       setPhasePrUrl: async (input) => {
         setPrCalls.push(input);
       },
@@ -55,9 +72,62 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "   ",
         runner,
+        role: "admin",
+        policy: {
+          version: "1",
+          roles: {
+            owner: { allowlist: ["*"], denylist: [] },
+            admin: { allowlist: ["*"], denylist: [] },
+            operator: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+            viewer: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+          },
+        },
         setPhasePrUrl: async () => {},
-      })
+      }),
     ).rejects.toThrow("ciBaseBranch must not be empty.");
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  test("returns structured AuthorizationDenied when role lacks privileged permissions", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "phase-5-ci-execution-loop\n" },
+    ]);
+
+    const err = await runCiIntegration({
+      phaseId: "11111111-1111-4111-8111-111111111111",
+      phaseName: "Phase 5",
+      cwd: "C:/repo",
+      baseBranch: "main",
+      runner,
+      role: "operator",
+      policy: {
+        version: "1",
+        roles: {
+          owner: { allowlist: ["*"], denylist: [] },
+          admin: { allowlist: ["*"], denylist: [] },
+          operator: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+          viewer: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+        },
+      },
+      setPhasePrUrl: async () => {},
+    }).catch((error) => error);
+
+    expect(err).toBeInstanceOf(OrchestrationAuthorizationDeniedError);
+    const denied = err as OrchestrationAuthorizationDeniedError;
+    expect(denied.action).toBe("orchestrator:ci-integration:run");
+    expect(denied.reason).toBe("no-allowlist-match");
     expect(runner.calls).toHaveLength(0);
   });
 });

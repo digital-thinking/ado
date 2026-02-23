@@ -24,8 +24,8 @@ export type AuthDecision =
   | { decision: "deny"; role: Role | null; action: string; reason: DenyReason };
 
 export type DenyReason =
-  | "no-role"          // null role — unrecognized session
-  | "denylist-match"   // explicit denylist pattern matched
+  | "no-role" // null role — unrecognized session
+  | "denylist-match" // explicit denylist pattern matched
   | "no-allowlist-match"; // default-deny — no allowlist pattern matched
 
 // ---------------------------------------------------------------------------
@@ -105,4 +105,36 @@ export function isAuthorized(
   policy: AuthPolicy,
 ): boolean {
   return evaluate(role, action, policy).decision === "allow";
+}
+
+// ---------------------------------------------------------------------------
+// Structured authorization error
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a privileged operation is attempted and the evaluator returns a
+ * "deny" decision.  Carries the full structured decision for upstream
+ * fail-closed handling (P11-005) and audit logging (P11-006).
+ */
+export class AuthorizationDeniedError extends Error {
+  /** The resolved role at the time of denial, or null for unrecognized sessions. */
+  readonly role: Role | null;
+  /** The fully-qualified action string that was denied. */
+  readonly action: string;
+  /** The deny reason from the evaluator. */
+  readonly reason: DenyReason;
+
+  constructor(decision: Extract<AuthDecision, { decision: "deny" }>) {
+    super(
+      `Authorization denied: action "${decision.action}" is not permitted` +
+        (decision.role
+          ? ` for role "${decision.role}"`
+          : " (no role assigned)") +
+        ` [reason: ${decision.reason}]`,
+    );
+    this.name = "AuthorizationDeniedError";
+    this.role = decision.role;
+    this.action = decision.action;
+    this.reason = decision.reason;
+  }
 }

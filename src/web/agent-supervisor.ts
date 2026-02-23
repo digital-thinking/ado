@@ -1,11 +1,19 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { resolveCommandForSpawn } from "../process/command-resolver";
 
-type SpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+type SpawnFn = (
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+) => ChildProcess;
 
 export type AgentStatus = "RUNNING" | "STOPPED" | "FAILED";
 
@@ -16,6 +24,8 @@ export type StartAgentInput = {
   cwd: string;
   phaseId?: string;
   taskId?: string;
+  /** Runtime guard: only adapter-template builders may set this to true. */
+  approvedAdapterSpawn?: boolean;
 };
 
 export type RunAgentInput = StartAgentInput & {
@@ -63,7 +73,10 @@ type AgentRecord = {
   stopRequested: boolean;
 };
 
-export type AgentView = Omit<AgentRecord, "child" | "runToken" | "stopRequested">;
+export type AgentView = Omit<
+  AgentRecord,
+  "child" | "runToken" | "stopRequested"
+>;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -121,7 +134,9 @@ function parsePersistedAgent(value: unknown): AgentView | null {
   }
 
   const status =
-    candidate.status === "RUNNING" || candidate.status === "STOPPED" || candidate.status === "FAILED"
+    candidate.status === "RUNNING" ||
+    candidate.status === "STOPPED" ||
+    candidate.status === "FAILED"
       ? candidate.status
       : null;
   if (!status) {
@@ -134,14 +149,21 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     command: candidate.command,
     args: normalizeStringArray(candidate.args),
     cwd: candidate.cwd,
-    phaseId: typeof candidate.phaseId === "string" ? candidate.phaseId : undefined,
+    phaseId:
+      typeof candidate.phaseId === "string" ? candidate.phaseId : undefined,
     taskId: typeof candidate.taskId === "string" ? candidate.taskId : undefined,
     status,
     pid: typeof candidate.pid === "number" ? candidate.pid : undefined,
     startedAt: candidate.startedAt,
-    stoppedAt: typeof candidate.stoppedAt === "string" ? candidate.stoppedAt : undefined,
-    lastExitCode: typeof candidate.lastExitCode === "number" ? candidate.lastExitCode : undefined,
-    outputTail: normalizeStringArray(candidate.outputTail).map((line) => truncateTailLine(line)),
+    stoppedAt:
+      typeof candidate.stoppedAt === "string" ? candidate.stoppedAt : undefined,
+    lastExitCode:
+      typeof candidate.lastExitCode === "number"
+        ? candidate.lastExitCode
+        : undefined,
+    outputTail: normalizeStringArray(candidate.outputTail).map((line) =>
+      truncateTailLine(line),
+    ),
   };
 }
 
@@ -150,7 +172,10 @@ export class AgentSupervisor {
   private readonly registryFilePath?: string;
   private readonly records = new Map<string, AgentRecord>();
 
-  constructor(spawnOrOptions: SpawnFn | AgentSupervisorOptions = spawn, registryFilePath?: string) {
+  constructor(
+    spawnOrOptions: SpawnFn | AgentSupervisorOptions = spawn,
+    registryFilePath?: string,
+  ) {
     if (typeof spawnOrOptions === "function") {
       this.spawnFn = spawnOrOptions;
       this.registryFilePath = registryFilePath;
@@ -183,7 +208,9 @@ export class AgentSupervisor {
         return [];
       }
 
-      console.warn(`Unable to read agent registry: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Unable to read agent registry: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return [];
     }
   }
@@ -195,9 +222,15 @@ export class AgentSupervisor {
 
     try {
       mkdirSync(dirname(this.registryFilePath), { recursive: true });
-      writeFileSync(this.registryFilePath, `${JSON.stringify(agents, null, 2)}\n`, "utf8");
+      writeFileSync(
+        this.registryFilePath,
+        `${JSON.stringify(agents, null, 2)}\n`,
+        "utf8",
+      );
     } catch (error) {
-      console.warn(`Unable to write agent registry: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Unable to write agent registry: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -225,7 +258,7 @@ export class AgentSupervisor {
     }
 
     const merged = new Map<string, AgentView>(
-      this.readPersistedAgents().map((agent) => [agent.id, agent])
+      this.readPersistedAgents().map((agent) => [agent.id, agent]),
     );
     for (const local of inMemory) {
       merged.set(local.id, local);
@@ -242,6 +275,11 @@ export class AgentSupervisor {
     }
     if (!input.cwd.trim()) {
       throw new Error("agent cwd must not be empty.");
+    }
+    if (!input.approvedAdapterSpawn) {
+      throw new Error(
+        "raw agent command execution is blocked. Use approved adapter command builders only.",
+      );
     }
 
     return {
@@ -268,10 +306,13 @@ export class AgentSupervisor {
       timeoutMs?: number;
       onStdout?: (chunk: string) => void;
       onStderr?: (chunk: string) => void;
-      onClose?: (exitCode: number | null, signal: NodeJS.Signals | null) => void;
+      onClose?: (
+        exitCode: number | null,
+        signal: NodeJS.Signals | null,
+      ) => void;
       onError?: (error: Error) => void;
       onTimeout?: () => void;
-    } = {}
+    } = {},
   ): ChildProcess {
     record.runToken += 1;
     const runToken = record.runToken;
@@ -397,7 +438,10 @@ export class AgentSupervisor {
         },
         onTimeout: () => {
           timedOut = true;
-          tailPush(record.outputTail, `Command timed out after ${input.timeoutMs}ms.`);
+          tailPush(
+            record.outputTail,
+            `Command timed out after ${input.timeoutMs}ms.`,
+          );
         },
         onError: (error) => {
           settle(() => reject(error));
@@ -405,15 +449,19 @@ export class AgentSupervisor {
         onClose: (exitCode) => {
           settle(() => {
             if (timedOut) {
-              reject(new Error(`Command timed out after ${input.timeoutMs}ms: ${record.command}`));
+              reject(
+                new Error(
+                  `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
+                ),
+              );
               return;
             }
 
             if ((exitCode ?? -1) !== 0) {
               reject(
                 new Error(
-                  `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim()
-                )
+                  `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
+                ),
               );
               return;
             }
