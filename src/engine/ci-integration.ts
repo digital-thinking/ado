@@ -1,5 +1,6 @@
 import type { ProcessRunner } from "../process";
-import { GitHubManager, GitManager } from "../vcs";
+import type { AuthPolicy, Role } from "../security/policy";
+import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 
 export type RunCiIntegrationInput = {
   phaseId: string;
@@ -7,6 +8,8 @@ export type RunCiIntegrationInput = {
   cwd: string;
   baseBranch: string;
   runner: ProcessRunner;
+  role: Role | null;
+  policy: AuthPolicy;
   setPhasePrUrl: (input: { phaseId: string; prUrl: string }) => Promise<void>;
 };
 
@@ -17,7 +20,9 @@ export type RunCiIntegrationResult = {
   prUrl: string;
 };
 
-export async function runCiIntegration(input: RunCiIntegrationInput): Promise<RunCiIntegrationResult> {
+export async function runCiIntegration(
+  input: RunCiIntegrationInput,
+): Promise<RunCiIntegrationResult> {
   const baseBranch = input.baseBranch.trim();
   if (!baseBranch) {
     throw new Error("ciBaseBranch must not be empty.");
@@ -25,15 +30,21 @@ export async function runCiIntegration(input: RunCiIntegrationInput): Promise<Ru
 
   const git = new GitManager(input.runner);
   const github = new GitHubManager(input.runner);
+  const privileged = new PrivilegedGitActions({
+    git,
+    github,
+    role: input.role,
+    policy: input.policy,
+  });
   const headBranch = await git.getCurrentBranch(input.cwd);
 
-  await git.pushBranch({
+  await privileged.pushBranch({
     branchName: headBranch,
     cwd: input.cwd,
     setUpstream: true,
   });
 
-  const prUrl = await github.createPullRequest({
+  const prUrl = await privileged.createPullRequest({
     base: baseBranch,
     head: headBranch,
     title: input.phaseName,

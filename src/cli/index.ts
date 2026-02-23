@@ -19,7 +19,7 @@ import { runTesterWorkflow } from "../engine/tester-workflow";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import { CLIAdapterIdSchema } from "../types";
-import { GitManager } from "../vcs";
+import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
@@ -1016,6 +1016,7 @@ async function runTaskCommand(args: string[]): Promise<void> {
 async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const control = createControlCenterService(
@@ -1034,6 +1035,13 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
   const activeAssignee = settings.internalWork.assignee;
   const testerRunner = new ProcessManager();
   const git = new GitManager(testerRunner);
+  const github = new GitHubManager(testerRunner);
+  const privilegedGit = new PrivilegedGitActions({
+    git,
+    github,
+    role: "admin",
+    policy,
+  });
   const cwd = projectRootDir;
   const telegram = resolveTelegramConfig(settings.telegram);
 
@@ -1109,7 +1117,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
             `Execution loop: checked out existing branch ${startingPhase.branchName}.`,
           );
         } catch {
-          await git.createBranch({
+          await privilegedGit.createBranch({
             branchName: startingPhase.branchName,
             cwd,
             fromRef: "HEAD",
@@ -1278,6 +1286,8 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
         cwd,
         baseBranch: settings.executionLoop.ciBaseBranch,
         runner: testerRunner,
+        role: "admin",
+        policy,
         setPhasePrUrl: async (input) => {
           await control.setPhasePrUrl(input);
         },

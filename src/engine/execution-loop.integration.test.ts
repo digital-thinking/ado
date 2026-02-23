@@ -51,6 +51,22 @@ describe("execution loop integration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       runner,
+      role: "admin",
+      policy: {
+        version: "1",
+        roles: {
+          owner: { allowlist: ["*"], denylist: [] },
+          admin: { allowlist: ["git:privileged:*"], denylist: [] },
+          operator: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+          viewer: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+        },
+      },
       setPhasePrUrl: async (input) => {
         setPrCalls.push(input);
       },
