@@ -447,22 +447,6 @@ function controlCenterHtml(): string {
       </section>
 
       <section class="card">
-        <h2>Usage / Quota</h2>
-        <div id="usageStatus" class="small">Loading...</div>
-        <pre id="usageRaw" class="mono small"></pre>
-      </section>
-
-      <section class="card">
-        <h2>Create Phase</h2>
-        <form id="phaseForm">
-          <input id="phaseName" placeholder="Phase Name" required />
-          <input id="phaseBranch" placeholder="Branch Name (e.g. phase-x-name)" required />
-          <button type="submit">Create Phase</button>
-        </form>
-        <div id="phaseError" class="error"></div>
-      </section>
-
-      <section class="card">
         <h2>Create Task</h2>
         <form id="taskForm">
           <select id="taskPhase" required></select>
@@ -491,8 +475,56 @@ function controlCenterHtml(): string {
       <section class="card wide">
         <h2>Global Settings</h2>
         <p>Global configuration for all projects.</p>
-        <!-- Implementation for settings sections will come in P12-008 -->
-        <div class="muted small">Global settings implementation pending.</div>
+      </section>
+
+      <div style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+        <section class="card">
+          <h2>Telegram Integration</h2>
+          <form id="telegramSettingsForm">
+            <label class="row small">
+              <input type="checkbox" id="telegramEnabled" /> Enabled
+            </label>
+            <label class="small" for="telegramBotToken">Bot Token</label>
+            <input type="password" id="telegramBotToken" placeholder="Bot Token" />
+            <label class="small" for="telegramOwnerId">Owner ID</label>
+            <input type="number" id="telegramOwnerId" placeholder="Owner ID" />
+            <button type="submit">Save Telegram Settings</button>
+          </form>
+          <div id="telegramSettingsStatus" class="small"></div>
+          <div id="telegramSettingsError" class="error"></div>
+        </section>
+
+        <section class="card">
+          <h2>Global Defaults</h2>
+          <form id="globalDefaultsForm">
+            <label class="row small">
+              <input type="checkbox" id="globalAutoMode" /> Fallback Auto Mode
+            </label>
+            <label class="small" for="globalDefaultAssignee">Default CLI Assignee</label>
+            <select id="globalDefaultAssignee"></select>
+            <button type="submit">Save Global Defaults</button>
+          </form>
+          <div id="globalDefaultsStatus" class="small"></div>
+          <div id="globalDefaultsError" class="error"></div>
+        </section>
+
+        <section class="card">
+          <h2>Usage Quota</h2>
+          <div id="usageStatus" class="small">Loading...</div>
+          <pre id="usageRaw" class="mono small"></pre>
+        </section>
+      </div>
+
+      <section class="card wide" style="margin-top: 16px;">
+        <h2>CLI Adapters</h2>
+        <div id="adaptersSettingsList" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+          <!-- Dynamically populated -->
+        </div>
+        <div class="row" style="margin-top: 16px;">
+          <button id="saveAdaptersButton">Save Adapters Settings</button>
+          <div id="adaptersSettingsStatus" class="small"></div>
+        </div>
+        <div id="adaptersSettingsError" class="error"></div>
       </section>
     </div>
 
@@ -646,7 +678,51 @@ function controlCenterHtml(): string {
       projectContent.classList.add("hidden");
       settingsContent.classList.remove("hidden");
       renderTabs();
-      // Settings refresh logic will come in P12-008
+      await refreshSettings();
+    }
+
+    async function refreshSettings() {
+      try {
+        const settings = await api("/api/settings");
+        
+        // Telegram
+        document.getElementById("telegramEnabled").checked = !!settings.telegram?.enabled;
+        document.getElementById("telegramBotToken").value = settings.telegram?.botToken || "";
+        document.getElementById("telegramOwnerId").value = settings.telegram?.ownerId || "";
+
+        // Global Defaults
+        document.getElementById("globalAutoMode").checked = !!settings.executionLoop?.autoMode;
+        const globalAssigneeSelect = document.getElementById("globalDefaultAssignee");
+        globalAssigneeSelect.innerHTML = "";
+        WORKER_ASSIGNEES.forEach((assignee) => {
+          const option = document.createElement("option");
+          option.value = assignee;
+          option.textContent = assignee;
+          option.selected = settings.internalWork?.assignee === assignee;
+          globalAssigneeSelect.appendChild(option);
+        });
+
+        // Adapters
+        const adaptersList = document.getElementById("adaptersSettingsList");
+        adaptersList.innerHTML = "";
+        const agentIds = Object.keys(settings.agents || {});
+        agentIds.forEach(id => {
+          const config = settings.agents[id];
+          const div = document.createElement("div");
+          div.className = "card";
+          div.innerHTML = \`
+            <h3 class="mono" style="margin-top:0;">\${id}</h3>
+            <label class="row small">
+              <input type="checkbox" class="adapter-enabled" data-id="\${id}" \${config.enabled ? "checked" : ""}> Enabled
+            </label>
+            <label class="small" style="display:block; margin-top:8px;">Timeout (ms)</label>
+            <input type="number" class="adapter-timeout" data-id="\${id}" value="\${config.timeoutMs}" style="width:100%;">
+          \`;
+          adaptersList.appendChild(div);
+        });
+      } catch (error) {
+        console.error("Failed to refresh settings:", error);
+      }
     }
 
     async function refreshProjects() {
@@ -1244,6 +1320,82 @@ function controlCenterHtml(): string {
 
     agentTableBody.addEventListener("click", handleAgentAction);
     agentTopTableBody.addEventListener("click", handleAgentAction);
+
+    document.getElementById("telegramSettingsForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const status = document.getElementById("telegramSettingsStatus");
+      const error = document.getElementById("telegramSettingsError");
+      status.textContent = "Saving...";
+      error.textContent = "";
+      try {
+        await api("/api/settings", {
+          method: "PATCH",
+          body: JSON.stringify({
+            telegram: {
+              enabled: document.getElementById("telegramEnabled").checked,
+              botToken: document.getElementById("telegramBotToken").value || undefined,
+              ownerId: parseInt(document.getElementById("telegramOwnerId").value, 10) || undefined,
+            }
+          })
+        });
+        status.textContent = "Saved.";
+      } catch (err) {
+        status.textContent = "";
+        error.textContent = err.message;
+      }
+    });
+
+    document.getElementById("globalDefaultsForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const status = document.getElementById("globalDefaultsStatus");
+      const error = document.getElementById("globalDefaultsError");
+      status.textContent = "Saving...";
+      error.textContent = "";
+      try {
+        await api("/api/settings", {
+          method: "PATCH",
+          body: JSON.stringify({
+            executionLoop: {
+              autoMode: document.getElementById("globalAutoMode").checked
+            },
+            internalWork: {
+              assignee: document.getElementById("globalDefaultAssignee").value
+            }
+          })
+        });
+        status.textContent = "Saved.";
+      } catch (err) {
+        status.textContent = "";
+        error.textContent = err.message;
+      }
+    });
+
+    document.getElementById("saveAdaptersButton").addEventListener("click", async () => {
+      const status = document.getElementById("adaptersSettingsStatus");
+      const error = document.getElementById("adaptersSettingsError");
+      status.textContent = "Saving...";
+      error.textContent = "";
+      try {
+        const agents = {};
+        document.querySelectorAll("#adaptersSettingsList .card").forEach(card => {
+          const enabledInput = card.querySelector(".adapter-enabled");
+          const timeoutInput = card.querySelector(".adapter-timeout");
+          const id = enabledInput.getAttribute("data-id");
+          agents[id] = {
+            enabled: enabledInput.checked,
+            timeoutMs: parseInt(timeoutInput.value, 10)
+          };
+        });
+        await api("/api/settings", {
+          method: "PATCH",
+          body: JSON.stringify({ agents })
+        });
+        status.textContent = "Saved.";
+      } catch (err) {
+        status.textContent = "";
+        error.textContent = err.message;
+      }
+    });
 
     async function init() {
       await refreshProjects();
