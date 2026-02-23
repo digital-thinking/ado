@@ -90,5 +90,37 @@ describe("json-parser", () => {
       const result = parseJsonFromModelOutput<MyType>(input);
       expect(result.foo).toBe("bar");
     });
+
+    test("handles multiple JSON objects by taking the first one", () => {
+      const input = 'First: {"a": 1} Second: {"b": 2}';
+      expect(parseJsonFromModelOutput<{ a: number }>(input)).toEqual({ a: 1 });
+    });
+
+    test("handles JSON with trailing content after closing brace", () => {
+      const input = '{"a": 1} Some extra text here.';
+      expect(parseJsonFromModelOutput<{ a: number }>(input)).toEqual({ a: 1 });
+    });
+
+    test("handles JSON with complex strings and nested braces", () => {
+      const input =
+        'Result: {"a": "string with { braces } and \\"quotes\\"", "b": [1, 2, {"c": 3}]} done.';
+      const result = parseJsonFromModelOutput<any>(input);
+      expect(result.a).toBe('string with { braces } and "quotes"');
+      expect(result.b[2].c).toBe(3);
+    });
+
+    test("throws when no JSON object can be found", () => {
+      const input = "Just some prose without any objects.";
+      expect(() => parseJsonFromModelOutput(input)).toThrow(
+        "Model output is not valid JSON.",
+      );
+    });
+
+    test("throws when extraction finds invalid JSON", () => {
+      const input = 'The object is {"a": 1, "b": } which is broken.';
+      expect(() => parseJsonFromModelOutput(input)).toThrow(
+        "Model output is not valid JSON.",
+      );
+    });
   });
 });

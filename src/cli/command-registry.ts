@@ -107,7 +107,9 @@ export class CommandRegistry {
       }
       if (cmd.subcommands) {
         for (const sub of cmd.subcommands) {
-          const usage = sub.usage || `${cmd.name} ${sub.name}`;
+          const usage = sub.usage
+            ? `${cmd.name} ${sub.usage}`
+            : `${cmd.name} ${sub.name}`;
           console.info(`  ixado ${usage.padEnd(14)} ${sub.description}`);
         }
       } else {

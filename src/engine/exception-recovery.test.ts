@@ -10,20 +10,30 @@ import {
   validateRecoveryActions,
 } from "./exception-recovery";
 
+import {
+  DirtyWorktreeError,
+  MissingCommitError,
+  AgentFailureError,
+} from "../errors";
+
 describe("exception recovery", () => {
   test("classifies dirty tree, commit gap, and agent failure as recoverable", () => {
+    const dirtyError = new DirtyWorktreeError();
     const dirty = classifyRecoveryException({
-      message: "Git working tree is not clean.",
-      category: "DIRTY_WORKTREE",
+      message: dirtyError.message,
+      category: dirtyError.category,
     });
+
+    const commitGapError = new MissingCommitError();
     const commitGap = classifyRecoveryException({
-      message:
-        "CI integration requires a commit before push/PR, but there are no local changes to commit.",
-      category: "MISSING_COMMIT",
+      message: commitGapError.message,
+      category: commitGapError.category,
     });
+
+    const agentFailureError = new AgentFailureError("fail");
     const agentFailure = classifyRecoveryException({
-      message: "Execution loop stopped after FAILED task #2.",
-      category: "AGENT_FAILURE",
+      message: agentFailureError.message,
+      category: agentFailureError.category,
     });
 
     expect(dirty.category).toBe("DIRTY_WORKTREE");
