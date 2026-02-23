@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createWebApp } from "./app";
+import { refreshRecoveryCache } from "./api/agents";
 import type { AgentView } from "./agent-supervisor";
 import type {
   CreatePhaseInput,
@@ -1150,6 +1151,50 @@ describe("phase14 recovery surfacing", () => {
       webLogFilePath: "/tmp/web.log",
       cliLogFilePath: "/tmp/cli.log",
     });
+
+    const projectState = {
+      projectName: "alpha",
+      rootDir: "/tmp/alpha",
+      phases: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          name: "Phase",
+          branchName: "phase",
+          status: "CODING",
+          recoveryAttempts: [],
+          tasks: [
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              title: "Task",
+              description: "desc",
+              status: "FAILED",
+              assignee: "MOCK_CLI",
+              dependencies: [],
+              recoveryAttempts: [
+                {
+                  id: "33333333-3333-4333-8333-333333333333",
+                  occurredAt: "2026-02-23T00:00:00.000Z",
+                  attemptNumber: 1,
+                  exception: {
+                    category: "AGENT_FAILURE",
+                    message: "worker failed",
+                  },
+                  result: {
+                    status: "fixed",
+                    reasoning: "retried successfully",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      activePhaseId: "11111111-1111-4111-8111-111111111111",
+      createdAt: "2026-02-23T00:00:00.000Z",
+      updatedAt: "2026-02-23T00:00:00.000Z",
+    } as any;
+
+    refreshRecoveryCache(projectState);
 
     const response = await app.fetch(
       new Request("http://localhost/api/agents"),

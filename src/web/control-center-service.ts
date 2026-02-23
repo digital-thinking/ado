@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 import { buildWorkerPrompt } from "../engine/worker-prompts";
+import { parseJsonFromModelOutput } from "../engine/json-parser";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
@@ -192,88 +193,6 @@ function buildTasksMarkdownImportPrompt(markdown: string): string {
   ].join("\n\n");
 }
 
-function extractFirstJsonObject(raw: string): string | null {
-  const startIndex = raw.indexOf("{");
-  if (startIndex < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-
-  for (let index = startIndex; index < raw.length; index += 1) {
-    const char = raw[index];
-
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaping = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return raw.slice(startIndex, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseJsonFromModelOutput(rawOutput: string): unknown {
-  const direct = rawOutput.trim();
-  if (!direct) {
-    throw new Error("Internal work returned empty output.");
-  }
-
-  try {
-    return JSON.parse(direct);
-  } catch {
-    // Continue.
-  }
-
-  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(rawOutput);
-  if (fencedMatch) {
-    try {
-      return JSON.parse(fencedMatch[1].trim());
-    } catch {
-      // Continue.
-    }
-  }
-
-  const objectPayload = extractFirstJsonObject(rawOutput);
-  if (objectPayload) {
-    try {
-      return JSON.parse(objectPayload);
-    } catch {
-      // Continue.
-    }
-  }
-
-  throw new Error("Internal work did not return valid JSON.");
-}
-
 function createDraftsFromPlan(plan: ImportedTasksPlan): ImportedPhaseDraft[] {
   const taskCodeSet = new Set<string>();
   const taskCodeToId = new Map<string, string>();
@@ -359,6 +278,10 @@ export class ControlCenterService {
   private readonly internalWorkRunner?: InternalWorkRunner;
   private readonly repositoryResetRunner?: RepositoryResetRunner;
   private readonly runningTaskExecutions = new Map<string, Promise<void>>();
+  private readonly onStateChange?: (
+    projectName: string,
+    state: ProjectState,
+  ) => void;
   private defaultProjectName?: string;
 
   constructor(
@@ -366,6 +289,7 @@ export class ControlCenterService {
     tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
     internalWorkRunner?: InternalWorkRunner,
     repositoryResetRunner?: RepositoryResetRunner,
+    onStateChange?: (projectName: string, state: ProjectState) => void,
   ) {
     if (typeof stateOrFactory === "function") {
       this.stateEngineFactory = stateOrFactory;
@@ -375,6 +299,7 @@ export class ControlCenterService {
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
     this.repositoryResetRunner = repositoryResetRunner;
+    this.onStateChange = onStateChange;
   }
 
   private async getEngine(projectName?: string): Promise<StateEngine> {
@@ -438,11 +363,13 @@ export class ControlCenterService {
       tasks: [],
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       activePhaseId: phase.id,
       phases: [...state.phases, phase],
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async createTask(
@@ -482,10 +409,12 @@ export class ControlCenterService {
       tasks: [...nextPhases[phaseIndex].tasks, task],
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async updateTask(
@@ -550,7 +479,9 @@ export class ControlCenterService {
       (dependencyId) => !knownTaskIds.has(dependencyId),
     );
     if (missingDependency) {
-      throw new Error(`Task has invalid dependency reference: ${missingDependency}`);
+      throw new Error(
+        `Task has invalid dependency reference: ${missingDependency}`,
+      );
     }
 
     const updatedTask = TaskSchema.parse({
@@ -568,10 +499,12 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setActivePhase(
@@ -586,10 +519,12 @@ export class ControlCenterService {
     const state = await engine.readProjectState();
     const phaseId = resolvePhaseIdForReference(state, phaseReference);
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       activePhaseId: phaseId,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setPhasePrUrl(
@@ -618,10 +553,12 @@ export class ControlCenterService {
       prUrl,
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setPhaseStatus(
@@ -653,10 +590,12 @@ export class ControlCenterService {
       ciStatusContext,
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async listActivePhaseTasks(
@@ -736,10 +675,12 @@ export class ControlCenterService {
       });
     }
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async startActiveTask(
@@ -903,6 +844,7 @@ export class ControlCenterService {
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
 
     const shouldResume =
       Boolean(input.resume) ||
@@ -982,7 +924,10 @@ export class ControlCenterService {
       timeoutMs: TASKS_IMPORT_TIMEOUT_MS,
     });
 
-    const parsed = parseJsonFromModelOutput(internalResult.stdout);
+    const parsed = parseJsonFromModelOutput(
+      internalResult.stdout,
+      "Internal work did not return valid JSON.",
+    );
     const plan = ImportedTasksPlanSchema.parse(parsed);
     const draftPhases = createDraftsFromPlan(plan);
 
@@ -1057,6 +1002,7 @@ export class ControlCenterService {
       phases: nextPhases,
       activePhaseId: state.activePhaseId ?? lastImportedPhaseId,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
 
     return {
       state: nextState,
@@ -1097,6 +1043,7 @@ export class ControlCenterService {
           "DONE",
           combinedResult || "Task finished without textual output.",
           undefined,
+          undefined,
           input.startedFromStatus,
           input.projectName,
         );
@@ -1111,6 +1058,7 @@ export class ControlCenterService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const category = (error as any).category;
       try {
         await this.updateTaskResult(
           input.phaseId,
@@ -1118,6 +1066,7 @@ export class ControlCenterService {
           "FAILED",
           undefined,
           message,
+          category,
           input.startedFromStatus,
           input.projectName,
         );
@@ -1139,6 +1088,7 @@ export class ControlCenterService {
     status: "DONE" | "FAILED",
     resultContext: string | undefined,
     errorLogs: string | undefined,
+    errorCategory: any, // Use any for now or import ExceptionCategory
     startedFromStatus: Task["status"],
     projectName?: string,
   ): Promise<void> {
@@ -1172,8 +1122,9 @@ export class ControlCenterService {
           return;
         }
       } else if (
-        !normalizedErrorLogs ||
-        currentTask.errorLogs === normalizedErrorLogs
+        (!normalizedErrorLogs ||
+          currentTask.errorLogs === normalizedErrorLogs) &&
+        currentTask.errorCategory === errorCategory
       ) {
         return;
       }
@@ -1195,6 +1146,10 @@ export class ControlCenterService {
         status === "FAILED"
           ? (normalizedErrorLogs ?? currentTask.errorLogs)
           : undefined,
+      errorCategory:
+        status === "FAILED"
+          ? (errorCategory ?? currentTask.errorCategory)
+          : undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -1213,10 +1168,11 @@ export class ControlCenterService {
       tasks: nextTasks,
     });
 
-    await engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
   }
 
   async failTaskIfInProgress(input: {
@@ -1272,10 +1228,12 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async resetTaskToTodo(
@@ -1334,9 +1292,11 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 }

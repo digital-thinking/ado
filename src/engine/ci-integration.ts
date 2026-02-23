@@ -1,4 +1,5 @@
 import type { ProcessRunner } from "../process";
+import { MissingCommitError } from "../errors";
 import type { AuthPolicy, Role } from "../security/policy";
 import {
   OrchestrationAuthorizationDeniedError,
@@ -58,9 +59,7 @@ export async function runCiIntegration(
   await git.stageAll(input.cwd);
   const hasChangesToCommit = await git.hasStagedChanges(input.cwd);
   if (!hasChangesToCommit) {
-    throw new Error(
-      "CI integration requires a commit before push/PR, but there are no local changes to commit.",
-    );
+    throw new MissingCommitError();
   }
 
   try {
@@ -70,7 +69,7 @@ export async function runCiIntegration(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
+    throw new MissingCommitError(
       `CI integration could not create commit before push/PR: ${message}`,
     );
   }

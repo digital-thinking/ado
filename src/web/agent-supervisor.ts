@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { resolveCommandForSpawn } from "../process/command-resolver";
+import { AgentFailureError } from "../errors";
 
 type SpawnFn = (
   command: string,
@@ -49,6 +50,7 @@ export type RunAgentResult = {
 export type AgentSupervisorOptions = {
   spawnFn?: SpawnFn;
   registryFilePath?: string;
+  onFailure?: (agent: AgentView) => void | Promise<void>;
 };
 
 export type AssignAgentInput = {
@@ -182,6 +184,7 @@ function parsePersistedAgent(value: unknown): AgentView | null {
 export class AgentSupervisor {
   private readonly spawnFn: SpawnFn;
   private readonly registryFilePath?: string;
+  private readonly onFailure?: (agent: AgentView) => void | Promise<void>;
   private readonly records = new Map<string, AgentRecord>();
   private readonly emitter = new EventEmitter();
 
@@ -197,6 +200,7 @@ export class AgentSupervisor {
 
     this.spawnFn = spawnOrOptions.spawnFn ?? spawn;
     this.registryFilePath = spawnOrOptions.registryFilePath;
+    this.onFailure = spawnOrOptions.onFailure;
   }
 
   subscribe(
@@ -406,6 +410,9 @@ export class AgentSupervisor {
       record.stopRequested = false;
       this.persistRecord(record);
       this.emit({ type: "status", agentId: record.id, status: record.status });
+      if (record.status === "FAILED") {
+        this.onFailure?.(toView(record));
+      }
       options.onClose?.(exitCode, signal);
     });
     child.on("error", (error) => {
@@ -423,6 +430,7 @@ export class AgentSupervisor {
         this.emit({ type: "output", agentId: record.id, line }),
       );
       this.emit({ type: "status", agentId: record.id, status: record.status });
+      this.onFailure?.(toView(record));
       options.onError?.(error);
     });
 
@@ -488,13 +496,19 @@ export class AgentSupervisor {
           );
         },
         onError: (error) => {
-          settle(() => reject(error));
+          settle(() =>
+            reject(
+              new AgentFailureError(
+                `Agent supervisor execution error: ${error.message}`,
+              ),
+            ),
+          );
         },
         onClose: (exitCode) => {
           settle(() => {
             if (timedOut) {
               reject(
-                new Error(
+                new AgentFailureError(
                   `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
                 ),
               );
@@ -503,7 +517,7 @@ export class AgentSupervisor {
 
             if ((exitCode ?? -1) !== 0) {
               reject(
-                new Error(
+                new AgentFailureError(
                   `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
                 ),
               );
@@ -542,6 +556,7 @@ export class AgentSupervisor {
         this.emit({ type: "output", agentId: record.id, line }),
       );
       this.emit({ type: "status", agentId: record.id, status: record.status });
+      this.onFailure?.(toView(record));
     }
     this.persistRecord(record);
 

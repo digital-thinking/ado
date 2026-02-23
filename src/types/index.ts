@@ -241,6 +241,14 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+export const ExceptionCategorySchema = z.enum([
+  "DIRTY_WORKTREE",
+  "MISSING_COMMIT",
+  "AGENT_FAILURE",
+  "UNKNOWN",
+]);
+export type ExceptionCategory = z.infer<typeof ExceptionCategorySchema>;
+
 export const ExceptionRecoveryResultSchema = z
   .object({
     status: z.enum(["fixed", "unfixable"]),
@@ -254,12 +262,7 @@ export type ExceptionRecoveryResult = z.infer<
 >;
 
 export const ExceptionMetadataSchema = z.object({
-  category: z.enum([
-    "DIRTY_WORKTREE",
-    "MISSING_COMMIT",
-    "AGENT_FAILURE",
-    "UNKNOWN",
-  ]),
+  category: ExceptionCategorySchema,
   message: z.string().min(1),
   phaseId: z.string().uuid().optional(),
   taskId: z.string().uuid().optional(),
@@ -285,6 +288,7 @@ export const TaskSchema = z.object({
   dependencies: z.array(z.string().uuid()).default([]),
   resultContext: z.string().optional(),
   errorLogs: z.string().optional(),
+  errorCategory: ExceptionCategorySchema.optional(),
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;

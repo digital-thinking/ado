@@ -1,4 +1,5 @@
 import type { ProcessRunResult, ProcessRunner } from "../process";
+import { AgentFailureError } from "../errors";
 import { CLIAdapterSchema, type CLIAdapter, type CLIAdapterId } from "../types";
 
 export type AdapterRunInput = {
@@ -116,11 +117,16 @@ export abstract class BaseCliAdapter implements TaskAdapter {
       assertNonInteractive(this.id, this.baseArgs, this.nonInteractiveConfig);
     }
 
-    return this.runner.run({
-      command: this.command,
-      args: [...this.baseArgs, input.prompt],
-      cwd: input.cwd,
-      timeoutMs: input.timeoutMs,
-    });
+    try {
+      return await this.runner.run({
+        command: this.command,
+        args: [...this.baseArgs, input.prompt],
+        cwd: input.cwd,
+        timeoutMs: input.timeoutMs,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AgentFailureError(`Adapter ${this.id} failed: ${message}`);
+    }
   }
 }
