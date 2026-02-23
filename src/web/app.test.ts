@@ -780,3 +780,91 @@ describe("multi-project api", () => {
     expect(chunk4?.done).toBe(true);
   });
 });
+
+describe("project tabs frontend (P12-006)", () => {
+  async function getHtml(): Promise<string> {
+    const app = createWebApp({
+      defaultAgentCwd: "/tmp",
+      control: {
+        getState: async () => ({}) as never,
+        createPhase: async () => ({}) as never,
+        createTask: async () => ({}) as never,
+        setActivePhase: async () => ({}) as never,
+        startTask: async () => ({}) as never,
+        resetTaskToTodo: async () => ({}) as never,
+        failTaskIfInProgress: async () => ({}) as never,
+        importFromTasksMarkdown: async () => ({}) as never,
+        runInternalWork: async () => ({}) as never,
+      } as never,
+      agents: {
+        list: () => [],
+        start: () => ({}) as never,
+        assign: () => ({}) as never,
+        kill: () => ({}) as never,
+        restart: () => ({}) as never,
+        subscribe: () => () => {},
+      },
+      usage: { getLatest: async () => ({ available: false }) } as never,
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      availableWorkerAssignees: ["MOCK_CLI"],
+      projectName: "TestProject",
+      getRuntimeConfig: async () => ({
+        defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
+        autoMode: false,
+      }),
+      updateRuntimeConfig: async () => ({
+        defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
+        autoMode: false,
+      }),
+      getProjects: async () => [],
+      getProjectState: async () => ({}) as never,
+      updateProjectSettings: async () => ({}) as never,
+      getGlobalSettings: async () => ({}) as never,
+      updateGlobalSettings: async () => ({}) as never,
+      webLogFilePath: "/tmp/web.log",
+      cliLogFilePath: "/tmp/cli.log",
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    return response.text();
+  }
+
+  test("HTML contains tab strip container element", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="tabStrip"');
+  });
+
+  test("HTML includes renderTabs and switchProject functions for lazy-loading", async () => {
+    const html = await getHtml();
+    expect(html).toContain("renderTabs");
+    expect(html).toContain("switchProject");
+  });
+
+  test("HTML includes + affordance with ixado init guidance", async () => {
+    const html = await getHtml();
+    expect(html).toContain("ixado init");
+  });
+
+  test("HTML polls active tab state every 5 seconds", async () => {
+    const html = await getHtml();
+    expect(html).toContain("5000");
+    expect(html).toContain("refreshActiveProject");
+  });
+
+  test("HTML includes per-tab lazy-load state cache", async () => {
+    const html = await getHtml();
+    expect(html).toContain("projectStateCache");
+  });
+
+  test("HTML shows kanban board as project tab body", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="kanbanBoard"');
+    expect(html).toContain('id="projectContent"');
+  });
+
+  test("HTML contains settings tab alongside project tabs", async () => {
+    const html = await getHtml();
+    expect(html).toContain("tab-settings");
+    expect(html).toContain('id="settingsContent"');
+  });
+});

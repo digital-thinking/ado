@@ -392,7 +392,7 @@ function controlCenterHtml(): string {
 <body>
   <main class="layout">
     <section class="card wide">
-      <h1>IxADO Control Center <span class="pill">Phase 6</span></h1>
+      <h1>IxADO Control Center <span class="pill">Phase 12</span></h1>
       <div class="small">Web log: <span id="webLogPath" class="mono"></span> | CLI log: <span id="cliLogPath" class="mono"></span></div>
     </section>
 
@@ -521,6 +521,7 @@ function controlCenterHtml(): string {
     let projects = [];
     let activeProjectName = INITIAL_PROJECT_NAME;
     let isSettingsActive = false;
+    const projectStateCache = new Map();
 
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
@@ -597,7 +598,22 @@ function controlCenterHtml(): string {
       projectContent.classList.remove("hidden");
       settingsContent.classList.add("hidden");
       renderTabs();
-      await refreshActiveProject();
+      if (!projectStateCache.has(name)) {
+        // First activation: lazy-load from API and populate cache
+        await refreshActiveProject();
+      } else {
+        // Subsequent activation: render from cache immediately (no extra fetch)
+        const cached = projectStateCache.get(name);
+        renderState(cached);
+        renderKanban(cached);
+        const project = projects.find(p => p.name === name);
+        if (project && project.executionSettings) {
+          renderRuntimeConfig({
+            autoMode: project.executionSettings.autoMode,
+            defaultInternalWorkAssignee: project.executionSettings.defaultAssignee,
+          });
+        }
+      }
     }
 
     async function switchSettings() {
@@ -620,19 +636,19 @@ function controlCenterHtml(): string {
     async function refreshActiveProject() {
       if (isSettingsActive) return;
       try {
-        const state = await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/state");
+        const name = activeProjectName;
+        const state = await api("/api/projects/" + encodeURIComponent(name) + "/state");
+        projectStateCache.set(name, state);
         renderState(state);
         renderKanban(state);
-        
-        // Mock runtime config from executionSettings for now
-        const project = projects.find(p => p.name === activeProjectName);
+
+        const project = projects.find(p => p.name === name);
         if (project && project.executionSettings) {
           renderRuntimeConfig({
             autoMode: project.executionSettings.autoMode,
-            defaultInternalWorkAssignee: project.executionSettings.defaultAssignee
+            defaultInternalWorkAssignee: project.executionSettings.defaultAssignee,
           });
         } else {
-          // Fallback to global runtime config
           const config = await api("/api/runtime-config");
           renderRuntimeConfig(config);
         }
@@ -731,7 +747,7 @@ function controlCenterHtml(): string {
       }
 
       const activePhaseId =
-        state.phases.some((phase) => phase.id === activePhaseId)
+        state.phases.some((phase) => phase.id === state.activePhaseId)
           ? state.activePhaseId
           : state.phases[0].id;
       const html = state.phases.map((phase) => {
