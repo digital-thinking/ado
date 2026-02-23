@@ -1,5 +1,10 @@
 import type { ProcessRunner } from "../process";
 import type { AuthPolicy, Role } from "../security/policy";
+import {
+  OrchestrationAuthorizationDeniedError,
+  authorizeOrchestratorAction,
+} from "../security/orchestration-authorizer";
+import { ORCHESTRATOR_ACTIONS } from "../security/workflow-profiles";
 import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 
 export type RunCiIntegrationInput = {
@@ -26,6 +31,18 @@ export async function runCiIntegration(
   const baseBranch = input.baseBranch.trim();
   if (!baseBranch) {
     throw new Error("ciBaseBranch must not be empty.");
+  }
+
+  const decision = await authorizeOrchestratorAction({
+    action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
+    settingsFilePath: "<in-memory-policy>",
+    session: { source: "cli" },
+    roleConfig: {},
+    loadPolicy: async () => input.policy,
+    resolveSessionRole: () => input.role,
+  });
+  if (decision.decision === "deny") {
+    throw new OrchestrationAuthorizationDeniedError(decision);
   }
 
   const git = new GitManager(input.runner);

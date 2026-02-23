@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { AuthorizationDeniedError } from "../security/auth-evaluator";
+import { OrchestrationAuthorizationDeniedError } from "../security/orchestration-authorizer";
 import { MockProcessRunner } from "../vcs/test-utils";
 import { runCiIntegration } from "./ci-integration";
 
@@ -24,7 +24,7 @@ describe("runCiIntegration", () => {
         version: "1",
         roles: {
           owner: { allowlist: ["*"], denylist: [] },
-          admin: { allowlist: ["git:privileged:*"], denylist: [] },
+          admin: { allowlist: ["*"], denylist: [] },
           operator: {
             allowlist: ["status:read"],
             denylist: ["git:privileged:*"],
@@ -77,7 +77,7 @@ describe("runCiIntegration", () => {
           version: "1",
           roles: {
             owner: { allowlist: ["*"], denylist: [] },
-            admin: { allowlist: ["git:privileged:*"], denylist: [] },
+            admin: { allowlist: ["*"], denylist: [] },
             operator: {
               allowlist: ["status:read"],
               denylist: ["git:privileged:*"],
@@ -110,7 +110,7 @@ describe("runCiIntegration", () => {
         version: "1",
         roles: {
           owner: { allowlist: ["*"], denylist: [] },
-          admin: { allowlist: ["git:privileged:*"], denylist: [] },
+          admin: { allowlist: ["*"], denylist: [] },
           operator: {
             allowlist: ["status:read"],
             denylist: ["git:privileged:*"],
@@ -124,10 +124,10 @@ describe("runCiIntegration", () => {
       setPhasePrUrl: async () => {},
     }).catch((error) => error);
 
-    expect(err).toBeInstanceOf(AuthorizationDeniedError);
-    const denied = err as AuthorizationDeniedError;
-    expect(denied.action).toBe("git:privileged:push");
-    expect(denied.reason).toBe("denylist-match");
-    expect(runner.calls).toHaveLength(1);
+    expect(err).toBeInstanceOf(OrchestrationAuthorizationDeniedError);
+    const denied = err as OrchestrationAuthorizationDeniedError;
+    expect(denied.action).toBe("orchestrator:ci-integration:run");
+    expect(denied.reason).toBe("no-allowlist-match");
+    expect(runner.calls).toHaveLength(0);
   });
 });
