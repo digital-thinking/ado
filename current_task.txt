@@ -1,2 +1,1 @@
-Done: P15-004 Refactor CLI command routing to a table-driven registry.
-Next: P15-005 Split web control-center frontend script in src/web/app.ts into focused modules/functions.
+P15-005 — Split web control-center frontend script into focused modules while preserving behavior.
