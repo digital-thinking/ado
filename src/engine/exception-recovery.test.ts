@@ -14,13 +14,16 @@ describe("exception recovery", () => {
   test("classifies dirty tree, commit gap, and agent failure as recoverable", () => {
     const dirty = classifyRecoveryException({
       message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
     });
     const commitGap = classifyRecoveryException({
       message:
         "CI integration requires a commit before push/PR, but there are no local changes to commit.",
+      category: "MISSING_COMMIT",
     });
     const agentFailure = classifyRecoveryException({
       message: "Execution loop stopped after FAILED task #2.",
+      category: "AGENT_FAILURE",
     });
 
     expect(dirty.category).toBe("DIRTY_WORKTREE");
@@ -60,6 +63,7 @@ describe("exception recovery", () => {
   test("returns fixed outcome and structured record", async () => {
     const exception = classifyRecoveryException({
       message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
       phaseId: "11111111-1111-4111-8111-111111111111",
       taskId: "22222222-2222-4222-8222-222222222222",
     });
@@ -86,6 +90,7 @@ describe("exception recovery", () => {
   test("returns unfixable and denies when role lacks permissions", async () => {
     const exception = classifyRecoveryException({
       message: "Execution loop stopped after FAILED task #2.",
+      category: "AGENT_FAILURE",
     });
 
     const unfixable = await runExceptionRecovery({

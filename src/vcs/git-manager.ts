@@ -1,4 +1,5 @@
 import type { ProcessRunner } from "../process";
+import { DirtyWorktreeError } from "../errors";
 
 export type CreateBranchInput = {
   branchName: string;
@@ -78,7 +79,7 @@ export class GitManager {
       .filter((line) => !isIgnoredRuntimeArtifact(line));
 
     if (dirtyEntries.length > 0) {
-      throw new Error("Git working tree is not clean.");
+      throw new DirtyWorktreeError();
     }
   }
 

@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { resolveCommandForSpawn } from "../process/command-resolver";
+import { AgentFailureError } from "../errors";
 
 type SpawnFn = (
   command: string,
@@ -488,13 +489,19 @@ export class AgentSupervisor {
           );
         },
         onError: (error) => {
-          settle(() => reject(error));
+          settle(() =>
+            reject(
+              new AgentFailureError(
+                `Agent supervisor execution error: ${error.message}`,
+              ),
+            ),
+          );
         },
         onClose: (exitCode) => {
           settle(() => {
             if (timedOut) {
               reject(
-                new Error(
+                new AgentFailureError(
                   `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
                 ),
               );
@@ -503,7 +510,7 @@ export class AgentSupervisor {
 
             if ((exitCode ?? -1) !== 0) {
               reject(
-                new Error(
+                new AgentFailureError(
                   `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
                 ),
               );

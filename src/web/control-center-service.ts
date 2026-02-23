@@ -550,7 +550,9 @@ export class ControlCenterService {
       (dependencyId) => !knownTaskIds.has(dependencyId),
     );
     if (missingDependency) {
-      throw new Error(`Task has invalid dependency reference: ${missingDependency}`);
+      throw new Error(
+        `Task has invalid dependency reference: ${missingDependency}`,
+      );
     }
 
     const updatedTask = TaskSchema.parse({
@@ -1097,6 +1099,7 @@ export class ControlCenterService {
           "DONE",
           combinedResult || "Task finished without textual output.",
           undefined,
+          undefined,
           input.startedFromStatus,
           input.projectName,
         );
@@ -1111,6 +1114,7 @@ export class ControlCenterService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const category = (error as any).category;
       try {
         await this.updateTaskResult(
           input.phaseId,
@@ -1118,6 +1122,7 @@ export class ControlCenterService {
           "FAILED",
           undefined,
           message,
+          category,
           input.startedFromStatus,
           input.projectName,
         );
@@ -1139,6 +1144,7 @@ export class ControlCenterService {
     status: "DONE" | "FAILED",
     resultContext: string | undefined,
     errorLogs: string | undefined,
+    errorCategory: any, // Use any for now or import ExceptionCategory
     startedFromStatus: Task["status"],
     projectName?: string,
   ): Promise<void> {
@@ -1172,8 +1178,9 @@ export class ControlCenterService {
           return;
         }
       } else if (
-        !normalizedErrorLogs ||
-        currentTask.errorLogs === normalizedErrorLogs
+        (!normalizedErrorLogs ||
+          currentTask.errorLogs === normalizedErrorLogs) &&
+        currentTask.errorCategory === errorCategory
       ) {
         return;
       }
@@ -1194,6 +1201,10 @@ export class ControlCenterService {
       errorLogs:
         status === "FAILED"
           ? (normalizedErrorLogs ?? currentTask.errorLogs)
+          : undefined,
+      errorCategory:
+        status === "FAILED"
+          ? (errorCategory ?? currentTask.errorCategory)
           : undefined,
     });
 

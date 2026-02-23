@@ -139,11 +139,13 @@ export class PhaseRunner {
         break;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const category = (error as any).category;
         try {
           await this.attemptExceptionRecovery({
             phaseId: phase.id,
             phaseName: phase.name,
             errorMessage: message,
+            category,
           });
           console.info(
             "Execution loop: recovery succeeded for branching preconditions, retrying.",
@@ -305,6 +307,7 @@ Recovery: ${recoveryMessage}`,
           taskId: resultTask.id,
           taskTitle: resultTask.title,
           errorMessage: failureMessage,
+          category: resultTask.errorCategory,
         });
         console.info(
           `Execution loop: recovery fixed ${nextTaskLabel}, retrying task.`,
@@ -421,6 +424,7 @@ ${testerResult.fixTaskDescription}`.trim(),
         break;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const category = (error as any).category;
         if (ciAttempt > this.config.maxRecoveryAttempts) {
           throw error;
         }
@@ -428,6 +432,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           phaseId: phase.id,
           phaseName: phase.name,
           errorMessage: message,
+          category,
         });
         console.info(
           `Execution loop: recovery fixed CI integration precondition, retrying CI integration (attempt ${ciAttempt + 1}).`,
@@ -531,9 +536,11 @@ ${testerResult.fixTaskDescription}`.trim(),
     taskId?: string;
     taskTitle?: string;
     errorMessage: string;
+    category?: any;
   }): Promise<void> {
     const exception = classifyRecoveryException({
       message: input.errorMessage,
+      category: input.category,
       phaseId: input.phaseId,
       taskId: input.taskId,
     });

@@ -18,6 +18,7 @@ import {
 
 export function classifyRecoveryException(input: {
   message: string;
+  category?: ExceptionMetadata["category"];
   phaseId?: string;
   taskId?: string;
 }): ExceptionMetadata {
@@ -26,16 +27,7 @@ export function classifyRecoveryException(input: {
     throw new Error("Recovery exception message must not be empty.");
   }
 
-  const lower = message.toLowerCase();
-  const category = lower.includes("working tree is not clean")
-    ? "DIRTY_WORKTREE"
-    : lower.includes("requires a commit before push/pr") ||
-        lower.includes("could not create commit before push/pr")
-      ? "MISSING_COMMIT"
-      : lower.includes("adapter") ||
-          lower.includes("execution loop stopped after failed task")
-        ? "AGENT_FAILURE"
-        : "UNKNOWN";
+  const category = input.category ?? "UNKNOWN";
 
   return ExceptionMetadataSchema.parse({
     category,
