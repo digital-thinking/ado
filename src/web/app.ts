@@ -1100,34 +1100,34 @@ function controlCenterHtml(): string {
 
         const row = document.createElement("tr");
         row.innerHTML = \`
-          <td>\${projectName}</td>
-          <td>\${agent.name}<div class="small mono">\${agent.command} \${agent.args.join(" ")}</div></td>
-          <td>\${agent.status}</td>
-          <td>\${pid}</td>
-          <td class="mono">\${taskName}</td>
+          <td>\${escapeHtml(projectName)}</td>
+          <td>\${escapeHtml(agent.name)}<div class="small mono">\${escapeHtml(agent.command)} \${escapeHtml(agent.args.join(" "))}</div></td>
+          <td>\${escapeHtml(agent.status)}</td>
+          <td>\${escapeHtml(String(pid))}</td>
+          <td class="mono">\${escapeHtml(String(taskName))}</td>
           <td>
             <div class="row">
-              <button data-action="show-logs" data-id="\${agent.id}" class="secondary">Logs</button>
-              <button data-action="kill" data-id="\${agent.id}" class="secondary">Kill</button>
-              <button data-action="restart" data-id="\${agent.id}" class="secondary">Restart</button>
+              <button data-action="show-logs" data-id="\${escapeHtml(agent.id)}" class="secondary">Logs</button>
+              <button data-action="kill" data-id="\${escapeHtml(agent.id)}" class="secondary">Kill</button>
+              <button data-action="restart" data-id="\${escapeHtml(agent.id)}" class="secondary">Restart</button>
             </div>
           </td>
-          <td><div class="mono small">\${(agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ")}</div></td>
+          <td><div class="mono small">\${escapeHtml((agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | "))}</div></td>
         \`;
         agentTableBody.appendChild(row);
 
         const topRow = document.createElement("tr");
         topRow.innerHTML = \`
-          <td>\${projectName}</td>
-          <td title="\${agent.command} \${agent.args.join(" ")}">\${agent.name}</td>
-          <td class="mono">\${taskName}</td>
-          <td>\${agent.status}</td>
-          <td>\${pid}</td>
+          <td>\${escapeHtml(projectName)}</td>
+          <td title="\${escapeHtml(agent.command)} \${escapeHtml(agent.args.join(" "))}">\${escapeHtml(agent.name)}</td>
+          <td class="mono">\${escapeHtml(String(taskName))}</td>
+          <td>\${escapeHtml(agent.status)}</td>
+          <td>\${escapeHtml(String(pid))}</td>
           <td>
             <div class="row">
-              <button data-action="show-logs" data-id="\${agent.id}" class="secondary small">Logs</button>
-              <button data-action="kill" data-id="\${agent.id}" class="secondary small">Kill</button>
-              <button data-action="restart" data-id="\${agent.id}" class="secondary small">Restart</button>
+              <button data-action="show-logs" data-id="\${escapeHtml(agent.id)}" class="secondary small">Logs</button>
+              <button data-action="kill" data-id="\${escapeHtml(agent.id)}" class="secondary small">Kill</button>
+              <button data-action="restart" data-id="\${escapeHtml(agent.id)}" class="secondary small">Restart</button>
             </div>
           </td>
         \`;
@@ -1150,24 +1150,6 @@ function controlCenterHtml(): string {
       setError("agentError", message);
       setError("topBarAgentError", message);
     }
-
-    document.getElementById("phaseForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      setError("phaseError", "");
-      try {
-        await api("/api/phases", {
-          method: "POST",
-          body: JSON.stringify({
-            projectName: activeProjectName,
-            name: document.getElementById("phaseName").value,
-            branchName: document.getElementById("phaseBranch").value,
-          }),
-        });
-        await refreshActiveProject();
-      } catch (error) {
-        setError("phaseError", error.message);
-      }
-    });
 
     runtimeSettingsForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1623,6 +1605,7 @@ export function createWebApp(deps: WebAppDependencies): {
           const state = await deps.control.createPhase({
             name: asString(body.name) ?? "",
             branchName: asString(body.branchName) ?? "",
+            projectName: asString(body.projectName),
           });
           return json(state, 201);
         }
@@ -1634,6 +1617,7 @@ export function createWebApp(deps: WebAppDependencies): {
           const body = await readJson(request);
           const state = await deps.control.setActivePhase({
             phaseId: asString(body.phaseId) ?? "",
+            projectName: asString(body.projectName),
           });
           return json(state, 200);
         }
@@ -1659,6 +1643,7 @@ export function createWebApp(deps: WebAppDependencies): {
               | "CLAUDE_CLI"
               | undefined,
             dependencies,
+            projectName: asString(body.projectName),
           });
           return json(state, 201);
         }
@@ -1677,6 +1662,7 @@ export function createWebApp(deps: WebAppDependencies): {
             phaseId: asString(body.phaseId) ?? "",
             taskId: asString(body.taskId) ?? "",
             assignee,
+            projectName: asString(body.projectName),
           });
           return json(state, 202);
         }
@@ -1686,6 +1672,7 @@ export function createWebApp(deps: WebAppDependencies): {
           const state = await deps.control.resetTaskToTodo({
             phaseId: asString(body.phaseId) ?? "",
             taskId: asString(body.taskId) ?? "",
+            projectName: asString(body.projectName),
           });
           return json(state, 200);
         }
@@ -1707,7 +1694,10 @@ export function createWebApp(deps: WebAppDependencies): {
           ensureAllowedAssignee(assignee, deps.availableWorkerAssignees);
 
           return json(
-            await deps.control.importFromTasksMarkdown(assignee),
+            await deps.control.importFromTasksMarkdown(
+              assignee,
+              asString(body.projectName) ?? undefined,
+            ),
             200,
           );
         }

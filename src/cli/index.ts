@@ -1065,7 +1065,7 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
     settings,
     projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
 
   const mode = resolvePhaseRunMode(args[2], settings.executionLoop.autoMode);
   const countdownSeconds = resolveCountdownSeconds(
@@ -1502,7 +1502,7 @@ async function runStatusCommand(): Promise<void> {
     settings,
     projectName,
   );
-  await control.ensureInitialized("IxADO", projectRootDir);
+  await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.getState();
   const activePhase = state.phases.find(
     (phase) => phase.id === state.activePhaseId,
