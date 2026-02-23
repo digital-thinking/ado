@@ -12,6 +12,7 @@
  */
 
 import { AuthorizationDeniedError, evaluate } from "../security/auth-evaluator";
+import { appendAuditLog, computeCommandHash } from "../security/audit-log";
 import { ACTIONS, type AuthPolicy, type Role } from "../security/policy";
 import {
   GitManager,
@@ -36,6 +37,8 @@ export type PrivilegedGitActionsOptions = {
   role: Role | null;
   /** The loaded AuthPolicy to evaluate against. */
   policy: AuthPolicy;
+  /** Session actor identifier used for audit logging. */
+  actor?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -47,12 +50,49 @@ export class PrivilegedGitActions {
   private readonly github: GitHubManager;
   private readonly role: Role | null;
   private readonly policy: AuthPolicy;
+  private readonly actor: string;
 
   constructor(options: PrivilegedGitActionsOptions) {
     this.git = options.git;
     this.github = options.github;
     this.role = options.role;
     this.policy = options.policy;
+    this.actor = options.actor ?? "system:unknown";
+  }
+
+  private async logAuthorizationDecision(input: {
+    action: string;
+    target: string;
+    decision: "allow" | "deny";
+    reason: string;
+  }): Promise<void> {
+    await appendAuditLog(process.cwd(), {
+      actor: this.actor,
+      role: this.role,
+      action: input.action,
+      target: input.target,
+      decision: input.decision,
+      reason: input.reason,
+      commandHash: computeCommandHash(`${input.action} ${input.target}`),
+    });
+  }
+
+  private async logPrivilegedCommand(input: {
+    action: string;
+    target: string;
+    command: string;
+    decision: "allow" | "deny";
+    reason: string;
+  }): Promise<void> {
+    await appendAuditLog(process.cwd(), {
+      actor: this.actor,
+      role: this.role,
+      action: input.action,
+      target: input.target,
+      decision: input.decision,
+      reason: input.reason,
+      commandHash: computeCommandHash(input.command),
+    });
   }
 
   // ── Private guard ─────────────────────────────────────────────────────────
@@ -62,42 +102,108 @@ export class PrivilegedGitActions {
    * Throws `AuthorizationDeniedError` on any deny decision.
    * Synchronous — authorization completes before any I/O starts.
    */
-  private assertAuthorized(action: string): void {
+  private async assertAuthorized(
+    action: string,
+    target: string,
+  ): Promise<void> {
     const decision = evaluate(this.role, action, this.policy);
     if (decision.decision === "deny") {
+      await this.logAuthorizationDecision({
+        action,
+        target,
+        decision: "deny",
+        reason: decision.reason,
+      });
       throw new AuthorizationDeniedError(decision);
     }
+
+    await this.logAuthorizationDecision({
+      action,
+      target,
+      decision: "allow",
+      reason: `matched:${decision.matchedPattern}`,
+    });
   }
 
   // ── Public gated operations ───────────────────────────────────────────────
 
   /** Creates a git branch. Requires `git:privileged:branch-create`. */
   async createBranch(input: CreateBranchInput): Promise<void> {
-    this.assertAuthorized(ACTIONS.GIT_BRANCH_CREATE);
-    return this.git.createBranch(input);
+    const target = `branch:${input.branchName}`;
+    const command = `git checkout -b ${input.branchName} ${input.fromRef ?? "HEAD"}`;
+    await this.assertAuthorized(ACTIONS.GIT_BRANCH_CREATE, target);
+    await this.git.createBranch(input);
+    await this.logPrivilegedCommand({
+      action: ACTIONS.GIT_BRANCH_CREATE,
+      target,
+      command,
+      decision: "allow",
+      reason: "executed",
+    });
   }
 
   /** Rebases the current branch onto `onto`. Requires `git:privileged:rebase`. */
   async rebase(input: RebaseInput): Promise<void> {
-    this.assertAuthorized(ACTIONS.GIT_REBASE);
-    return this.git.rebase(input);
+    const target = `ref:${input.onto}`;
+    const command = `git rebase ${input.onto}`;
+    await this.assertAuthorized(ACTIONS.GIT_REBASE, target);
+    await this.git.rebase(input);
+    await this.logPrivilegedCommand({
+      action: ACTIONS.GIT_REBASE,
+      target,
+      command,
+      decision: "allow",
+      reason: "executed",
+    });
   }
 
   /** Pushes a branch to the remote. Requires `git:privileged:push`. */
   async pushBranch(input: PushBranchInput): Promise<void> {
-    this.assertAuthorized(ACTIONS.GIT_PUSH);
-    return this.git.pushBranch(input);
+    const remote = input.remote ?? "origin";
+    const upstreamFlag = (input.setUpstream ?? true) ? "-u " : "";
+    const target = `branch:${input.branchName}@${remote}`;
+    const command =
+      `git push ${upstreamFlag}${remote} ${input.branchName}`.trim();
+    await this.assertAuthorized(ACTIONS.GIT_PUSH, target);
+    await this.git.pushBranch(input);
+    await this.logPrivilegedCommand({
+      action: ACTIONS.GIT_PUSH,
+      target,
+      command,
+      decision: "allow",
+      reason: "executed",
+    });
   }
 
   /** Creates a pull request and returns its URL. Requires `git:privileged:pr-open`. */
   async createPullRequest(input: CreatePullRequestInput): Promise<string> {
-    this.assertAuthorized(ACTIONS.GIT_PR_OPEN);
-    return this.github.createPullRequest(input);
+    const target = `pr:${input.head}->${input.base}`;
+    const command = `gh pr create --base ${input.base} --head ${input.head}`;
+    await this.assertAuthorized(ACTIONS.GIT_PR_OPEN, target);
+    const url = await this.github.createPullRequest(input);
+    await this.logPrivilegedCommand({
+      action: ACTIONS.GIT_PR_OPEN,
+      target,
+      command,
+      decision: "allow",
+      reason: "executed",
+    });
+    return url;
   }
 
   /** Merges a pull request. Requires `git:privileged:pr-merge`. */
   async mergePullRequest(input: MergePullRequestInput): Promise<void> {
-    this.assertAuthorized(ACTIONS.GIT_PR_MERGE);
-    return this.github.mergePullRequest(input);
+    const mergeMethod = input.mergeMethod ?? "merge";
+    const target = `pr:${input.prNumber}`;
+    const command = `gh pr merge ${input.prNumber} --${mergeMethod} --auto`;
+    await this.assertAuthorized(ACTIONS.GIT_PR_MERGE, target);
+    await this.github.mergePullRequest(input);
+    await this.logPrivilegedCommand({
+      action: ACTIONS.GIT_PR_MERGE,
+      target,
+      command,
+      decision: "allow",
+      reason: "executed",
+    });
   }
 }

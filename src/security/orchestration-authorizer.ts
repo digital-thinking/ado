@@ -1,4 +1,5 @@
 import { evaluate, type DenyReason } from "./auth-evaluator";
+import { appendAuditLog, computeCommandHash } from "./audit-log";
 import { loadAuthPolicy } from "./policy-loader";
 import type { AuthPolicy, Role } from "./policy";
 import {
@@ -34,6 +35,32 @@ export type OrchestrationAuthorizationDecision =
       message: string;
     };
 
+function actorFromSession(session: SessionContext): string {
+  if (session.source === "telegram") {
+    return `telegram:${session.userId}`;
+  }
+  return "cli:local";
+}
+
+async function logAuthorizationDecision(input: {
+  session: SessionContext;
+  role: Role | null;
+  action: string;
+  decision: "allow" | "deny";
+  reason: string;
+}): Promise<void> {
+  const command = `authorize ${input.action}`;
+  await appendAuditLog(process.cwd(), {
+    actor: actorFromSession(input.session),
+    role: input.role,
+    action: input.action,
+    target: "orchestrator",
+    decision: input.decision,
+    reason: input.reason,
+    commandHash: computeCommandHash(command),
+  });
+}
+
 export async function authorizeOrchestratorAction(input: {
   action: OrchestratorAction;
   settingsFilePath: string;
@@ -51,6 +78,13 @@ export async function authorizeOrchestratorAction(input: {
     policy = await (input.loadPolicy ?? loadAuthPolicy)(input.settingsFilePath);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    await logAuthorizationDecision({
+      session: input.session,
+      role: null,
+      action: input.action,
+      decision: "deny",
+      reason: "policy-load-failed",
+    });
     return {
       decision: "deny",
       action: input.action,
@@ -68,6 +102,13 @@ export async function authorizeOrchestratorAction(input: {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    await logAuthorizationDecision({
+      session: input.session,
+      role: null,
+      action: input.action,
+      decision: "deny",
+      reason: "role-resolution-failed",
+    });
     return {
       decision: "deny",
       action: input.action,
@@ -78,6 +119,13 @@ export async function authorizeOrchestratorAction(input: {
   }
 
   if (role === null) {
+    await logAuthorizationDecision({
+      session: input.session,
+      role,
+      action: input.action,
+      decision: "deny",
+      reason: "role-resolution-failed",
+    });
     return {
       decision: "deny",
       action: input.action,
@@ -88,6 +136,13 @@ export async function authorizeOrchestratorAction(input: {
   }
 
   if (!(input.action in ORCHESTRATOR_ACTION_PROFILE_MAP)) {
+    await logAuthorizationDecision({
+      session: input.session,
+      role,
+      action: input.action,
+      decision: "deny",
+      reason: "missing-action-mapping",
+    });
     return {
       decision: "deny",
       action: input.action,
@@ -104,6 +159,13 @@ export async function authorizeOrchestratorAction(input: {
     for (const requiredAction of requiredActions) {
       const evaluated = evaluate(role, requiredAction, policy);
       if (evaluated.decision === "deny") {
+        await logAuthorizationDecision({
+          session: input.session,
+          role,
+          action: requiredAction,
+          decision: "deny",
+          reason: evaluated.reason,
+        });
         return {
           decision: "deny",
           action: input.action,
@@ -112,9 +174,23 @@ export async function authorizeOrchestratorAction(input: {
           message: `Authorization denied for '${input.action}' via required action '${requiredAction}' [reason: ${evaluated.reason}]`,
         };
       }
+      await logAuthorizationDecision({
+        session: input.session,
+        role,
+        action: requiredAction,
+        decision: "allow",
+        reason: `matched:${evaluated.matchedPattern}`,
+      });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    await logAuthorizationDecision({
+      session: input.session,
+      role,
+      action: input.action,
+      decision: "deny",
+      reason: "evaluator-error",
+    });
     return {
       decision: "deny",
       action: input.action,
