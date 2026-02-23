@@ -10,6 +10,8 @@ import type { CLIAdapterId, CliAgentSettings } from "../types";
 const WEB_READY_TIMEOUT_MS = 10_000;
 const WEB_STOP_TIMEOUT_MS = 10_000;
 const WEB_POLL_INTERVAL_MS = 100;
+const WEB_START_ERROR_LOG_LINE_COUNT = 12;
+const WEB_START_MARKER = "Starting web control center daemon.";
 
 export type WebRuntimeRecord = {
   pid: number;
@@ -189,9 +191,12 @@ export async function writeWebRuntimeRecord(
 
 async function waitForWebRuntimeRecord(
   runtimeFilePath: string,
-  expectedPid: number
+  expectedPid: number,
+  logFilePath: string,
+  startupMarkerLine: string
 ): Promise<WebRuntimeRecord> {
   const deadline = Date.now() + WEB_READY_TIMEOUT_MS;
+  let exitedBeforeStartup = false;
 
   while (Date.now() <= deadline) {
     const runtime = await readWebRuntimeRecord(runtimeFilePath);
@@ -200,13 +205,86 @@ async function waitForWebRuntimeRecord(
     }
 
     if (!isProcessRunning(expectedPid)) {
+      exitedBeforeStartup = true;
       break;
     }
 
     await sleep(WEB_POLL_INTERVAL_MS);
   }
 
-  throw new Error("Web control center failed to start in time.");
+  const baseMessage = exitedBeforeStartup
+    ? "Web control center process exited before startup completed."
+    : "Web control center failed to start in time.";
+  const logTail = await readWebLogTail(
+    logFilePath,
+    WEB_START_ERROR_LOG_LINE_COUNT,
+    startupMarkerLine
+  );
+  if (!logTail) {
+    throw new Error(`${baseMessage}\nLogs: ${logFilePath}`);
+  }
+
+  const childStartupFailure = extractChildStartupFailureMessage(logTail);
+  if (childStartupFailure) {
+    throw new Error(`${baseMessage}\nCause: ${childStartupFailure}\nLogs: ${logFilePath}`);
+  }
+
+  throw new Error(
+    `${baseMessage}\nRecent web log output:\n${logTail}\nLogs: ${logFilePath}`
+  );
+}
+
+async function readWebLogTail(
+  logFilePath: string,
+  maxLines: number,
+  startupMarkerLine: string
+): Promise<string | null> {
+  let raw: string;
+  try {
+    raw = await readFile(logFilePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const startupIndex = lines.lastIndexOf(startupMarkerLine);
+  const scopedLines = startupIndex >= 0 ? lines.slice(startupIndex + 1) : lines;
+  if (scopedLines.length === 0) {
+    return null;
+  }
+
+  return scopedLines.slice(-Math.max(maxLines, 1)).join("\n");
+}
+
+function extractChildStartupFailureMessage(logTail: string): string | null {
+  const lines = logTail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line) {
+      continue;
+    }
+    const markerIndex = line.indexOf("Startup failed:");
+    if (markerIndex >= 0) {
+      const message = line.slice(markerIndex + "Startup failed:".length).trim();
+      return message || null;
+    }
+  }
+
+  return null;
 }
 
 async function waitForProcessStop(pid: number): Promise<void> {
@@ -246,9 +324,10 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
   }
 
   await mkdir(dirname(logFilePath), { recursive: true });
+  const startupMarkerLine = `[${new Date().toISOString()}] ${WEB_START_MARKER}`;
   await appendFile(
     logFilePath,
-    `[${new Date().toISOString()}] Starting web control center daemon.\n`,
+    `${startupMarkerLine}\n`,
     "utf8"
   );
 
@@ -281,7 +360,12 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
   }
 
   child.unref();
-  return waitForWebRuntimeRecord(runtimeFilePath, child.pid);
+  return waitForWebRuntimeRecord(
+    runtimeFilePath,
+    child.pid,
+    logFilePath,
+    startupMarkerLine
+  );
 }
 
 export function buildWebDaemonSpawnArgs(entryScriptPath: string, port?: number): string[] {

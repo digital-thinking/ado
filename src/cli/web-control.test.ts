@@ -1,6 +1,7 @@
+import { createServer } from "node:net";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -10,6 +11,7 @@ import {
   resolveWebLogFilePath,
   readWebRuntimeRecord,
   resolveWebRuntimeFilePath,
+  startWebDaemon,
   stopWebDaemon,
   writeWebRuntimeRecord,
   type WebRuntimeRecord,
@@ -176,5 +178,36 @@ describe("web-control helpers", () => {
       "serve",
       "8787",
     ]);
+  });
+
+  test("startWebDaemon includes startup error details when child exits", async () => {
+    const holder = createServer();
+    const occupiedPort = await new Promise<number>((resolvePort, rejectPort) => {
+      holder.once("error", rejectPort);
+      holder.listen(0, "127.0.0.1", () => {
+        const address = holder.address();
+        if (!address || typeof address === "string") {
+          rejectPort(new Error("Failed to resolve occupied test port."));
+          return;
+        }
+        resolvePort(address.port);
+      });
+    });
+
+    try {
+      await expect(
+        startWebDaemon({
+          cwd: sandboxDir,
+          stateFilePath: join(sandboxDir, "state.json"),
+          projectName: "IxADO",
+          entryScriptPath: resolve("src/cli/index.ts"),
+          port: occupiedPort,
+        }),
+      ).rejects.toThrow("Cause: Failed to start server. Is port");
+    } finally {
+      await new Promise<void>((resolveClose) => {
+        holder.close(() => resolveClose());
+      });
+    }
   });
 });
