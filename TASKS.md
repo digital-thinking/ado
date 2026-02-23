@@ -156,8 +156,8 @@ Restructure the web UI around multi-project navigation: a persistent **Control C
 
 ## Phase 15: Architecture Refactor & Technical Debt Burn-Down
 
-- [ ] `P15-001` Extract phase-run orchestration from `src/cli/index.ts` into a dedicated runner module (`src/engine/phase-runner.ts`) with single-responsibility steps for branch preparation, task execution, recovery handling, tester/fixer loop, and CI integration. Keep CLI command wiring thin. **Status: InProgress**. Deps: `P14-009`.
-- [ ] `P15-002` Replace message-string recovery classification with typed exception codes emitted by core flows (dirty worktree, missing commit, adapter failure) and consumed by recovery orchestrator. Remove brittle `message.includes(...)` matching. Deps: `P15-001`.
+- [x] `P15-001` Extract phase-run orchestration from `src/cli/index.ts` into a dedicated runner module (`src/engine/phase-runner.ts`) with single-responsibility steps for branch preparation, task execution, recovery handling, tester/fixer loop, and CI integration. Keep CLI command wiring thin. **Status: Done**. Deps: `P14-009`.
+- [ ] `P15-002` Replace message-string recovery classification with typed exception codes emitted by core flows (dirty worktree, missing commit, adapter failure) and consumed by recovery orchestrator. Remove brittle `message.includes(...)` matching. **Status: InProgress**. Deps: `P15-001`.
 - [ ] `P15-003` Introduce a shared strict JSON extraction/parser utility for model outputs in `src/engine/` and reuse it across recovery and TASKS.md import paths to remove duplicated extraction logic and keep one contract-compliant parser path. Deps: `P15-001`.
 - [ ] `P15-004` Refactor CLI command routing (`task`, `phase`, `config`) to a table-driven command registry with centralized usage/help rendering and argument validation to reduce branching duplication and improve help consistency. Deps: `P15-001`.
 - [ ] `P15-005` Split web control-center frontend script in `src/web/app.ts` into focused modules/functions (settings, agents, kanban, runtime/project tabs, API client) while preserving current behavior and endpoints. Deps: `P15-001`.

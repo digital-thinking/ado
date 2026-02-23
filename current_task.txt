@@ -1,1 +1,1 @@
-P15-001 — Extract phase-run orchestration into a dedicated runner module (`src/engine/phase-runner.ts`).
+P15-002 — Replace message-string recovery classification with typed exception codes.
