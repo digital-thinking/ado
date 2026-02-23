@@ -23,6 +23,7 @@ import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
+import { generateCompletionScript, parseCompletionShell } from "./completion";
 import {
   getAvailableAgents,
   loadCliSettings,
@@ -512,6 +513,9 @@ function printHelp(): void {
     "  ixado web start [port]   Start local web control center in background",
   );
   console.info("  ixado web stop           Stop local web control center");
+  console.info(
+    "  ixado completion <bash|zsh|fish>  Generate shell completion script",
+  );
   console.info("  ixado help      Show this help");
 }
 
@@ -1672,6 +1676,12 @@ async function runConfigCommand(args: string[]): Promise<void> {
   );
 }
 
+async function runCompletionCommand(args: string[]): Promise<void> {
+  const shell = parseCompletionShell(args[1]);
+  const script = generateCompletionScript(shell);
+  process.stdout.write(script);
+}
+
 async function runCli(args: string[]): Promise<void> {
   const command = args[0];
 
@@ -1722,6 +1732,11 @@ async function runCli(args: string[]): Promise<void> {
 
   if (command === "config") {
     await runConfigCommand(args);
+    return;
+  }
+
+  if (command === "completion") {
+    await runCompletionCommand(args);
     return;
   }
 
