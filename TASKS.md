@@ -165,3 +165,14 @@ Restructure the web UI around multi-project navigation: a persistent **Control C
 - [ ] `P15-007` Extract repeated CLI integration-test harness utilities (spawn wrapper, temp project/bootstrap helpers) into shared test helpers and migrate existing CLI command tests to those helpers. Deps: `P15-004`.
 - [ ] `P15-008` Add targeted non-regression tests for refactors: phase-run happy path + recovery fallback, typed error classification coverage, JSON-parser utility coverage, command help/usage snapshots, and `/api/agents` enrichment behavior under multi-project polling. Deps: `P15-002`, `P15-003`, `P15-004`, `P15-006`, `P15-007`.
 - [ ] `P15-009` Create PR Task: open Phase 15 PR after coding tasks are done. Deps: `P15-008`.
+
+## Phase 16: Runtime Stability Refactor (BUGS.md)
+
+- [ ] `P16-001` Refactor CLI logging initialization to guarantee writable default log paths under project-owned `.ixado/` (create parent dirs if missing) and fail fast with actionable error if explicit env override paths are invalid/unwritable. Remove startup `EACCES` on `ixado status` with default env. Deps: `P15-009`.
+- [ ] `P16-002` Add regression tests for CLI startup logging behavior: default env path boot success, explicit unwritable override failure, and explicit writable override success. Deps: `P16-001`.
+- [ ] `P16-003` Refactor clean-worktree gate to ignore IxADO-owned runtime artifacts (`.ixado/` transient files) while still failing on real source changes. Keep a single-path dirty check contract in `GitManager`. Deps: `P15-009`.
+- [ ] `P16-004` Add regression tests for clean-tree detection: untracked `.ixado/` must not block `phase run`; untracked/modified tracked source files must still block with `DIRTY_WORKTREE`. Deps: `P16-003`.
+- [ ] `P16-005` Refactor `CodexAdapter` command construction to remove hardcoded `--dangerously-bypass-approvals-and-sandbox` from recovery execution path; gate bypass flags behind explicit config and default to policy-compliant safe mode. Deps: `P15-009`.
+- [ ] `P16-006` Add adapter/recovery tests proving safe-mode defaults work in restricted environments and bypass mode is only used when explicitly enabled. Deps: `P16-005`.
+- [ ] `P16-007` Add integration tests for end-to-end exception recovery flow (`DIRTY_WORKTREE` trigger) verifying recovery invocation command is policy-compliant and retries do not exhaust due to forced bypass args. Deps: `P16-004`, `P16-006`.
+- [ ] `P16-008` Create PR Task: open Phase 16 PR after coding tasks are done. Deps: `P16-002`, `P16-007`.
