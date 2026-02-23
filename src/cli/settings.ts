@@ -161,6 +161,44 @@ function mergeCliSettings(
   });
 }
 
+function migrateRuntimeConfigToActiveProject(settings: CliSettings): {
+  settings: CliSettings;
+  migrated: boolean;
+} {
+  const activeProjectName = settings.activeProject;
+  if (!activeProjectName) {
+    return { settings, migrated: false };
+  }
+
+  let migrated = false;
+  const projects = settings.projects.map((project) => {
+    if (project.name !== activeProjectName || project.executionSettings) {
+      return project;
+    }
+
+    migrated = true;
+    return {
+      ...project,
+      executionSettings: {
+        autoMode: settings.executionLoop.autoMode,
+        defaultAssignee: settings.internalWork.assignee,
+      },
+    };
+  });
+
+  if (!migrated) {
+    return { settings, migrated: false };
+  }
+
+  return {
+    settings: {
+      ...settings,
+      projects,
+    },
+    migrated: true,
+  };
+}
+
 export async function loadCliSettings(
   settingsFilePath: string,
 ): Promise<CliSettings> {
@@ -177,6 +215,12 @@ export async function loadCliSettings(
   }
   if (localOverride) {
     settings = mergeCliSettings(settings, localOverride);
+  }
+
+  const migration = migrateRuntimeConfigToActiveProject(settings);
+  if (migration.migrated) {
+    settings = migration.settings;
+    await saveCliSettings(globalSettingsFilePath, settings);
   }
 
   return settings;
