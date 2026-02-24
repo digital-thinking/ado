@@ -53,7 +53,7 @@ export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
 
 export const ExecutionLoopSettingsSchema = z.object({
   autoMode: z.boolean().default(false),
-  countdownSeconds: z.number().int().min(1).max(3_600).default(10),
+  countdownSeconds: z.number().int().min(0).max(3_600).default(10),
   testerCommand: z.string().min(1).nullable().default(null),
   testerArgs: z.array(z.string()).min(1).nullable().default(null),
   testerTimeoutMs: z.number().int().positive().default(600_000),
@@ -186,7 +186,7 @@ const CliAgentSettingsOverrideSchema = z.object({
 
 const ExecutionLoopSettingsOverrideSchema = z.object({
   autoMode: z.boolean().optional(),
-  countdownSeconds: z.number().int().min(1).max(3_600).optional(),
+  countdownSeconds: z.number().int().min(0).max(3_600).optional(),
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),
   testerTimeoutMs: z.number().int().positive().optional(),

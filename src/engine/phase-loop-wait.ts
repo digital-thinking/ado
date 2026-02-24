@@ -11,14 +11,14 @@ export type WaitForManualAdvanceInput = {
 };
 
 export async function waitForManualAdvance(
-  input: WaitForManualAdvanceInput
+  input: WaitForManualAdvanceInput,
 ): Promise<LoopAdvanceSignal> {
   if (input.loopControl.isStopRequested()) {
     return "STOP";
   }
 
   input.onInfo?.(
-    `Manual mode: press Enter to start ${input.nextTaskLabel}, type 'stop' to halt (Telegram: /next or /stop).`
+    `Manual mode: press Enter to start ${input.nextTaskLabel}, type 'stop' to halt (Telegram: /next or /stop).`,
   );
 
   const waitHandle = input.loopControl.waitForSignal();
@@ -50,16 +50,22 @@ export type WaitForAutoAdvanceInput = {
 };
 
 export async function waitForAutoAdvance(
-  input: WaitForAutoAdvanceInput
+  input: WaitForAutoAdvanceInput,
 ): Promise<LoopAdvanceSignal> {
   if (input.loopControl.isStopRequested()) {
     return "STOP";
   }
 
-  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const sleep =
+    input.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
+  const countdownDisplay =
+    input.countdownSeconds === 0
+      ? "immediately"
+      : `in ${input.countdownSeconds}s`;
   input.onInfo?.(
-    `Auto mode: starting ${input.nextTaskLabel} in ${input.countdownSeconds}s (Telegram: /next to start now, /stop to halt).`
+    `Auto mode: starting ${input.nextTaskLabel} ${countdownDisplay} (Telegram: /next to start now, /stop to halt).`,
   );
 
   for (let remaining = input.countdownSeconds; remaining > 0; remaining -= 1) {
@@ -81,7 +87,9 @@ export async function waitForAutoAdvance(
     input.loopControl.cancelWait(waitHandle.id);
     const nextRemaining = remaining - 1;
     if (nextRemaining > 0) {
-      input.onInfo?.(`Auto mode: ${nextRemaining}s remaining before ${input.nextTaskLabel}.`);
+      input.onInfo?.(
+        `Auto mode: ${nextRemaining}s remaining before ${input.nextTaskLabel}.`,
+      );
     }
   }
 
