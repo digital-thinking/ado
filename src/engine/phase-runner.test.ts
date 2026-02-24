@@ -1630,3 +1630,370 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// P20-004: CI_FIX deduplication — repeated tester failures for the same issue
+//          must not create duplicate CI_FIX tasks in the phase.
+// ---------------------------------------------------------------------------
+
+describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
+  const baseConfig: PhaseRunnerConfig = {
+    mode: "AUTO",
+    countdownSeconds: 0,
+    activeAssignee: "MOCK_CLI",
+    maxRecoveryAttempts: 0,
+    testerCommand: "bun",
+    testerArgs: ["test"],
+    testerTimeoutMs: 1000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    validationMaxRetries: 1,
+    projectRootDir: "/tmp/project",
+    projectName: "test-project",
+    policy: DEFAULT_AUTH_POLICY,
+    role: "admin",
+  };
+
+  test("P20-004: does not create a duplicate CI_FIX task when one with the same title already exists", async () => {
+    const phaseId = "p4000000-0000-4000-8000-000000000001";
+    const taskId = "p4000000-0000-4000-8000-000000000002";
+    const existingFixTaskId = "p4000000-0000-4000-8000-000000000003";
+
+    // Phase already has a CI_FIX task for this trigger — tester failure should
+    // not append another one.
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "CODING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Implement feature",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: existingFixTaskId,
+              title: "Fix tests after Implement feature",
+              status: "CI_FIX",
+              assignee: "MOCK_CLI",
+              dependencies: [taskId],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        // Task completes but tester will fail again.
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    // Tester always fails
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        if (input.args.includes("test")) {
+          throw Object.assign(new Error("tests failed"), {
+            result: { stdout: "FAIL", stderr: "", exitCode: 1 },
+          });
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    // Run throws because tester fails — that's expected
+    await runner.run().catch(() => {});
+
+    // createTask must NOT have been called — the existing CI_FIX task covers
+    // this failure and no duplicate should be created.
+    expect(mockControl.createTask).not.toHaveBeenCalled();
+  });
+
+  test("P20-004: creates CI_FIX task normally on first tester failure (no duplicate guard triggered)", async () => {
+    const phaseId = "p4000000-0000-4000-8000-000000000004";
+    const taskId = "p4000000-0000-4000-8000-000000000005";
+
+    // No existing CI_FIX task — the first failure must create one.
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "CODING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Add logging",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    // Tester fails on first run
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        if (input.args.includes("test")) {
+          throw Object.assign(new Error("tests failed"), {
+            result: { stdout: "FAIL", stderr: "", exitCode: 1 },
+          });
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await runner.run().catch(() => {});
+
+    // createTask must have been called exactly once for the CI_FIX task.
+    expect(mockControl.createTask).toHaveBeenCalledTimes(1);
+    const callArgs = (mockControl.createTask as ReturnType<typeof mock>).mock
+      .calls[0][0] as any;
+    expect(callArgs.status).toBe("CI_FIX");
+    expect(callArgs.title).toContain("Fix tests after Add logging");
+  });
+
+  test("P20-004: idempotent across multiple loop iterations — second run with existing CI_FIX skips creation", async () => {
+    const phaseId = "p4000000-0000-4000-8000-000000000006";
+    const task1Id = "p4000000-0000-4000-8000-000000000007";
+    const task2Id = "p4000000-0000-4000-8000-000000000008";
+    const existingFixId = "p4000000-0000-4000-8000-000000000009";
+
+    // Two TODO tasks; the first triggers a tester failure but a CI_FIX for it
+    // already exists (simulating a prior loop run that created it).
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "CODING",
+          tasks: [
+            {
+              id: task1Id,
+              title: "Build API",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: task2Id,
+              title: "Write docs",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: existingFixId,
+              title: "Fix tests after Build API",
+              status: "CI_FIX",
+              assignee: "MOCK_CLI",
+              dependencies: [task1Id],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => JSON.parse(JSON.stringify(mockState))),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        // Mock hack: mark the FIRST task as DONE (triggering the failure scenario)
+        // even though the loop might have picked the CI_FIX task.
+        // This ensures the CI_FIX task remains in the state for deduplication.
+        mockState.phases[0].tasks[0].status = "DONE";
+        return JSON.parse(JSON.stringify(mockState));
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    let testerCallCount = 0;
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        if (input.args.includes("test")) {
+          testerCallCount += 1;
+          // Fail every tester run to trigger the dedup path
+          throw Object.assign(new Error("tests failed"), {
+            result: { stdout: "FAIL", stderr: "", exitCode: 1 },
+          });
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await runner.run().catch(() => {});
+
+    // Tester was called at least once (after task 1 or 2 ran)
+    expect(testerCallCount).toBeGreaterThan(0);
+    // createTask must never be called — the existing CI_FIX covers the failure
+    expect(mockControl.createTask).not.toHaveBeenCalled();
+  });
+
+  test("P20-004: does not create a duplicate CI_FIX task when one with the same dependency already exists", async () => {
+    const phaseId = "p4000000-0000-4000-8000-000000000010";
+    const taskId = "p4000000-0000-4000-8000-000000000011";
+    const existingFixTaskId = "p4000000-0000-4000-8000-000000000012";
+
+    // Scenario: We have two CI_FIX tasks. The second one already "covers" the first one
+    // because it depends on it. Completing the first task and failing tests should
+    // NOT create a new CI_FIX task if the second one is still pending.
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "CODING",
+          tasks: [
+            {
+              id: taskId,
+              title: "CI_FIX 1",
+              status: "CI_FIX",
+              assignee: "MOCK_CLI",
+              dependencies: [],
+            },
+            {
+              id: existingFixTaskId,
+              title: "CI_FIX 2",
+              status: "CI_FIX",
+              assignee: "MOCK_CLI",
+              dependencies: [taskId],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => JSON.parse(JSON.stringify(mockState))),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        // Mark the task being run as DONE.
+        mockState.phases[0].tasks[input.taskNumber - 1].status = "DONE";
+        return JSON.parse(JSON.stringify(mockState));
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        if (input.args.includes("test")) {
+          throw Object.assign(new Error("tests failed"), {
+            result: { stdout: "FAIL", stderr: "", exitCode: 1 },
+          });
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await runner.run().catch(() => {});
+
+    // createTask must NOT have been called — the existing CI_FIX task (by dependency)
+    // covers this failure.
+    expect(mockControl.createTask).not.toHaveBeenCalled();
+  });
+});

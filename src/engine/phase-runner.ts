@@ -453,6 +453,29 @@ Recovery: ${recoveryMessage}`,
       testerTimeoutMs: this.config.testerTimeoutMs,
       runner: this.testerRunner,
       createFixTask: async (input) => {
+        // Dedup: skip if a CI_FIX task already exists in the phase that covers
+        // this failure (either by exact title match or by depending on the
+        // same triggering task). Repeated tester failures for the same
+        // underlying issue must not generate duplicate CI_FIX tasks.
+        const latestState = await this.control.getState();
+        const latestPhase = latestState.phases.find(
+          (p: any) => p.id === input.phaseId,
+        );
+        const alreadyExists = latestPhase?.tasks.some(
+          (t: any) =>
+            t.status === "CI_FIX" &&
+            (t.title === input.title ||
+              t.dependencies.includes(task.id) ||
+              input.dependencies.some((depId) =>
+                t.dependencies.includes(depId),
+              )),
+        );
+        if (alreadyExists) {
+          console.info(
+            `Tester: CI_FIX task for "${task.title}" already exists (title match or shared dependency) — skipping duplicate creation.`,
+          );
+          return;
+        }
         await this.control.createTask({
           phaseId: input.phaseId,
           title: input.title,

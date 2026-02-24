@@ -86,7 +86,11 @@ function truncateOutput(value: string, maxLength: number): string {
 }
 
 function buildFixTaskTitle(triggerTaskTitle: string): string {
-  return `Fix tests after ${triggerTaskTitle}`;
+  const prefix = "Fix tests after ";
+  if (triggerTaskTitle.startsWith(prefix)) {
+    return triggerTaskTitle;
+  }
+  return `${prefix}${triggerTaskTitle}`;
 }
 
 function buildFixTaskDescription(input: {
