@@ -34,6 +34,19 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
   const archetype = WorkerArchetypeSchema.parse(input.archetype);
   const systemPrompt = getWorkerSystemPrompt(archetype);
 
+  const requirements = [
+    "- Implement the task in this repository.",
+    "- Run relevant validations/tests.",
+    "- Return a concise summary of concrete changes and validation commands.",
+  ];
+
+  if (archetype === "CODER") {
+    requirements.push(
+      "- Commit all changes with a descriptive git commit message before declaring the task done.",
+      "- Leave the repository in a clean state (no untracked or unstaged changes after your commit).",
+    );
+  }
+
   const lines = [
     `Worker archetype: ${archetype}`,
     `System prompt: ${systemPrompt}`,
@@ -44,17 +57,8 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
     "Task description:",
     input.task.description,
     "Requirements:",
-    "- Implement the task in this repository.",
-    "- Run relevant validations/tests.",
-    "- Return a concise summary of concrete changes and validation commands.",
+    ...requirements,
   ];
-
-  if (archetype === "CODER") {
-    lines.push(
-      "- Commit all changes with a descriptive git commit message before declaring the task done.",
-      "- Leave the repository in a clean state (no untracked or unstaged changes after your commit).",
-    );
-  }
 
   if (archetype === "REVIEWER") {
     const gitDiff = input.gitDiff?.trim();

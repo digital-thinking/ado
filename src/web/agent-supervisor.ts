@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { resolveCommandForSpawn } from "../process/command-resolver";
+import { ProcessStdinUnavailableError } from "../process/manager";
 import { AgentFailureError } from "../errors";
 
 type SpawnFn = (
@@ -33,6 +34,7 @@ export type StartAgentInput = {
 
 export type RunAgentInput = StartAgentInput & {
   timeoutMs?: number;
+  startupSilenceTimeoutMs?: number;
   stdin?: string;
   env?: NodeJS.ProcessEnv;
 };
@@ -341,6 +343,7 @@ export class AgentSupervisor {
       env?: NodeJS.ProcessEnv;
       stdin?: string;
       timeoutMs?: number;
+      startupSilenceTimeoutMs?: number;
       onStdout?: (chunk: string) => void;
       onStderr?: (chunk: string) => void;
       onClose?: (
@@ -370,9 +373,35 @@ export class AgentSupervisor {
     this.persistRecord(record);
 
     let timeoutHandle: NodeJS.Timeout | undefined;
+    let silenceHandle: NodeJS.Timeout | undefined;
+    let hasReceivedOutput = false;
+
+    const cancelSilenceTimer = () => {
+      clearTimeout(silenceHandle);
+    };
+
+    if (options.startupSilenceTimeoutMs !== undefined) {
+      const silenceMs = options.startupSilenceTimeoutMs;
+      silenceHandle = setTimeout(() => {
+        if (runToken !== record.runToken) {
+          return;
+        }
+        if (!hasReceivedOutput && record.child !== undefined) {
+          const seconds = Math.round(silenceMs / 1000);
+          const message = `[ixado] No output from '${record.command}' after ${seconds}s — verify the adapter CLI is installed, on PATH, and authenticated.`;
+          tailPush(record.outputTail, message);
+          this.persistRecord(record);
+        }
+      }, silenceMs);
+    }
+
     child.stdout?.on("data", (chunk: Buffer | string) => {
       if (runToken !== record.runToken) {
         return;
+      }
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        cancelSilenceTimer();
       }
       const value = chunk.toString();
       const lines = tailPush(record.outputTail, value);
@@ -386,6 +415,10 @@ export class AgentSupervisor {
       if (runToken !== record.runToken) {
         return;
       }
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        cancelSilenceTimer();
+      }
       const value = chunk.toString();
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
@@ -396,6 +429,7 @@ export class AgentSupervisor {
     });
     child.on("close", (exitCode, signal) => {
       clearTimeout(timeoutHandle);
+      cancelSilenceTimer();
       if (runToken !== record.runToken) {
         return;
       }
@@ -417,6 +451,7 @@ export class AgentSupervisor {
     });
     child.on("error", (error) => {
       clearTimeout(timeoutHandle);
+      cancelSilenceTimer();
       if (runToken !== record.runToken) {
         return;
       }
@@ -435,9 +470,13 @@ export class AgentSupervisor {
     });
 
     if (options.stdin !== undefined) {
-      child.stdin?.write(options.stdin);
+      if (!child.stdin) {
+        throw new ProcessStdinUnavailableError(record.command);
+      }
+      child.stdin.end(options.stdin);
+    } else {
+      child.stdin?.end();
     }
-    child.stdin?.end();
 
     if (options.timeoutMs !== undefined) {
       timeoutHandle = setTimeout(() => {
@@ -482,6 +521,7 @@ export class AgentSupervisor {
         env: input.env,
         stdin: input.stdin,
         timeoutMs: input.timeoutMs,
+        startupSilenceTimeoutMs: input.startupSilenceTimeoutMs,
         onStdout: (chunk) => {
           stdout += chunk;
         },

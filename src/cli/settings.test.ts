@@ -16,21 +16,25 @@ const DEFAULT_AGENT_SETTINGS = {
   CODEX_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
   },
   CLAUDE_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
   },
   GEMINI_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
   },
   MOCK_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
   },
 };
@@ -317,21 +321,25 @@ describe("cli settings", () => {
         CODEX_CLI: {
           enabled: true,
           timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         CLAUDE_CLI: {
           enabled: true,
           timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         GEMINI_CLI: {
           enabled: true,
           timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         MOCK_CLI: {
           enabled: true,
           timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
       },
@@ -388,21 +396,25 @@ describe("cli settings", () => {
         CODEX_CLI: {
           enabled: true,
           timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         CLAUDE_CLI: {
           enabled: true,
           timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         GEMINI_CLI: {
           enabled: true,
           timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         MOCK_CLI: {
           enabled: true,
           timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
       },
@@ -454,21 +466,25 @@ describe("cli settings", () => {
         CODEX_CLI: {
           enabled: true,
           timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         CLAUDE_CLI: {
           enabled: true,
           timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         GEMINI_CLI: {
           enabled: true,
           timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
         MOCK_CLI: {
           enabled: true,
           timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
           bypassApprovalsAndSandbox: false,
         },
       },

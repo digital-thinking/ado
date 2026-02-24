@@ -45,21 +45,25 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     CODEX_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
       bypassApprovalsAndSandbox: false,
     },
     CLAUDE_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
       bypassApprovalsAndSandbox: false,
     },
     GEMINI_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
       bypassApprovalsAndSandbox: false,
     },
     MOCK_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
       bypassApprovalsAndSandbox: false,
     },
   },
