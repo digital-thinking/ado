@@ -233,7 +233,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
   - `ixado phase run auto 0` and `ixado phase run manual 0` start without usage failure,
   - mixed-assignee phase run executes each task with its own assigned adapter.
     Deps: `P19-001`, `P19-002`, `P19-003`.
-- [ ] `P19-005` Create PR Task: open Phase 19 PR after coding tasks are done. **Status: InProgress**. Deps: `P19-004`.
+- [x] `P19-005` Create PR Task: open Phase 19 PR after coding tasks are done. **Status: Done**. Deps: `P19-004`.
 
 ## Phase 20: Execution Reliability (Roadmap)
 
