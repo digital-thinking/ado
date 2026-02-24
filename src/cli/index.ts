@@ -635,7 +635,7 @@ function resolvePhaseRunMode(
     return "MANUAL";
   }
 
-  throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds]");
+  throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds>=0]");
 }
 
 function resolveCountdownSeconds(
@@ -648,8 +648,10 @@ function resolveCountdownSeconds(
   }
 
   const parsed = Number(normalized);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds]");
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(
+      "Usage: ixado phase run [auto|manual] [countdownSeconds>=0]",
+    );
   }
 
   return parsed;
@@ -1429,7 +1431,7 @@ async function runCli(args: string[]): Promise<void> {
         {
           name: "run",
           description: "Run TODO/CI_FIX tasks in active phase sequentially",
-          usage: "run [auto|manual] [countdownSeconds]",
+          usage: "run [auto|manual] [countdownSeconds>=0]",
           action: runPhaseRunCommand,
         },
       ],
