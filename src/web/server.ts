@@ -220,6 +220,7 @@ export async function startWebControlCenter(
             args,
             cwd: input.cwd,
             timeoutMs: assigneeSettings.timeoutMs,
+            startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
             stdin,
             approvedAdapterSpawn: true,
             phaseId: workInput.phaseId,

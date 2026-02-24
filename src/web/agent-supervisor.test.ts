@@ -300,6 +300,64 @@ describe("AgentSupervisor", () => {
     expect(ended).toBe(true);
   });
 
+  test("appends startup-silence diagnostic to outputTail when no output arrives within startupSilenceTimeoutMs", async () => {
+    const child = createFakeChild();
+
+    const supervisor = new AgentSupervisor(() => {
+      // Emit close after the silence timer fires (no output emitted)
+      setTimeout(() => {
+        child.emit("close", 0, null);
+      }, 50);
+      return child;
+    });
+
+    await supervisor.runToCompletion({
+      name: "Silent worker",
+      command: "claude",
+      args: ["--print"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+      startupSilenceTimeoutMs: 10,
+    });
+
+    const listed = supervisor.list().find((a) => a.name === "Silent worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("[ixado] No output from 'claude'"),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) => line.includes("verify the adapter")),
+    ).toBe(true);
+  });
+
+  test("does NOT append startup-silence diagnostic when output arrives before silence window expires", async () => {
+    const child = createFakeChild();
+
+    const supervisor = new AgentSupervisor(() => {
+      // Emit output immediately, before the silence timer would fire
+      queueMicrotask(() => {
+        child.stdout.write("some output\n");
+        child.emit("close", 0, null);
+      });
+      return child;
+    });
+
+    await supervisor.runToCompletion({
+      name: "Active worker",
+      command: "gemini",
+      args: ["--yolo"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+      startupSilenceTimeoutMs: 5000,
+    });
+
+    const listed = supervisor.list().find((a) => a.name === "Active worker");
+    expect(listed?.outputTail.some((line) => line.includes("[ixado]"))).toBe(
+      false,
+    );
+  });
+
   test("calls onFailure hook when agent is killed", (done) => {
     const child = createFakeChild();
     const supervisor = new AgentSupervisor({

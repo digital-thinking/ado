@@ -251,6 +251,7 @@ function createControlCenterServiceWithAgentTracking(
           args,
           cwd: projectRootDir,
           timeoutMs: assigneeSettings.timeoutMs,
+          startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
           stdin,
           approvedAdapterSpawn: true,
           phaseId: workInput.phaseId,
