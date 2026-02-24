@@ -6,10 +6,14 @@ import {
 } from "../types";
 
 const WORKER_SYSTEM_PROMPTS: Record<WorkerArchetype, string> = {
-  CODER: "Implement the task with minimal, correct changes and keep the codebase coherent.",
-  TESTER: "Execute validations, report concrete failures, and avoid speculative conclusions.",
-  REVIEWER: "Review the patch critically with evidence from the provided git diff.",
-  FIXER: "Resolve reported failures quickly with targeted fixes and clear verification steps.",
+  CODER:
+    "Implement the task with minimal, correct changes and keep the codebase coherent.",
+  TESTER:
+    "Execute validations, report concrete failures, and avoid speculative conclusions.",
+  REVIEWER:
+    "Review the patch critically with evidence from the provided git diff.",
+  FIXER:
+    "Resolve reported failures quickly with targeted fixes and clear verification steps.",
 };
 
 type WorkerPromptInput = {
@@ -44,6 +48,13 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
     "- Run relevant validations/tests.",
     "- Return a concise summary of concrete changes and validation commands.",
   ];
+
+  if (archetype === "CODER") {
+    lines.push(
+      "- Commit all changes with a descriptive git commit message before declaring the task done.",
+      "- Leave the repository in a clean state (no untracked or unstaged changes after your commit).",
+    );
+  }
 
   if (archetype === "REVIEWER") {
     const gitDiff = input.gitDiff?.trim();
