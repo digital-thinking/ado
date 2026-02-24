@@ -25,6 +25,7 @@ function appendLogLine(
   args: unknown[],
 ): void {
   const line = `[${new Date().toISOString()}] [${level}] ${args.map(formatLogArg).join(" ")}\n`;
+  mkdirSync(dirname(logFilePath), { recursive: true });
   appendFileSync(logFilePath, line, "utf8");
 }
 
