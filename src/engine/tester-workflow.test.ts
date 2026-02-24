@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { ProcessExecutionError, type ProcessRunner } from "../process";
 import { runTesterWorkflow } from "./tester-workflow";
@@ -136,5 +139,48 @@ describe("runTesterWorkflow", () => {
     });
 
     expect(capturedDescription).toContain("[truncated]");
+  });
+
+  test("P17-003: skips tester and does not create CI_FIX when tester defaults are null and no package.json exists", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-no-pkg-"));
+    await expect(access(join(tempCwd, "package.json"))).rejects.toBeDefined();
+    let runnerCalled = false;
+    let fixTaskCreated = false;
+
+    const runner: ProcessRunner = {
+      async run() {
+        runnerCalled = true;
+        throw new Error("runner should not be called when tester is skipped");
+      },
+    };
+
+    try {
+      const result = await runTesterWorkflow({
+        phaseId: "11111111-1111-4111-8111-111111111111",
+        phaseName: "Phase 17",
+        completedTask: {
+          id: "22222222-2222-4222-8222-222222222222",
+          title: "P17 Task",
+        },
+        cwd: tempCwd,
+        testerCommand: null,
+        testerArgs: null,
+        testerTimeoutMs: 120_000,
+        runner,
+        createFixTask: async () => {
+          fixTaskCreated = true;
+        },
+      });
+
+      expect(result.status).toBe("SKIPPED");
+      if (result.status !== "SKIPPED") {
+        throw new Error("Expected SKIPPED tester result");
+      }
+      expect(result.reason).toContain("No tester configured");
+      expect(runnerCalled).toBe(false);
+      expect(fixTaskCreated).toBe(false);
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
   });
 });
