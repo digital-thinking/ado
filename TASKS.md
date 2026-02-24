@@ -234,3 +234,40 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
   - mixed-assignee phase run executes each task with its own assigned adapter.
     Deps: `P19-001`, `P19-002`, `P19-003`.
 - [ ] `P19-005` Create PR Task: open Phase 19 PR after coding tasks are done. Deps: `P19-004`.
+
+## Phase 20: Execution Reliability (Roadmap)
+
+- [ ] `P20-001` Ensure phase execution loop honors per-task assignee at dispatch time (no fallback to default assignee when task assignee exists). Deps: `P19-005`.
+- [ ] `P20-002` Normalize `phase run` countdown argument parsing and support `0` consistently for `auto` and `manual` modes with aligned usage/help text. Deps: `P19-005`.
+- [ ] `P20-003` Harden tester default behavior for non-Node repositories to avoid deterministic first-run CI_FIX churn; include explicit fallback/skip messaging. Deps: `P19-005`.
+- [ ] `P20-004` Tighten phase-loop preflight consistency (branch/worktree gating and deterministic error semantics across manual/auto mode). Deps: `P20-001`, `P20-002`, `P20-003`.
+- [ ] `P20-005` Add regression/integration coverage for Phase 20 reliability fixes in CLI and phase-runner tests. Deps: `P20-004`.
+- [ ] `P20-006` Create PR Task: open Phase 20 PR after coding tasks are done. Deps: `P20-005`.
+
+## Phase 21: Configuration and UX Consistency (Roadmap)
+
+- [ ] `P21-001` Audit and normalize CLI help/usage output patterns across command groups (`task`, `phase`, `config`, `web`, root). Deps: `P20-006`.
+- [ ] `P21-002` Unify argument validation error style with actionable remediation hints and consistent exit behavior. Deps: `P21-001`.
+- [ ] `P21-003` Clarify config precedence messaging (global vs project settings) in CLI outputs and docs. Deps: `P21-001`.
+- [ ] `P21-004` Standardize command outcome summaries (`what changed`, `status result`, `next action`) for state-mutating commands. Deps: `P21-002`, `P21-003`.
+- [ ] `P21-005` Add regression/snapshot tests for help text, validation messages, and config precedence outputs. Deps: `P21-004`.
+- [ ] `P21-006` Create PR Task: open Phase 21 PR after coding tasks are done. Deps: `P21-005`.
+
+## Phase 22: Adapter Health and Observability (Roadmap)
+
+- [ ] `P22-001` Standardize adapter startup health checks and startup diagnostics across Codex/Claude/Gemini adapters. Deps: `P21-006`.
+- [ ] `P22-002` Improve no-output and timeout telemetry with adapter-specific hints and consistent structured log markers. Deps: `P22-001`.
+- [ ] `P22-003` Define and apply a unified adapter failure taxonomy (auth/network/missing-binary/timeout/unknown) for runtime and recovery decisions. Deps: `P22-001`.
+- [ ] `P22-004` Improve per-agent log readability in CLI/web views (phase/task context, concise failure summaries, recovery trace links). Deps: `P22-002`, `P22-003`.
+- [ ] `P22-005` Add regression tests for startup health detection, telemetry emission, and failure taxonomy mapping. Deps: `P22-004`.
+- [ ] `P22-006` Create PR Task: open Phase 22 PR after coding tasks are done. Deps: `P22-005`.
+
+## Phase 23: Integrations Expansion (Approved Scope)
+
+- [ ] `P23-001` Extend GitHub PR automation with configurable template mapping, labels, assignees, and draft/ready transitions. Deps: `P22-006`.
+- [ ] `P23-002` Derive PR metadata from phase/task context with deterministic formatting and validation safeguards. Deps: `P23-001`.
+- [ ] `P23-003` Deepen CI integration by mapping failed checks to targeted fix tasks and richer CI diagnostics in loop output. Deps: `P23-002`.
+- [ ] `P23-004` Improve CI state handling for retries/reruns and transition reporting without introducing loop instability. Deps: `P23-003`.
+- [ ] `P23-005` Expand Telegram-only notifications for phase/task/recovery/CI/PR lifecycle events with noise controls. Deps: `P23-004`.
+- [ ] `P23-006` Add integration tests for PR automation, CI mapping/retry flows, and Telegram notification triggers/payloads. Deps: `P23-005`.
+- [ ] `P23-007` Create PR Task: open Phase 23 PR after coding tasks are done. Deps: `P23-006`.

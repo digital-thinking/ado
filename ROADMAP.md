@@ -1,46 +1,59 @@
 # IxADO Development Roadmap
 
-## Phase 1: Foundation & State Management
-- [x] Initialize TypeScript/Bun project.
-- [x] Define core Zod schemas for `Task`, `Phase`, `ProjectState`, and `CLIAdapter`.
-- [ ] Build the file-backed State Engine to read/write task lists.
+This roadmap contains only forward-looking work from the current project state.
+Done/completed history is tracked in `TASKS.md`.
 
-## Phase 2: Git & Subprocess Orchestration
-- [ ] Implement the async Process Manager using child processes.
-- [ ] Create the `GitManager` to handle automated branching via shell commands.
-- [ ] Create the `GitHubManager` to handle PR creation and CI status polling via `gh` CLI.
+## Guiding Scope
 
-## Phase 3: Telegram Command Center
-- [ ] Install `grammY` and configure strict owner-ID environment variables.
-- [ ] Implement the `src/bot/telegram.ts` adapter.
-- [ ] Build read-only commands: `/status` and `/tasks`.
-- [ ] Wire the bot instance to run alongside the core engine in `src/cli/index.ts`.
+- Keep roadmap strategic and concise.
+- Derive executable implementation backlog in `TASKS.md`.
+- Track defects and evidence in `BUGS.md`.
 
-## Phase 4: Vendor Adapters
-- [ ] Implement the `MockCLIAdapter` for initial testing.
-- [ ] Implement `ClaudeAdapter`.
-  - We need always --dangerously-skip-permissions
-- [ ] Implement `GeminiAdapter`.
-  - We need always --yolo 
-- [ ] Implement `CodexAdapter`.
-  - We need always--dangerously-bypass-approvals-and-sandbox
-- [ ] Track usage and quota by using the optional available codexbar CLI (codexbar --source cli --provider all)
-  - poll every 5 min, keep track of results
+## Major Item 1: Execution Reliability
 
-## Phase 5: The CI Execution Loop
-- [ ] Connect the State Engine to the Process Manager.
-- [ ] Implement the "Phase Start -> Branch" trigger.
-- [ ] Implement the task execution loop ("read task -> spawn adapter -> await result").
-- [ ] Implement the automated PR Review and CI polling loop.
-- [ ] Build the iterative fix loop that reads failing CI logs and spawns workers to fix them.
-- [ ] Add Telegram push notifications for CI failures and PR readiness.
-- [ ] Use usage and quota data for smart delegation of tasks (if available) 
+Goal: Make phase/task execution deterministic and trustworthy across adapters and loop modes.
 
-## Phase 6: Web Interface
-- [ ] Create a simple, local web interface as a control center for Phase/Task Creating and Tracking
-- [ ] Show current running agents and assigned tasks
-- [ ] Make it possible to kill/restart agents
-- [ ] Show usage and quota data (if available)
+- Fix phase-run assignee routing so task-level assignee is always honored.
+- Fix phase-run countdown argument handling (`0` and validation/help consistency).
+- Eliminate avoidable tester churn on non-Node projects via better default behavior.
+- Tighten branch/worktree preflight consistency and failure semantics in loop execution.
 
-## Phase 7: Polish & Distribution
-- [x] Package for global distribution as a single binary using Bun.
+## Major Item 2: Configuration and UX Consistency
+
+Goal: Make CLI behavior predictable and self-explanatory for operators.
+
+- Normalize command usage/help output and argument validation across commands.
+- Unify config precedence/resolution messaging (global vs project-level settings).
+- Improve runtime error messages with direct remediation hints.
+- Ensure command outcomes are explicit (`what happened`, `what changed`, `what next`).
+
+## Major Item 3: Agent Adapter Health and Observability
+
+Goal: Improve diagnosis and recovery speed for adapter/runtime issues.
+
+- Strengthen startup health diagnostics and early-failure surfacing.
+- Improve timeout and no-output handling with actionable telemetry.
+- Standardize adapter failure taxonomy for clearer recovery decisions.
+- Improve per-agent logs for fast root-cause identification.
+
+## Major Item 4: Integrations Expansion (Approved Scope)
+
+### 4.1 GitHub PR Automation
+
+- Improve PR creation controls: templates, labels, assignees, draft/ready transitions.
+- Ensure PR metadata is derived consistently from phase/task context.
+
+### 4.2 CI Integration Depth
+
+- Parse failed checks and map them to targeted fix tasks.
+- Improve CI signal handling in the loop (check-state transitions and retries).
+- Surface clearer CI diagnostics in CLI/web outputs.
+
+### 4.3 Notifications (Telegram Only)
+
+- Expand Telegram notifications for key lifecycle events:
+  - phase start/finish,
+  - task failure/recovery outcome,
+  - CI failed/green transitions,
+  - PR created/ready status.
+- Keep notification noise controlled with concise, high-signal messages.
