@@ -168,6 +168,30 @@ describe("exception recovery", () => {
     ]);
   });
 
+  test("DIRTY_WORKTREE attempt 2 rejects non-JSON output because JSON parser path is used", async () => {
+    const exception = classifyRecoveryException({
+      message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
+    });
+
+    await expect(
+      runExceptionRecovery({
+        cwd: process.cwd(),
+        assignee: "MOCK_CLI",
+        exception,
+        attemptNumber: 2,
+        role: "admin",
+        policy: DEFAULT_AUTH_POLICY,
+        runInternalWork: async () => ({
+          stdout: "non-json freeform model response",
+          stderr: "",
+        }),
+      }),
+    ).rejects.toThrow(
+      "Recovery adapter output is not contract-compliant JSON.",
+    );
+  });
+
   test("returns unfixable and denies when role lacks permissions", async () => {
     const exception = classifyRecoveryException({
       message: "Execution loop stopped after FAILED task #2.",
