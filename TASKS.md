@@ -237,10 +237,10 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 ## Phase 20: Execution Reliability (Roadmap)
 
-- [ ] `P20-001` Ensure phase execution loop honors per-task assignee at dispatch time (no fallback to default assignee when task assignee exists). Deps: `P19-005`.
-- [ ] `P20-002` Normalize `phase run` countdown argument parsing and support `0` consistently for `auto` and `manual` modes with aligned usage/help text. Deps: `P19-005`.
-- [ ] `P20-003` Harden tester default behavior for non-Node repositories to avoid deterministic first-run CI_FIX churn; include explicit fallback/skip messaging. Deps: `P19-005`.
-- [ ] `P20-004` Tighten phase-loop preflight consistency (branch/worktree gating and deterministic error semantics across manual/auto mode). Deps: `P20-001`, `P20-002`, `P20-003`.
+- [ ] `P20-001` Enforce deterministic task-pick behavior in phase loop (stable ordering and explicit selection rules across TODO/CI_FIX sets). Deps: `P19-005`.
+- [ ] `P20-002` Strengthen restart/resume reliability: reconcile in-progress agent/task state after process restarts without status drift or duplicate execution. Deps: `P19-005`.
+- [ ] `P20-003` Tighten phase-loop preflight consistency (branch/worktree gating and deterministic error semantics across manual/auto mode). Deps: `P20-001`, `P20-002`.
+- [ ] `P20-004` Add loop-level safeguards for duplicate CI_FIX generation and ensure deduplication/idempotency across repeated tester failures. Deps: `P20-003`.
 - [ ] `P20-005` Add regression/integration coverage for Phase 20 reliability fixes in CLI and phase-runner tests. Deps: `P20-004`.
 - [ ] `P20-006` Create PR Task: open Phase 20 PR after coding tasks are done. Deps: `P20-005`.
 
