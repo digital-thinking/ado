@@ -25,8 +25,8 @@ export type PhaseRunnerConfig = {
   countdownSeconds: number;
   activeAssignee: CLIAdapterId;
   maxRecoveryAttempts: number;
-  testerCommand: string;
-  testerArgs: string[];
+  testerCommand: string | null;
+  testerArgs: string[] | null;
   testerTimeoutMs: number;
   ciEnabled: boolean;
   ciBaseBranch: string;
@@ -374,6 +374,12 @@ Recovery: ${recoveryMessage}`,
         });
       },
     });
+
+    if (testerResult.status === "SKIPPED") {
+      console.warn(testerResult.reason);
+      await this.notifyLoopEvent?.(`Tester skipped: ${testerResult.reason}`);
+      return;
+    }
 
     if (testerResult.status === "FAILED") {
       console.info(

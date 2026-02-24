@@ -10,8 +10,8 @@ export type TesterWorkflowInput = {
     title: string;
   };
   cwd: string;
-  testerCommand: string;
-  testerArgs: string[];
+  testerCommand: string | null;
+  testerArgs: string[] | null;
   testerTimeoutMs: number;
   runner: ProcessRunner;
   createFixTask: (input: {
@@ -25,6 +25,10 @@ export type TesterWorkflowInput = {
 };
 
 export type TesterWorkflowResult =
+  | {
+      status: "SKIPPED";
+      reason: string;
+    }
   | {
       status: "PASSED";
       command: string;
@@ -74,15 +78,16 @@ function buildFixTaskDescription(input: {
 export async function runTesterWorkflow(
   input: TesterWorkflowInput,
 ): Promise<TesterWorkflowResult> {
-  const command = input.testerCommand.trim();
-  const args = [...input.testerArgs];
+  const command = input.testerCommand?.trim() ?? "";
+  const args = input.testerArgs ? [...input.testerArgs] : [];
   const maxOutputLength =
     input.maxOutputLength ?? DEFAULT_MAX_TESTER_OUTPUT_LENGTH;
-  if (!command) {
-    throw new Error("testerCommand must not be empty.");
-  }
-  if (args.length === 0) {
-    throw new Error("testerArgs must not be empty.");
+  if (!command || args.length === 0) {
+    return {
+      status: "SKIPPED",
+      reason:
+        "No tester configured (executionLoop.testerCommand/testerArgs are null). Skipping tester step.",
+    };
   }
 
   try {
