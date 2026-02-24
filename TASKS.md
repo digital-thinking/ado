@@ -237,7 +237,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 ## Phase 20: Execution Reliability (Roadmap)
 
-- [ ] `P20-001` Enforce deterministic task-pick behavior in phase loop (stable ordering and explicit selection rules across TODO/CI_FIX sets). **Status: InProgress**. Deps: `P19-005`.
+- [x] `P20-001` Enforce deterministic task-pick behavior in phase loop (stable ordering and explicit selection rules across TODO/CI_FIX sets). **Status: Done**. Deps: `P19-005`.
 - [ ] `P20-002` Strengthen restart/resume reliability: reconcile in-progress agent/task state after process restarts without status drift or duplicate execution. Deps: `P19-005`.
 - [ ] `P20-003` Tighten phase-loop preflight consistency (branch/worktree gating and deterministic error semantics across manual/auto mode). Deps: `P20-001`, `P20-002`.
 - [ ] `P20-004` Add loop-level safeguards for duplicate CI_FIX generation and ensure deduplication/idempotency across repeated tester failures. Deps: `P20-003`.

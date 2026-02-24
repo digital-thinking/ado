@@ -1,5 +1,9 @@
 import { describe, expect, test, mock } from "bun:test";
-import { PhaseRunner, type PhaseRunnerConfig } from "./phase-runner";
+import {
+  PhaseRunner,
+  pickNextTask,
+  type PhaseRunnerConfig,
+} from "./phase-runner";
 import { DEFAULT_AUTH_POLICY } from "../security/policy";
 import { type ProcessRunner } from "../process";
 import { type ControlCenterService } from "../web";
@@ -763,5 +767,281 @@ describe("PhaseRunner", () => {
     const statuses = statusCalls.map((c: any[]) => c[0].status);
     expect(statuses).toContain("CI_FAILED");
     expect(statuses).not.toContain("DONE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P20-001: pickNextTask – deterministic task-pick ordering rules
+// ---------------------------------------------------------------------------
+
+describe("pickNextTask", () => {
+  test("returns -1 when the task list is empty", () => {
+    expect(pickNextTask([])).toBe(-1);
+  });
+
+  test("returns -1 when all tasks are DONE or IN_PROGRESS", () => {
+    const tasks = [
+      { status: "DONE" },
+      { status: "IN_PROGRESS" },
+      { status: "DONE" },
+    ];
+    expect(pickNextTask(tasks)).toBe(-1);
+  });
+
+  test("selects the first TODO when only TODO tasks are present", () => {
+    const tasks = [{ status: "DONE" }, { status: "TODO" }, { status: "TODO" }];
+    // Earliest TODO is at index 1
+    expect(pickNextTask(tasks)).toBe(1);
+  });
+
+  test("selects the first CI_FIX when only CI_FIX tasks are present", () => {
+    const tasks = [
+      { status: "DONE" },
+      { status: "CI_FIX" },
+      { status: "CI_FIX" },
+    ];
+    // Earliest CI_FIX is at index 1
+    expect(pickNextTask(tasks)).toBe(1);
+  });
+
+  test("prioritises CI_FIX over TODO regardless of array position", () => {
+    // TODO appears before CI_FIX — CI_FIX must still win
+    const tasks = [
+      { status: "DONE" },
+      { status: "TODO" }, // index 1
+      { status: "TODO" }, // index 2
+      { status: "CI_FIX" }, // index 3 — lower position but higher priority
+    ];
+    expect(pickNextTask(tasks)).toBe(3);
+  });
+
+  test("prioritises CI_FIX even when it is the very last entry", () => {
+    const tasks = [
+      { status: "TODO" },
+      { status: "TODO" },
+      { status: "TODO" },
+      { status: "CI_FIX" }, // appended at the end by tester workflow
+    ];
+    expect(pickNextTask(tasks)).toBe(3);
+  });
+
+  test("selects the earliest CI_FIX when multiple CI_FIX tasks exist", () => {
+    const tasks = [
+      { status: "TODO" },
+      { status: "CI_FIX" }, // index 1 — earliest
+      { status: "TODO" },
+      { status: "CI_FIX" }, // index 3
+    ];
+    expect(pickNextTask(tasks)).toBe(1);
+  });
+
+  test("falls back to the earliest TODO after all CI_FIX tasks are DONE", () => {
+    const tasks = [
+      { status: "DONE" },
+      { status: "DONE" }, // was CI_FIX, now DONE
+      { status: "TODO" }, // index 2 — earliest remaining TODO
+      { status: "TODO" },
+    ];
+    expect(pickNextTask(tasks)).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P20-001: phase loop respects CI_FIX priority over TODO
+// ---------------------------------------------------------------------------
+
+describe("PhaseRunner – P20-001 task-pick ordering", () => {
+  const baseConfig: PhaseRunnerConfig = {
+    mode: "AUTO",
+    countdownSeconds: 0,
+    activeAssignee: "MOCK_CLI",
+    maxRecoveryAttempts: 0,
+    testerCommand: null,
+    testerArgs: null,
+    testerTimeoutMs: 1000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    validationMaxRetries: 1,
+    projectRootDir: "/tmp/project",
+    projectName: "test-project",
+    policy: DEFAULT_AUTH_POLICY,
+    role: "admin",
+  };
+
+  test("executes CI_FIX task before remaining TODO tasks", async () => {
+    const phaseId = "e0000000-0000-4000-8000-000000000001";
+    const todoTask1Id = "e1000000-0000-4000-8000-000000000001";
+    const todoTask2Id = "e1000000-0000-4000-8000-000000000002";
+    const ciFixTaskId = "e1000000-0000-4000-8000-000000000003";
+
+    // Scenario: tasks are [TODO, TODO, CI_FIX].
+    // Loop should pick CI_FIX (index 2) before TODO (index 0/1).
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: todoTask1Id,
+              title: "TODO Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: todoTask2Id,
+              title: "TODO Task 2",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: ciFixTaskId,
+              title: "Fix tests",
+              status: "CI_FIX",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const executionOrder: number[] = [];
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        executionOrder.push(input.taskNumber);
+        mockState.phases[0].tasks[input.taskNumber - 1].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    // CI_FIX task is at position 3 (taskNumber 3); it must be first
+    expect(executionOrder[0]).toBe(3);
+    // Remaining TODO tasks run in order after
+    expect(executionOrder[1]).toBe(1);
+    expect(executionOrder[2]).toBe(2);
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith({
+      phaseId,
+      status: "DONE",
+    });
+  });
+
+  test("executes TODO tasks in stable array order when no CI_FIX tasks exist", async () => {
+    const phaseId = "f0000000-0000-4000-8000-000000000001";
+    const task1Id = "f1000000-0000-4000-8000-000000000001";
+    const task2Id = "f1000000-0000-4000-8000-000000000002";
+    const task3Id = "f1000000-0000-4000-8000-000000000003";
+
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: task1Id,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: task2Id,
+              title: "Task 2",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: task3Id,
+              title: "Task 3",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const executionOrder: number[] = [];
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        executionOrder.push(input.taskNumber);
+        mockState.phases[0].tasks[input.taskNumber - 1].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    // Tasks must run in stable array order: 1, 2, 3
+    expect(executionOrder).toEqual([1, 2, 3]);
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith({
+      phaseId,
+      status: "DONE",
+    });
   });
 });

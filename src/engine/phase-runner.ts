@@ -20,6 +20,30 @@ import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
 import { type CLIAdapterId, type Phase, type Task } from "../types";
 
+/**
+ * Picks the index of the next task to execute, applying explicit priority rules
+ * for deterministic, stable ordering across TODO and CI_FIX task sets.
+ *
+ * Selection rules (highest priority first):
+ *   1. CI_FIX tasks — must be resolved before new work so the repository
+ *      stays in a passing state after every tester run.
+ *   2. TODO tasks   — normal forward-progress work.
+ *
+ * Within each priority tier the task with the lowest array index is chosen,
+ * providing stable ordering across state reloads and consistent task numbering.
+ *
+ * Returns the index of the selected task, or -1 when no actionable task exists.
+ */
+export function pickNextTask(tasks: readonly { status: string }[]): number {
+  // Priority 1: resolve CI_FIX tasks before advancing to new work.
+  const ciFixIndex = tasks.findIndex((task) => task.status === "CI_FIX");
+  if (ciFixIndex >= 0) {
+    return ciFixIndex;
+  }
+  // Priority 2: fall back to the earliest pending TODO task.
+  return tasks.findIndex((task) => task.status === "TODO");
+}
+
 export type PhaseRunnerConfig = {
   mode: "AUTO" | "MANUAL";
   countdownSeconds: number;
@@ -192,9 +216,7 @@ Recovery: ${recoveryMessage}`,
 
       const state = await this.control.getState();
       const currentPhase = this.resolveActivePhase(state);
-      const nextTaskIndex = currentPhase.tasks.findIndex(
-        (task) => task.status === "TODO" || task.status === "CI_FIX",
-      );
+      const nextTaskIndex = pickNextTask(currentPhase.tasks);
 
       if (nextTaskIndex < 0) {
         console.info(
