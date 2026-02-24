@@ -1,37 +1,47 @@
 # IxADO (Intelligent eXecution Agentic Development Orchestrator)
 
-IxADO is a thin, vendor-agnostic development orchestrator that acts as an AI project manager. It tracks development tasks, manages project state, and delegates coding work to specialized agentic CLIs (like Claude CLI, Gemini CLI, or Codex CLI).
-Unlike heavy agent frameworks, IxADO embraces a lightweight "fan-out/fan-in" architecture using standard shell subprocesses and strictly adheres to standard Git/CI workflows.
+IxADO is a vendor-agnostic development orchestrator. It tracks phases/tasks, manages project state, and delegates implementation work to coding CLIs (Codex, Claude, Gemini, Mock) through a single execution contract.
+Unlike heavy agent frameworks, IxADO stays lightweight: standard subprocess execution, Git-native workflows, strict schema validation, and resumable state on disk.
 
 ## BE AWARE!!!
 
 **IxADO is meant to run in a sandbox and will run the CLI agents in full-permission mode**
 
-## The IxADO Workflow
+## Workflow Overview
 
-IxADO organizes work into **Phases** (a set of tasks that can be independently done by agents). The lifecycle of a Phase is strictly managed:
+IxADO organizes work into **Phases**. Each phase contains tasks with explicit assignees and status transitions.
 
-1. **Branching:** Starting a new Phase automatically creates a new Git feature branch.
-2. **Execution:** Tasks are delegated to vendor-specific Coding CLIs.
-3. **Pull Request:** Once all coding tasks in a Phase are complete, IxADO executes a "Create PR" task.
-4. **Agentic Review:** An automated PR review is conducted.
-5. **CI Fix Loop:** IxADO iteratively reads GitHub Actions CI pipeline results and dispatches fix tasks until all tests pass.
-6. **Done:** A Phase is only considered "Done" when there is an open PR with a perfectly green CI pipeline, awaiting final human review.
+1. **Planning:** Create/select a phase, add tasks, assign adapters.
+2. **Branch Prep:** Phase execution prepares or checks out the phase branch.
+3. **Task Execution:** Tasks run through adapter-specific workers using one normalized execution path.
+4. **Tester Pass (optional but supported):** Post-task validation can create CI-fix tasks when checks fail.
+5. **Recovery:** Recoverable execution exceptions can trigger AI-assisted remediation attempts.
+6. **Completion:** Phase reaches `DONE` when no TODO/CI_FIX tasks remain and configured checks pass.
 
 ## Core Features
 
 - **Vendor Agnostic:** Interfaces with any AI coding assistant that exposes a CLI.
-- **Task Tracking:** Maintains a strict state machine of project tasks and dependencies.
-- **CI-Driven Iteration:** Uses real CI/CD pipeline outputs as the ground truth for code verification.
-- **Telegram Command Center:** Remote control and real-time push notifications via a secure Telegram Bot interface.
-- **Contract-Driven:** Uses TypeScript and strict schema validation to ensure predictable task handoffs.
+- **Task/Phase State Machine:** Persisted local state for reliable resume and auditability.
+- **Multi-Project Context:** `ixado init`, `ixado list`, `ixado switch` manage global project registry.
+- **Execution Modes:** Manual and auto phase loop with configurable defaults.
+- **Web Control Center:** Local UI for phases, tasks, running agents, logs, and settings.
+- **Telegram Integration:** Optional remote command/notification channel.
+- **Contract-Driven:** TypeScript + schema validation for predictable handoffs and recovery results.
+
+## Planning Artifacts
+
+- `ROADMAP.md`: product direction and forward-looking milestones.
+- `TASKS.md`: execution backlog and implementation tasks with dependencies/status.
+- `BUGS.md`: reproduced defects with evidence and repro steps.
+
+Bug-derived implementation work should be tracked in `TASKS.md`; `ROADMAP.md` should stay focused on future product direction.
 
 ## Requirements
 
 - git CLI
-- github CLI (authenticated)
+- github CLI (authenticated, if using PR/CI integration)
 
-Any of the coding agents
+At least one coding agent CLI:
 
 - Codex CLI (authenticated)
 - Claude Code CLI (authenticated)
@@ -71,6 +81,23 @@ chmod +x scripts/install_linux.sh
 ```
 
 Ensure `~/.local/bin` is in your PATH.
+
+## Quick Start
+
+```bash
+ixado init
+ixado phase create "Phase: Example" "phase-example"
+ixado task create "Implement feature" "Do the implementation work" CODEX_CLI
+ixado phase run auto
+ixado status
+```
+
+Useful commands:
+
+- `ixado task list|start|logs|retry|reset`
+- `ixado phase create|active|run`
+- `ixado config show|mode|assignee|recovery`
+- `ixado web start|stop`
 
 ### Windows
 

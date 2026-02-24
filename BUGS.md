@@ -13,57 +13,39 @@
   - Default tester settings: `/root/scm/ado/src/cli/settings.ts:31`
   - Default schema values: `/root/scm/ado/src/types/index.ts:47`
 
-## 2) CODEX_CLI runner loses stdin prompt (`codex exec -` -> "No prompt provided via stdin.")
+## 2) `phase run` docs/usage mismatch for countdown argument `0`
 
-- Severity: Critical
+- Severity: Low
 - Reproduced on: February 24, 2026
 - Symptom:
-  - Task fails immediately with:
-    - `Command failed with exit code 1: codex exec -`
-  - `agents.json` output tail for the worker contains:
-    - `No prompt provided via stdin.`
+  - `ixado phase run auto 0` returns:
+    - `Startup failed: Usage: ixado phase run [auto|manual] [countdownSeconds]`
 - Why this is a bug:
-  - Ixado creates valid prompt files (`*_in.txt`) but the Codex process does not receive prompt content on stdin in this path.
-  - This blocks all CODEX_CLI execution in non-interactive task mode.
+  - Help text advertises optional `[countdownSeconds]`, but `0` (a valid "start immediately" value in many CLIs) is rejected with generic usage output.
+  - This is either argument-validation behavior not documented or parser behavior inconsistent with CLI help.
 - Minimal repro:
+  1. Run `ixado phase run auto 0`
+  2. Observe usage failure instead of immediate loop start.
+- Evidence:
+  - `/root/scm/test_ixado.log`
 
-1. Create task assigned to `CODEX_CLI`.
-2. Run `ixado task start <n> CODEX_CLI` or `ixado phase run ...`.
-3. Inspect `.ixado/agents.json` and see `No prompt provided via stdin.`
+## 3) `phase run` ignores per-task assignee and always uses default coding CLI
 
-- Evidence files:
-  - `/root/scm/ixado-todo/.ixado/agents.json`
-  - `/root/scm/ixado-todo/.ixado/agent_logs/CODEX_CLI/2026-02-24T12-35-58-861Z_600b0df5_in.txt`
-  - `/root/scm/ixado-todo/.ixado/agent_logs/CODEX_CLI/2026-02-24T12-35-58-861Z_600b0df5_out.txt`
-
-## 3) CLAUDE_CLI task execution can hang without output and ends as generic exit -1
-
-- Severity: High
+- Severity: Medium
 - Reproduced on: February 24, 2026
 - Symptom:
-  - `ixado task start <n> CLAUDE_CLI` stayed `IN_PROGRESS` for minutes with no streamed output.
-  - After termination, task marked `FAILED` with:
-    - `Command failed with exit code -1: claude --print --dangerously-skip-permissions`
-  - Log files have empty stdout/stderr.
+  - Task list showed task-specific assignees:
+    - Task #2 assigned `CLAUDE_CLI`
+    - Task #3 assigned `GEMINI_CLI`
+  - `ixado phase run auto` executed both with `CODEX_CLI`:
+    - `Execution loop: starting task #2 ... with CODEX_CLI`
+    - `Execution loop: starting task #3 ... with CODEX_CLI`
 - Why this is a bug:
-  - Failure mode is opaque and long-running by default (`timeoutMs` defaults to 3600000), causing poor operator feedback and long stalls.
-  - Adapter diagnostics are insufficient to distinguish auth/network/tooling issues.
-- Evidence files:
-  - `/root/scm/ixado-todo/.ixado/agent_logs/CLAUDE_CLI/2026-02-24T12-42-11-512Z_7d219e31_out.txt`
-  - `/root/scm/ixado-todo/.ixado/agents.json`
-
-## 4) GEMINI_CLI task execution can hang without output and ends as generic exit -1
-
-- Severity: High
-- Reproduced on: February 24, 2026
-- Symptom:
-  - `ixado task start <n> GEMINI_CLI` remained `IN_PROGRESS` with empty output.
-  - Worker later failed with:
-    - `Command failed with exit code -1: gemini --yolo --prompt`
-  - Direct probe also showed `timeout 8s gemini --help` exits `124` (hang).
-- Why this is a bug:
-  - Adapter path can stall silently and then fail with no actionable error payload.
-  - Combined with long default timeout, this can block execution loops for a long time.
-- Evidence files:
-  - `/root/scm/ixado-todo/.ixado/agent_logs/GEMINI_CLI/2026-02-24T12-45-06-197Z_f396cede_out.txt`
-  - `/root/scm/ixado-todo/.ixado/agents.json`
+  - Task-level assignee metadata is visible and accepted by `task create`, but phase loop routing does not honor it.
+  - This can hide adapter-specific regressions unless every task is started manually.
+- Minimal repro:
+  1. Create tasks with different assignees.
+  2. Run `ixado phase run auto`.
+  3. Compare task assignees to execution-loop assignee lines.
+- Evidence:
+  - `/root/scm/test_ixado.log`

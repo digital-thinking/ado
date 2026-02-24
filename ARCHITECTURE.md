@@ -1,29 +1,73 @@
 # System Architecture
 
-IxADO follows a lightweight **Manager/Worker** pattern tightly integrated with GitOps. The orchestrator (Manager) does not write code; it plans, branches, delegates, verifies against CI, and opens PRs. The underlying vendor CLIs (Workers) handle file manipulation and code generation.
+IxADO follows a lightweight manager/worker architecture. The orchestrator plans and coordinates work; adapter workers execute coding tasks via external CLIs.
 
-[Image of Telegram bot architecture interacting with a backend system]
+## High-Level Flow
 
-## Core Pipeline
-The execution flow is strictly phase-based and validated by external CI, with Telegram acting as the primary UI:
-`Telegram UI -> State Engine <-> Git Manager <-> Task Workers -> CI Pipeline -> Iterative Fix Loop`
+`CLI/Web/Telegram -> Command Layer -> Phase Runner -> Adapter Supervisor -> Worker CLI`
 
-## System Components
+With shared services:
 
-### 1. Core Engine (`src/engine/`)
-The brain of IxADO. It reads the project scope, maintains the task graph, and manages Phase transitions (Branching -> Coding -> PR -> Review).
+- `State Engine` for persisted project/phase/task data
+- `Git Manager` for branch and repository preconditions
+- `Process Manager` for subprocess I/O and lifecycle
+- `Recovery Orchestrator` for recoverable execution failures
 
-### 2. Bot Interface (`src/bot/`)
-The Telegram interface powered by `grammY`. It allows the user to trigger new phases, approve PRs, and query task statuses remotely. It also pushes proactive CI failure/success notifications to the user.
+## Core Components
 
-### 3. Git & CI Manager (`src/vcs/`)
-Handles interactions with the local Git repository and the GitHub CLI (`gh`). It is responsible for creating branches, opening PRs, and polling GitHub Actions for CI pipeline statuses.
+### 1) Command Layer (`src/cli/`, `src/web/`, `src/bot/`)
 
-### 4. Process Manager (`src/process/`)
-Handles the low-level asynchronous I/O. It uses native OS subprocesses to spawn vendor CLIs, attach to their `stdout`/`stderr` streams, and handle graceful terminations.
+- CLI commands for project, phase, task, config, and web control.
+- Web control center API/UI for state visibility and agent operations.
+- Optional Telegram interface for remote commands/notifications.
 
-### 5. CLI Adapters (`src/adapters/`)
-Vendor-specific translation layers (Codex, Gemini, Claude). These normalize the interface so the Core Engine can swap workers seamlessly.
+### 2) Phase Runner (`src/engine/phase-runner.ts`)
 
-### 6. State Management (`src/state/`)
-A file-backed storage mechanism that keeps track of the current project context, ensuring IxADO can resume work across multiple CI runs or interruptions.
+- Main orchestration loop for phase execution.
+- Prepares/checks out phase branch.
+- Selects runnable tasks and dispatches workers.
+- Runs tester/fixer flow where configured.
+- Updates task/phase statuses and persists transitions.
+
+### 3) Adapter Execution (`src/adapters/`, `src/web/agent-supervisor.ts`)
+
+- Adapter-specific command builders normalize Codex/Claude/Gemini/Mock invocation.
+- Agent supervisor runs tasks to completion, captures output tails, and tracks runtime metadata.
+- Supports adapter safety flags, timeout settings, and startup diagnostics.
+
+### 4) Process Manager (`src/process/manager.ts`)
+
+- Standard subprocess execution wrapper.
+- Handles stdin/stdout/stderr contracts for workers.
+- Enforces robust lifecycle handling (exit/error/timeout paths).
+
+### 5) State Engine (`src/state/`)
+
+- File-backed project state (`.ixado/`).
+- Persists phases, tasks, status transitions, and metadata needed for resume.
+- Keeps execution deterministic across restarts.
+
+### 6) Git/CI Integration (`src/vcs/`)
+
+- Local Git operations (branch prep, cleanliness checks, commit flow preconditions).
+- Optional GitHub CLI integration for PR and CI workflows.
+
+### 7) Exception Recovery (`src/engine/exception-recovery.ts`)
+
+- Handles recoverable task/phase exceptions with structured recovery prompts.
+- Parses strict recovery results (`fixed`/`unfixable`) and feeds decisions back to the phase loop.
+- Emits audit-visible recovery events for traceability.
+
+## Configuration Model
+
+- Global project registry and defaults (multi-project support).
+- Project-level runtime settings (loop mode, default assignee, adapter settings).
+- Policy/security controls for privileged operations.
+
+## Planning and Governance Artifacts
+
+- `ROADMAP.md`: forward-looking product direction.
+- `TASKS.md`: implementation backlog and execution plan.
+- `BUGS.md`: validated defects with reproduction evidence.
+
+Bug fixes should be converted into concrete task items in `TASKS.md`; roadmap remains product-direction oriented.
