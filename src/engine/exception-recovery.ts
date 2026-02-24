@@ -126,6 +126,24 @@ export type RunExceptionRecoveryInput = {
   }>;
 };
 
+export type RecoveryPostconditionVerifiers = {
+  verifyDirtyWorktree?: () => Promise<void>;
+};
+
+export async function verifyRecoveryPostcondition(input: {
+  exception: ExceptionMetadata;
+  verifiers: RecoveryPostconditionVerifiers;
+}): Promise<void> {
+  if (input.exception.category === "DIRTY_WORKTREE") {
+    if (!input.verifiers.verifyDirtyWorktree) {
+      throw new Error(
+        "Missing recovery postcondition verifier for DIRTY_WORKTREE.",
+      );
+    }
+    await input.verifiers.verifyDirtyWorktree();
+  }
+}
+
 export async function runExceptionRecovery(
   input: RunExceptionRecoveryInput,
 ): Promise<RecoveryAttemptRecord> {

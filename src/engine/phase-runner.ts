@@ -4,6 +4,7 @@ import {
   classifyRecoveryException,
   isRecoverableException,
   runExceptionRecovery,
+  verifyRecoveryPostcondition,
 } from "./exception-recovery";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
@@ -601,6 +602,13 @@ ${testerResult.fixTaskDescription}`.trim(),
         });
 
         if (recovery.result.status === "fixed") {
+          await verifyRecoveryPostcondition({
+            exception: recovery.exception,
+            verifiers: {
+              verifyDirtyWorktree: async () =>
+                this.git.ensureCleanWorkingTree(this.config.projectRootDir),
+            },
+          });
           console.info(`Recovery fixed: ${recovery.result.reasoning}`);
           return;
         }
