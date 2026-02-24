@@ -249,7 +249,7 @@ describe("ControlCenterService", () => {
         expect(input.prompt).toContain("Task: Build execution flow");
         return {
           command: "codex",
-          args: ["--dangerously-bypass-approvals-and-sandbox", "prompt"],
+          args: ["exec", "prompt"],
           stdout: "implemented",
           stderr: "",
           durationMs: 100,
@@ -809,13 +809,7 @@ describe("ControlCenterService", () => {
 
         return {
           command: "codex",
-          args: [
-            "exec",
-            "resume",
-            "--last",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-",
-          ],
+          args: ["exec", "resume", "--last", "-"],
           stdout: "second run passed",
           stderr: "",
           durationMs: 10,

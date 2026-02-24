@@ -13,10 +13,26 @@ import {
 } from "./settings";
 
 const DEFAULT_AGENT_SETTINGS = {
-  CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  CODEX_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
+  CLAUDE_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
+  GEMINI_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
+  MOCK_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
 };
 
 const DEFAULT_LOOP_SETTINGS = {
@@ -298,10 +314,26 @@ describe("cli settings", () => {
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
-        CODEX_CLI: { enabled: true, timeoutMs: 600000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 600000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 600000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 600000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          bypassApprovalsAndSandbox: false,
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          bypassApprovalsAndSandbox: false,
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          bypassApprovalsAndSandbox: false,
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          bypassApprovalsAndSandbox: false,
+        },
       },
     });
     expect(output[0]).toContain("Setup: Telegram mode enables remote");
@@ -353,10 +385,26 @@ describe("cli settings", () => {
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
-        CODEX_CLI: { enabled: true, timeoutMs: 700000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 700000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 700000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 700000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          bypassApprovalsAndSandbox: false,
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          bypassApprovalsAndSandbox: false,
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          bypassApprovalsAndSandbox: false,
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          bypassApprovalsAndSandbox: false,
+        },
       },
     });
   });
@@ -403,10 +451,26 @@ describe("cli settings", () => {
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
-        CODEX_CLI: { enabled: true, timeoutMs: 800000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 800000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 800000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 800000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          bypassApprovalsAndSandbox: false,
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          bypassApprovalsAndSandbox: false,
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          bypassApprovalsAndSandbox: false,
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          bypassApprovalsAndSandbox: false,
+        },
       },
     });
   });

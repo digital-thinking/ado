@@ -209,10 +209,7 @@ describe("web app api", () => {
           return {
             assignee: "CODEX_CLI",
             command: "codex",
-            args: [
-              "--dangerously-bypass-approvals-and-sandbox",
-              "do internal work",
-            ],
+            args: ["exec", "do internal work"],
             stdout: '{"ok":true}',
             stderr: "",
             durationMs: 45,

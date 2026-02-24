@@ -28,10 +28,26 @@ describe("web server runtime", () => {
       defaultInternalWorkAssignee: "MOCK_CLI",
       defaultAutoMode: false,
       agentSettings: {
-        CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 3_600_000,
+          bypassApprovalsAndSandbox: false,
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 3_600_000,
+          bypassApprovalsAndSandbox: false,
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 3_600_000,
+          bypassApprovalsAndSandbox: false,
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 3_600_000,
+          bypassApprovalsAndSandbox: false,
+        },
       },
       webLogFilePath: join(sandboxDir, ".ixado", "web.log"),
       port: 0,

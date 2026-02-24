@@ -18,6 +18,7 @@ export const CLI_ADAPTER_IDS: CLIAdapterId[] = [
 export const CliAgentSettingsItemSchema = z.object({
   enabled: z.boolean().default(true),
   timeoutMs: z.number().int().positive().default(3_600_000),
+  bypassApprovalsAndSandbox: z.boolean().default(false),
 });
 export type CliAgentSettingsItem = z.infer<typeof CliAgentSettingsItemSchema>;
 
@@ -25,18 +26,22 @@ export const CliAgentSettingsSchema = z.object({
   CODEX_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
   }),
   CLAUDE_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
   }),
   GEMINI_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
   }),
   MOCK_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
   }),
 });
 export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
@@ -116,18 +121,22 @@ export const CliSettingsSchema = z
       CODEX_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
+        bypassApprovalsAndSandbox: false,
       },
       CLAUDE_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
+        bypassApprovalsAndSandbox: false,
       },
       GEMINI_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
+        bypassApprovalsAndSandbox: false,
       },
       MOCK_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
+        bypassApprovalsAndSandbox: false,
       },
     }),
   })
@@ -155,6 +164,7 @@ export type CliSettings = z.infer<typeof CliSettingsSchema>;
 const CliAgentSettingsItemOverrideSchema = z.object({
   enabled: z.boolean().optional(),
   timeoutMs: z.number().int().positive().optional(),
+  bypassApprovalsAndSandbox: z.boolean().optional(),
 });
 
 const CliAgentSettingsOverrideSchema = z.object({
