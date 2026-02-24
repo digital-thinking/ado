@@ -267,7 +267,7 @@ describe("runExceptionRecovery uses safe-mode adapter by default (P16-006)", () 
     expect(capturedWork[0]?.assignee).toBe("CODEX_CLI");
   });
 
-  test("recovery does not inject bypass flags into the prompt passed to runInternalWork", async () => {
+  test("attempt-1 DIRTY_WORKTREE recovery prompt is plain cleanup nudge with no bypass flag", async () => {
     const exception = classifyRecoveryException({
       message: "Git working tree is not clean.",
       category: "DIRTY_WORKTREE",
@@ -292,9 +292,11 @@ describe("runExceptionRecovery uses safe-mode adapter by default (P16-006)", () 
       },
     });
 
-    // The recovery prompt should contain exception context, not any bypass flags.
+    // The attempt-1 prompt is plain natural-language cleanup guidance.
     expect(capturedPrompt).not.toContain(BYPASS_FLAG);
-    expect(capturedPrompt).toContain("DIRTY_WORKTREE");
+    expect(capturedPrompt).toBe(
+      "You left uncommitted changes. Please `git add` and `git commit` all your work with a descriptive message, then verify the repository is clean.",
+    );
   });
 
   test("safe-mode factory adapter used in recovery simulation completes without bypass flag", async () => {

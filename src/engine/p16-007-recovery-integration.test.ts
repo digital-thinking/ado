@@ -503,7 +503,7 @@ describe("P16-007 – runExceptionRecovery + real adapter factory: no bypass fla
     expect(adapterRunner.calls[0]?.command).toBe("codex");
   });
 
-  test("recovery prompt passed to adapter contains DIRTY_WORKTREE context, not bypass flag text", async () => {
+  test("attempt-1 DIRTY_WORKTREE recovery prompt is a plain cleanup nudge with no bypass flag text", async () => {
     const exception = classifyRecoveryException({
       message: "Git working tree is not clean.",
       category: "DIRTY_WORKTREE",
@@ -532,7 +532,9 @@ describe("P16-007 – runExceptionRecovery + real adapter factory: no bypass fla
       },
     });
 
-    expect(capturedPrompt).toContain("DIRTY_WORKTREE");
+    expect(capturedPrompt).toBe(
+      "You left uncommitted changes. Please `git add` and `git commit` all your work with a descriptive message, then verify the repository is clean.",
+    );
     expect(capturedPrompt).not.toContain(BYPASS_FLAG);
   });
 
