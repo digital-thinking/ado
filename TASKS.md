@@ -241,7 +241,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 - [x] `P20-002` Strengthen restart/resume reliability: reconcile in-progress agent/task state after process restarts without status drift or duplicate execution. **Status: Done**. Deps: `P19-005`.
 - [x] `P20-003` Tighten phase-loop preflight consistency (branch/worktree gating and deterministic error semantics across manual/auto mode). **Status: Done**. Deps: `P20-001`, `P20-002`.
 - [x] `P20-004` Add loop-level safeguards for duplicate CI_FIX generation and ensure deduplication/idempotency across repeated tester failures. **Status: Done**. Deps: `P20-003`.
-- [ ] `P20-005` Add regression/integration coverage for Phase 20 reliability fixes in CLI and phase-runner tests. **Status: InProgress**. Deps: `P20-004`.
+- [x] `P20-005` Add regression/integration coverage for Phase 20 reliability fixes in CLI and phase-runner tests. **Status: Done**. Deps: `P20-004`.
 - [ ] `P20-006` Create PR Task: open Phase 20 PR after coding tasks are done. Deps: `P20-005`.
 
 ## Phase 21: Configuration and UX Consistency (Roadmap)
