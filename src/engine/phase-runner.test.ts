@@ -54,6 +54,7 @@ describe("PhaseRunner", () => {
     };
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -141,6 +142,7 @@ describe("PhaseRunner", () => {
 
     let statusCallCount = 0;
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -227,6 +229,7 @@ describe("PhaseRunner", () => {
 
     let porcelainCallCount = 0;
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => mockState),
@@ -316,6 +319,7 @@ describe("PhaseRunner", () => {
 
     let porcelainCallCount = 0;
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -428,6 +432,7 @@ describe("PhaseRunner", () => {
 
     const capturedAssignees: string[] = [];
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async (input: any) => {
@@ -507,6 +512,7 @@ describe("PhaseRunner", () => {
 
     let capturedAssignee: string | undefined;
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async (input: any) => {
@@ -571,6 +577,7 @@ describe("PhaseRunner", () => {
     };
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -648,6 +655,7 @@ describe("PhaseRunner", () => {
     };
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => mockState),
@@ -722,6 +730,7 @@ describe("PhaseRunner", () => {
     };
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => mockState),
@@ -767,6 +776,168 @@ describe("PhaseRunner", () => {
     const statuses = statusCalls.map((c: any[]) => c[0].status);
     expect(statuses).toContain("CI_FAILED");
     expect(statuses).not.toContain("DONE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P20-002: PhaseRunner reconciles IN_PROGRESS tasks on startup
+// ---------------------------------------------------------------------------
+
+describe("PhaseRunner – P20-002 startup reconciliation", () => {
+  const baseConfig: PhaseRunnerConfig = {
+    mode: "AUTO",
+    countdownSeconds: 0,
+    activeAssignee: "MOCK_CLI",
+    maxRecoveryAttempts: 0,
+    testerCommand: null,
+    testerArgs: null,
+    testerTimeoutMs: 1000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    validationMaxRetries: 1,
+    projectRootDir: "/tmp/project",
+    projectName: "test-project",
+    policy: DEFAULT_AUTH_POLICY,
+    role: "admin",
+  };
+
+  test("calls reconcileInProgressTasks() before the execution loop", async () => {
+    const phaseId = "d0000000-0000-4000-8000-000000000001";
+    const taskId = "d1000000-0000-4000-8000-000000000001";
+
+    // Start with a task in IN_PROGRESS (simulating a prior crash)
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "CODING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Interrupted Task",
+              status: "IN_PROGRESS",
+              assignee: "MOCK_CLI",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let reconcileCalled = false;
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => {
+        reconcileCalled = true;
+        // Simulate reconciliation resetting the task to TODO
+        mockState.phases[0].tasks[0].status = "TODO";
+        return 1;
+      }),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    // reconcileInProgressTasks must have been called before the loop starts
+    expect(reconcileCalled).toBe(true);
+    // The task should have been executed after reconciliation reset it to TODO
+    expect(mockControl.startActiveTaskAndWait).toHaveBeenCalledTimes(1);
+  });
+
+  test("proceeds normally when reconcileInProgressTasks returns 0", async () => {
+    const phaseId = "d0000000-0000-4000-8000-000000000002";
+    const taskId = "d1000000-0000-4000-8000-000000000002";
+
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "CODING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Normal Task",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    expect(mockControl.reconcileInProgressTasks).toHaveBeenCalledTimes(1);
+    expect(mockControl.startActiveTaskAndWait).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -915,6 +1086,7 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
 
     const executionOrder: number[] = [];
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async (input: any) => {
@@ -1004,6 +1176,7 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
 
     const executionOrder: number[] = [];
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async (input: any) => {

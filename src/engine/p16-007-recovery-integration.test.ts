@@ -129,6 +129,7 @@ describe("P16-007 – end-to-end DIRTY_WORKTREE recovery: invocation is policy-c
     ]);
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -193,6 +194,7 @@ describe("P16-007 – end-to-end DIRTY_WORKTREE recovery: invocation is policy-c
     ]);
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -253,6 +255,7 @@ describe("P16-007 – end-to-end DIRTY_WORKTREE recovery: invocation is policy-c
     ]);
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -310,6 +313,7 @@ describe("P16-007 – retries not exhausted by forced bypass args", () => {
     let runInternalWorkCallCount = 0;
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -383,6 +387,7 @@ describe("P16-007 – retries not exhausted by forced bypass args", () => {
     const capturedAdapterArgs: string[][] = [];
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {
@@ -593,6 +598,7 @@ describe("P16-007 – recovery attempt count matches policy (1-of-N, not all-N)"
     const mockState = buildMockState(phaseId, taskId);
 
     const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async () => {

@@ -94,6 +94,16 @@ export class PhaseRunner {
     );
 
     try {
+      // Reconcile any IN_PROGRESS tasks left over from a prior process crash
+      // before the execution loop starts to avoid status drift and ensure the
+      // loop picks them up cleanly as TODO items.
+      const reconciledTasks = await this.control.reconcileInProgressTasks();
+      if (reconciledTasks > 0) {
+        console.info(
+          `Startup: reconciled ${reconciledTasks} IN_PROGRESS task(s) to TODO after process restart.`,
+        );
+      }
+
       const state = await this.control.getState();
       const phase = this.resolveActivePhase(state);
 

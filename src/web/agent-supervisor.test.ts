@@ -383,3 +383,193 @@ describe("AgentSupervisor", () => {
     supervisor.kill(agent.id);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P20-002: reconcileStaleRunningAgents – restart/resume reliability
+// ---------------------------------------------------------------------------
+
+describe("AgentSupervisor – reconcileStaleRunningAgents (P20-002)", () => {
+  let sandboxDir: string;
+  let registryFilePath: string;
+
+  beforeEach(async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-agents-"));
+    registryFilePath = join(sandboxDir, "agents.json");
+  });
+
+  afterEach(async () => {
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  test("returns 0 when there is no registry file", () => {
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(0);
+  });
+
+  test("returns 0 when no agents exist in the registry", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(registryFilePath, "[]", "utf8");
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(0);
+  });
+
+  test("returns 0 when all persisted agents are already in a terminal status", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Done worker",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "STOPPED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Failed worker",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "FAILED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(0);
+
+    // Registry should be unchanged
+    const { readFileSync } = await import("node:fs");
+    const persisted = JSON.parse(readFileSync(registryFilePath, "utf8"));
+    expect(persisted[0].status).toBe("STOPPED");
+    expect(persisted[1].status).toBe("FAILED");
+  });
+
+  test("marks all RUNNING agents as STOPPED and returns the count", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Running worker 1",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 1234,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Running worker 2",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 5678,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(2);
+
+    // Reconciled agents must be listed as STOPPED
+    const listed = supervisor.list();
+    expect(listed.every((a) => a.status === "STOPPED")).toBe(true);
+    expect(listed.every((a) => a.stoppedAt !== undefined)).toBe(true);
+  });
+
+  test("leaves terminal-status agents untouched while reconciling RUNNING ones", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Already stopped",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "STOPPED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Stale runner",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 9999,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(1);
+
+    const listed = supervisor.list();
+    const stoppedAgent = listed.find((a) => a.name === "Already stopped");
+    const reconciledAgent = listed.find((a) => a.name === "Stale runner");
+    expect(stoppedAgent?.status).toBe("STOPPED");
+    expect(reconciledAgent?.status).toBe("STOPPED");
+  });
+
+  test("is idempotent: second call on already-STOPPED agents returns 0", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Stale runner",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 1234,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const firstCount = supervisor.reconcileStaleRunningAgents();
+    const secondCount = supervisor.reconcileStaleRunningAgents();
+    expect(firstCount).toBe(1);
+    expect(secondCount).toBe(0);
+  });
+});
