@@ -18,6 +18,7 @@ import { ProcessManager, type ProcessRunner } from "../process";
 import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
+import { PhasePreflightError } from "../errors";
 import { type CLIAdapterId, type Phase, type Task } from "../types";
 
 /**
@@ -107,6 +108,11 @@ export class PhaseRunner {
       const state = await this.control.getState();
       const phase = this.resolveActivePhase(state);
 
+      // Preflight: validate phase metadata and status before any git work.
+      // Identical gate in both AUTO and MANUAL modes — deterministic fail-closed
+      // semantics that cannot be bypassed by exception recovery.
+      this.runPreflightChecks(phase);
+
       await this.prepareBranch(phase);
       const completedPhase = await this.executionLoop(phase, rl);
 
@@ -124,14 +130,61 @@ export class PhaseRunner {
   }
 
   private resolveActivePhase(state: any): Phase {
-    const phase =
-      state.phases.find(
-        (candidate: any) => candidate.id === state.activePhaseId,
-      ) ?? state.phases[0];
-    if (!phase) {
-      throw new Error("No active phase found.");
+    if (!state.phases || state.phases.length === 0) {
+      throw new PhasePreflightError(
+        "No phases found in project state. Run 'ixado phase create' to add a phase before running.",
+      );
     }
-    return phase;
+
+    if (state.activePhaseId) {
+      const phase = state.phases.find(
+        (candidate: any) => candidate.id === state.activePhaseId,
+      );
+      if (!phase) {
+        throw new PhasePreflightError(
+          `Active phase ID "${state.activePhaseId}" not found in project state. ` +
+            `Run 'ixado phase list' to verify phase IDs, or 'ixado phase set-active <id>' to update.`,
+        );
+      }
+      return phase;
+    }
+
+    // No activePhaseId set — fall back to the first phase (initial-run convenience).
+    return state.phases[0];
+  }
+
+  /**
+   * Validates phase metadata and status before any git or task work begins.
+   * Throws PhasePreflightError (non-recoverable) when the phase cannot be run,
+   * producing an actionable user-facing message and preventing AI recovery from
+   * being invoked for conditions the user must resolve manually.
+   *
+   * Checks performed (identical for AUTO and MANUAL modes):
+   *   1. Phase status is not terminal — DONE / AWAITING_CI / READY_FOR_REVIEW
+   *      indicate no further coding work remains.
+   *   2. branchName is non-empty — an empty branch name would produce a
+   *      confusing git error rather than a clear failure.
+   */
+  private runPreflightChecks(phase: Phase): void {
+    const TERMINAL_STATUSES = [
+      "DONE",
+      "AWAITING_CI",
+      "READY_FOR_REVIEW",
+    ] as const;
+    if (TERMINAL_STATUSES.some((s) => s === (phase.status as string))) {
+      throw new PhasePreflightError(
+        `Phase "${phase.name}" is already in terminal status "${phase.status}" ` +
+          `and cannot be re-executed. ` +
+          `Run 'ixado phase list' to check the current status, or create a new phase with 'ixado phase create'.`,
+      );
+    }
+
+    if (!phase.branchName || !phase.branchName.trim()) {
+      throw new PhasePreflightError(
+        `Phase "${phase.name}" has an empty or missing branchName. ` +
+          `Update the phase with a valid git branch name before running.`,
+      );
+    }
   }
 
   private async prepareBranch(phase: Phase): Promise<void> {

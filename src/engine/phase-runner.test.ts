@@ -7,7 +7,7 @@ import {
 import { DEFAULT_AUTH_POLICY } from "../security/policy";
 import { type ProcessRunner } from "../process";
 import { type ControlCenterService } from "../web";
-import { DirtyWorktreeError } from "../errors";
+import { DirtyWorktreeError, PhasePreflightError } from "../errors";
 
 describe("PhaseRunner", () => {
   const mockConfig: PhaseRunnerConfig = {
@@ -1014,6 +1014,418 @@ describe("pickNextTask", () => {
       { status: "TODO" },
     ];
     expect(pickNextTask(tasks)).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P20-003: phase-loop preflight consistency
+// ---------------------------------------------------------------------------
+
+describe("PhaseRunner – P20-003 preflight consistency", () => {
+  const phaseId = "a1000000-0000-4000-8000-000000000001";
+  const taskId = "a2000000-0000-4000-8000-000000000001";
+
+  /** Minimal mock control used for preflight tests — git runner never reached. */
+  function makeMockControl(stateOverride: object) {
+    return {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => stateOverride),
+      setPhaseStatus: mock(async () => stateOverride),
+      startActiveTaskAndWait: mock(async () => stateOverride),
+      createTask: mock(async () => stateOverride),
+      recordRecoveryAttempt: mock(async () => stateOverride),
+      runInternalWork: mock(async () => ({ stdout: "", stderr: "" })),
+    } as unknown as ControlCenterService;
+  }
+
+  /** Process runner that records whether it was ever called. */
+  function makeSpyRunner() {
+    let called = false;
+    const runner: ProcessRunner = {
+      run: mock(async () => {
+        called = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+    return { runner, wasCalled: () => called };
+  }
+
+  const baseConfig: PhaseRunnerConfig = {
+    mode: "AUTO",
+    countdownSeconds: 0,
+    activeAssignee: "MOCK_CLI",
+    maxRecoveryAttempts: 0,
+    testerCommand: null,
+    testerArgs: null,
+    testerTimeoutMs: 1000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    validationMaxRetries: 1,
+    projectRootDir: "/tmp/project",
+    projectName: "test-project",
+    policy: DEFAULT_AUTH_POLICY,
+    role: "admin",
+  };
+
+  // --- Terminal status gate ---
+
+  test.each([
+    ["DONE", "AUTO"],
+    ["DONE", "MANUAL"],
+    ["AWAITING_CI", "AUTO"],
+    ["AWAITING_CI", "MANUAL"],
+    ["READY_FOR_REVIEW", "AUTO"],
+    ["READY_FOR_REVIEW", "MANUAL"],
+  ] as const)(
+    "phase in terminal status %s throws PhasePreflightError in %s mode",
+    async (terminalStatus, mode) => {
+      const state = {
+        projectName: "test-project",
+        rootDir: "/tmp/project",
+        activePhaseId: phaseId,
+        phases: [
+          {
+            id: phaseId,
+            name: "Phase 1",
+            branchName: "feat/phase-1",
+            status: terminalStatus,
+            tasks: [
+              {
+                id: taskId,
+                title: "Task 1",
+                status: "TODO",
+                assignee: "UNASSIGNED",
+                dependencies: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      const { runner, wasCalled } = makeSpyRunner();
+      const config = { ...baseConfig, mode };
+      const pr = new PhaseRunner(
+        makeMockControl(state),
+        config,
+        undefined,
+        undefined,
+        runner,
+      );
+
+      const error = await pr.run().catch((e) => e);
+
+      expect(error).toBeInstanceOf(PhasePreflightError);
+      expect((error as PhasePreflightError).message).toContain(terminalStatus);
+      // No git operations should have been attempted
+      expect(wasCalled()).toBe(false);
+    },
+  );
+
+  test("AUTO and MANUAL modes produce identical PhasePreflightError for terminal phase status", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase Alpha",
+          branchName: "feat/alpha",
+          status: "DONE",
+          tasks: [],
+        },
+      ],
+    };
+
+    const autoRunner = new PhaseRunner(
+      makeMockControl(state),
+      { ...baseConfig, mode: "AUTO" },
+      undefined,
+      undefined,
+      makeSpyRunner().runner,
+    );
+    const manualRunner = new PhaseRunner(
+      makeMockControl(state),
+      { ...baseConfig, mode: "MANUAL" },
+      undefined,
+      undefined,
+      makeSpyRunner().runner,
+    );
+
+    const autoError = await autoRunner.run().catch((e) => e);
+    const manualError = await manualRunner.run().catch((e) => e);
+
+    // Both modes must produce the same typed error with the same message
+    expect(autoError).toBeInstanceOf(PhasePreflightError);
+    expect(manualError).toBeInstanceOf(PhasePreflightError);
+    expect((autoError as PhasePreflightError).message).toBe(
+      (manualError as PhasePreflightError).message,
+    );
+  });
+
+  // --- Non-terminal statuses are allowed through preflight ---
+
+  test.each([
+    "PLANNING",
+    "BRANCHING",
+    "CODING",
+    "CI_FAILED",
+    "CREATING_PR",
+  ] as const)(
+    "phase in non-terminal status %s is NOT blocked by preflight",
+    async (allowedStatus) => {
+      const state = {
+        projectName: "test-project",
+        rootDir: "/tmp/project",
+        activePhaseId: phaseId,
+        phases: [
+          {
+            id: phaseId,
+            name: "Phase 1",
+            branchName: "feat/phase-1",
+            status: allowedStatus,
+            tasks: [
+              {
+                id: taskId,
+                title: "Task 1",
+                status: "TODO",
+                assignee: "UNASSIGNED",
+                dependencies: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      const mockRunner: ProcessRunner = {
+        run: mock(async (input: any) => {
+          if (input.args.includes("--porcelain")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (input.args.includes("--show-current")) {
+            return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }),
+      } as any;
+
+      const control = {
+        ...makeMockControl(state),
+        getState: mock(async () => state),
+        startActiveTaskAndWait: mock(async () => {
+          state.phases[0].tasks[0].status = "DONE";
+          return state;
+        }),
+        setPhaseStatus: mock(async () => state),
+      } as unknown as ControlCenterService;
+
+      const pr = new PhaseRunner(
+        control,
+        baseConfig,
+        undefined,
+        undefined,
+        mockRunner,
+      );
+      const error = await pr.run().catch((e) => e);
+
+      // Must NOT throw PhasePreflightError for non-terminal statuses
+      expect(error).not.toBeInstanceOf(PhasePreflightError);
+    },
+  );
+
+  // --- Branch name validation ---
+
+  test("empty branchName throws PhasePreflightError before any git operation", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const { runner, wasCalled } = makeSpyRunner();
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      runner,
+    );
+
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    expect((error as PhasePreflightError).message).toContain("empty");
+    expect(wasCalled()).toBe(false);
+  });
+
+  test("whitespace-only branchName throws PhasePreflightError before any git operation", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "   ",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const { runner, wasCalled } = makeSpyRunner();
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      runner,
+    );
+
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    expect(wasCalled()).toBe(false);
+  });
+
+  // --- State integrity checks ---
+
+  test("stale activePhaseId (set but not found) throws PhasePreflightError", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      phases: [
+        {
+          id: phaseId, // different ID from activePhaseId
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [],
+        },
+      ],
+    };
+
+    const { runner, wasCalled } = makeSpyRunner();
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      runner,
+    );
+
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    expect((error as PhasePreflightError).message).toContain(
+      "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    );
+    expect(wasCalled()).toBe(false);
+  });
+
+  test("no phases in project state throws PhasePreflightError", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      phases: [],
+    };
+
+    const { runner, wasCalled } = makeSpyRunner();
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      runner,
+    );
+
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    expect((error as PhasePreflightError).message).toContain("No phases found");
+    expect(wasCalled()).toBe(false);
+  });
+
+  test("activePhaseId absent → falls back to first phase (no PhasePreflightError)", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      // activePhaseId intentionally absent
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain"))
+          return { exitCode: 0, stdout: "", stderr: "" };
+        if (input.args.includes("--show-current"))
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const control = {
+      ...makeMockControl(state),
+      getState: mock(async () => state),
+      startActiveTaskAndWait: mock(async () => {
+        state.phases[0].tasks[0].status = "DONE";
+        return state;
+      }),
+      setPhaseStatus: mock(async () => state),
+    } as unknown as ControlCenterService;
+
+    const pr = new PhaseRunner(
+      control,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    // Must not throw PhasePreflightError — fallback to first phase is valid
+    await expect(pr.run()).resolves.toBeUndefined();
   });
 });
 
