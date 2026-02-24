@@ -194,4 +194,229 @@ describe("PhaseRunner", () => {
       status: "DONE",
     });
   });
+
+  test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {
+    const phaseId = "33333333-3333-4333-8333-333333333333";
+    const taskId = "44444444-4444-4444-8444-444444444444";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "task output",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    // git status --porcelain returns only .ixado/ runtime artifacts
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return {
+            exitCode: 0,
+            stdout: "?? .ixado/cli.log\n?? .ixado/state.json\n",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      mockConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    // Must complete without error — .ixado/ artifacts must not trigger DIRTY_WORKTREE
+    await expect(runner.run()).resolves.toBeUndefined();
+
+    // No recovery should have been invoked
+    expect(mockControl.recordRecoveryAttempt).not.toHaveBeenCalled();
+    // Phase must reach DONE
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith({
+      phaseId,
+      status: "DONE",
+    });
+  });
+
+  test("clean-tree detection: untracked source file blocks phase run with DIRTY_WORKTREE", async () => {
+    const phaseId = "55555555-5555-4555-8555-555555555555";
+    const taskId = "66666666-6666-4666-8666-666666666666";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    // git status --porcelain shows an untracked real source file
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return {
+            exitCode: 0,
+            stdout: "?? src/untracked-file.ts\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    // Disable recovery so DIRTY_WORKTREE propagates immediately
+    const noRecoveryConfig: PhaseRunnerConfig = {
+      ...mockConfig,
+      maxRecoveryAttempts: 0,
+    };
+
+    const runner = new PhaseRunner(
+      mockControl,
+      noRecoveryConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    // Must reject — a real untracked source file must block phase run
+    const error = await runner.run().catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    // Phase must have been set to CI_FAILED (not DONE)
+    const statusCalls = (mockControl.setPhaseStatus as ReturnType<typeof mock>)
+      .mock.calls;
+    const statuses = statusCalls.map((c: any[]) => c[0].status);
+    expect(statuses).toContain("CI_FAILED");
+    expect(statuses).not.toContain("DONE");
+  });
+
+  test("clean-tree detection: modified tracked source file blocks phase run with DIRTY_WORKTREE", async () => {
+    const phaseId = "77777777-7777-4777-8777-777777777777";
+    const taskId = "88888888-8888-4888-8888-888888888888";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    // git status --porcelain shows a modified tracked source file
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return {
+            exitCode: 0,
+            stdout: " M src/engine/phase-runner.ts\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    // Disable recovery so DIRTY_WORKTREE propagates immediately
+    const noRecoveryConfig: PhaseRunnerConfig = {
+      ...mockConfig,
+      maxRecoveryAttempts: 0,
+    };
+
+    const runner = new PhaseRunner(
+      mockControl,
+      noRecoveryConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    // Must reject — a modified tracked source file must block phase run
+    const error = await runner.run().catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    // Phase must have been set to CI_FAILED (not DONE)
+    const statusCalls = (mockControl.setPhaseStatus as ReturnType<typeof mock>)
+      .mock.calls;
+    const statuses = statusCalls.map((c: any[]) => c[0].status);
+    expect(statuses).toContain("CI_FAILED");
+    expect(statuses).not.toContain("DONE");
+  });
 });

@@ -27,6 +27,30 @@ describe("GitManager", () => {
     );
   });
 
+  test("untracked source file blocks clean-tree check with DIRTY_WORKTREE category", async () => {
+    const runner = new MockProcessRunner([{ stdout: "?? src/new-file.ts\n" }]);
+    const manager = new GitManager(runner);
+
+    const error = await manager
+      .ensureCleanWorkingTree("C:/repo")
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("Git working tree is not clean.");
+    expect(error.category).toBe("DIRTY_WORKTREE");
+  });
+
+  test("modified tracked source file blocks clean-tree check with DIRTY_WORKTREE category", async () => {
+    const runner = new MockProcessRunner([{ stdout: " M src/modified.ts\n" }]);
+    const manager = new GitManager(runner);
+
+    const error = await manager
+      .ensureCleanWorkingTree("C:/repo")
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("Git working tree is not clean.");
+    expect(error.category).toBe("DIRTY_WORKTREE");
+  });
+
   test("ignores all .ixado/ artifacts while checking clean working tree", async () => {
     const artifacts = [
       "?? .ixado/cli.log",
