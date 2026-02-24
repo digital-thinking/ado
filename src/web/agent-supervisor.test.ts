@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { AgentSupervisor } from "./agent-supervisor";
+import { ProcessStdinUnavailableError } from "../process/manager";
 
 type FakeChild = ChildProcess & {
   stdout: PassThrough;
@@ -241,6 +242,62 @@ describe("AgentSupervisor", () => {
     });
 
     child.emit("close", 1, null);
+  });
+
+  test("throws ProcessStdinUnavailableError when stdin content is required but pipe is null", async () => {
+    const emitter = new EventEmitter() as ChildProcess;
+    const child = Object.assign(emitter, {
+      pid: 9999,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      stdin: null,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+
+    const supervisor = new AgentSupervisor(() => child);
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Stdin test worker",
+        command: "codex",
+        args: ["exec", "-"],
+        cwd: "/tmp",
+        approvedAdapterSpawn: true,
+        stdin: "the prompt payload",
+      }),
+    ).rejects.toBeInstanceOf(ProcessStdinUnavailableError);
+  });
+
+  test("delivers stdin via atomic end(data) when pipe is available", async () => {
+    const child = createFakeChild();
+    const received: string[] = [];
+    let ended = false;
+
+    child.stdin.on("data", (chunk: Buffer | string) => {
+      received.push(chunk.toString());
+    });
+    child.stdin.on("end", () => {
+      ended = true;
+    });
+
+    const supervisor = new AgentSupervisor(() => {
+      queueMicrotask(() => {
+        child.emit("close", 0, null);
+      });
+      return child;
+    });
+
+    await supervisor.runToCompletion({
+      name: "Atomic stdin worker",
+      command: "codex",
+      args: ["exec", "-"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+      stdin: "atomic-payload",
+    });
+
+    expect(received.join("")).toBe("atomic-payload");
+    expect(ended).toBe(true);
   });
 
   test("calls onFailure hook when agent is killed", (done) => {

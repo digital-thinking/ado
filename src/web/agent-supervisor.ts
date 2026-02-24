@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { resolveCommandForSpawn } from "../process/command-resolver";
+import { ProcessStdinUnavailableError } from "../process/manager";
 import { AgentFailureError } from "../errors";
 
 type SpawnFn = (
@@ -435,9 +436,13 @@ export class AgentSupervisor {
     });
 
     if (options.stdin !== undefined) {
-      child.stdin?.write(options.stdin);
+      if (!child.stdin) {
+        throw new ProcessStdinUnavailableError(record.command);
+      }
+      child.stdin.end(options.stdin);
+    } else {
+      child.stdin?.end();
     }
-    child.stdin?.end();
 
     if (options.timeoutMs !== undefined) {
       timeoutHandle = setTimeout(() => {
