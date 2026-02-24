@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { ProcessExecutionError, type ProcessRunner } from "../process";
-import { runTesterWorkflow } from "./tester-workflow";
+import { detectTesterCommand, runTesterWorkflow } from "./tester-workflow";
 
 describe("runTesterWorkflow", () => {
   test("passes when tester command succeeds", async () => {
@@ -177,6 +177,191 @@ describe("runTesterWorkflow", () => {
         throw new Error("Expected SKIPPED tester result");
       }
       expect(result.reason).toContain("No tester configured");
+      expect(runnerCalled).toBe(false);
+      expect(fixTaskCreated).toBe(false);
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("detectTesterCommand", () => {
+  test("P19-001: returns npm test when package.json is present", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-detect-node-"));
+    try {
+      await writeFile(join(tempCwd, "package.json"), '{"name":"test"}', "utf8");
+      const detected = await detectTesterCommand(tempCwd);
+      expect(detected).not.toBeNull();
+      expect(detected?.command).toBe("npm");
+      expect(detected?.args).toEqual(["test"]);
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("P19-001: returns make test when Makefile is present (no package.json)", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-detect-make-"));
+    try {
+      await writeFile(join(tempCwd, "Makefile"), "test:\n\techo ok\n", "utf8");
+      const detected = await detectTesterCommand(tempCwd);
+      expect(detected).not.toBeNull();
+      expect(detected?.command).toBe("make");
+      expect(detected?.args).toEqual(["test"]);
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("P19-001: returns null when neither package.json nor Makefile is present (non-Node repo)", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-detect-none-"));
+    try {
+      const detected = await detectTesterCommand(tempCwd);
+      expect(detected).toBeNull();
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("P19-001: package.json takes precedence over Makefile when both are present", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-detect-both-"));
+    try {
+      await writeFile(join(tempCwd, "package.json"), '{"name":"test"}', "utf8");
+      await writeFile(join(tempCwd, "Makefile"), "test:\n\techo ok\n", "utf8");
+      const detected = await detectTesterCommand(tempCwd);
+      expect(detected?.command).toBe("npm");
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runTesterWorkflow auto-detection", () => {
+  test("P19-001: auto-detects npm test when package.json present and testerCommand/testerArgs are null", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-auto-node-"));
+    try {
+      await writeFile(join(tempCwd, "package.json"), '{"name":"test"}', "utf8");
+
+      let ranCommand = "";
+      let ranArgs: string[] = [];
+      const runner: ProcessRunner = {
+        async run(input) {
+          ranCommand = input.command;
+          ranArgs = input.args ?? [];
+          return {
+            command: input.command,
+            args: input.args ?? [],
+            cwd: input.cwd ?? "",
+            exitCode: 0,
+            signal: null,
+            stdout: "all tests passed",
+            stderr: "",
+            durationMs: 50,
+          };
+        },
+      };
+
+      const result = await runTesterWorkflow({
+        phaseId: "11111111-1111-4111-8111-111111111111",
+        phaseName: "Phase 19",
+        completedTask: {
+          id: "22222222-2222-4222-8222-222222222222",
+          title: "P19 Task",
+        },
+        cwd: tempCwd,
+        testerCommand: null,
+        testerArgs: null,
+        testerTimeoutMs: 120_000,
+        runner,
+        createFixTask: async () => {},
+      });
+
+      expect(result.status).toBe("PASSED");
+      expect(ranCommand).toBe("npm");
+      expect(ranArgs).toEqual(["test"]);
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("P19-001: auto-detects make test when Makefile present and testerCommand/testerArgs are null", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-auto-make-"));
+    try {
+      await writeFile(join(tempCwd, "Makefile"), "test:\n\techo ok\n", "utf8");
+
+      let ranCommand = "";
+      const runner: ProcessRunner = {
+        async run(input) {
+          ranCommand = input.command;
+          return {
+            command: input.command,
+            args: input.args ?? [],
+            cwd: input.cwd ?? "",
+            exitCode: 0,
+            signal: null,
+            stdout: "make test passed",
+            stderr: "",
+            durationMs: 50,
+          };
+        },
+      };
+
+      const result = await runTesterWorkflow({
+        phaseId: "11111111-1111-4111-8111-111111111111",
+        phaseName: "Phase 19",
+        completedTask: {
+          id: "22222222-2222-4222-8222-222222222222",
+          title: "P19 Task",
+        },
+        cwd: tempCwd,
+        testerCommand: null,
+        testerArgs: null,
+        testerTimeoutMs: 120_000,
+        runner,
+        createFixTask: async () => {},
+      });
+
+      expect(result.status).toBe("PASSED");
+      expect(ranCommand).toBe("make");
+    } finally {
+      await rm(tempCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("P19-001: skips tester without CI_FIX when no known test runner detected (non-Node repo)", async () => {
+    const tempCwd = await mkdtemp(join(tmpdir(), "ixado-auto-none-"));
+    let runnerCalled = false;
+    let fixTaskCreated = false;
+
+    const runner: ProcessRunner = {
+      async run() {
+        runnerCalled = true;
+        throw new Error("runner should not be called");
+      },
+    };
+
+    try {
+      const result = await runTesterWorkflow({
+        phaseId: "11111111-1111-4111-8111-111111111111",
+        phaseName: "Phase 19",
+        completedTask: {
+          id: "22222222-2222-4222-8222-222222222222",
+          title: "P19 Task",
+        },
+        cwd: tempCwd,
+        testerCommand: null,
+        testerArgs: null,
+        testerTimeoutMs: 120_000,
+        runner,
+        createFixTask: async () => {
+          fixTaskCreated = true;
+        },
+      });
+
+      expect(result.status).toBe("SKIPPED");
+      if (result.status !== "SKIPPED") {
+        throw new Error("Expected SKIPPED");
+      }
+      expect(result.reason).toContain("no known test runner detected");
       expect(runnerCalled).toBe(false);
       expect(fixTaskCreated).toBe(false);
     } finally {

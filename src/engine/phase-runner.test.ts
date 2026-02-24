@@ -379,6 +379,167 @@ describe("PhaseRunner", () => {
     expect(statuses).not.toContain("DONE");
   });
 
+  test("P19-003: each task uses its own persisted assignee instead of global default", async () => {
+    const phaseId = "a0000000-0000-4000-8000-000000000001";
+    const task1Id = "b0000000-0000-4000-8000-000000000001";
+    const task2Id = "b0000000-0000-4000-8000-000000000002";
+    const task3Id = "b0000000-0000-4000-8000-000000000003";
+
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: task1Id,
+              title: "Task 1 — uses global default",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+            {
+              id: task2Id,
+              title: "Task 2 — has own CLAUDE_CLI assignee",
+              status: "TODO",
+              assignee: "CLAUDE_CLI",
+              dependencies: [],
+            },
+            {
+              id: task3Id,
+              title: "Task 3 — has own GEMINI_CLI assignee",
+              status: "TODO",
+              assignee: "GEMINI_CLI",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const capturedAssignees: string[] = [];
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        capturedAssignees.push(input.assignee);
+        const taskIdx = input.taskNumber - 1;
+        mockState.phases[0].tasks[taskIdx].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "task output",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      mockConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    // Task 1 (UNASSIGNED) must fall back to global default (MOCK_CLI)
+    expect(capturedAssignees[0]).toBe("MOCK_CLI");
+    // Task 2 must use its own CLAUDE_CLI assignee
+    expect(capturedAssignees[1]).toBe("CLAUDE_CLI");
+    // Task 3 must use its own GEMINI_CLI assignee
+    expect(capturedAssignees[2]).toBe("GEMINI_CLI");
+
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith({
+      phaseId,
+      status: "DONE",
+    });
+  });
+
+  test("P19-003: task with UNASSIGNED assignee falls back to global default", async () => {
+    const phaseId = "c0000000-0000-4000-8000-000000000001";
+    const taskId = "d0000000-0000-4000-8000-000000000001";
+
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let capturedAssignee: string | undefined;
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        capturedAssignee = input.assignee;
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      mockConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    // UNASSIGNED task must use global default (MOCK_CLI from mockConfig.activeAssignee)
+    expect(capturedAssignee).toBe("MOCK_CLI");
+  });
+
   test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {
     const phaseId = "33333333-3333-4333-8333-333333333333";
     const taskId = "44444444-4444-4444-8444-444444444444";

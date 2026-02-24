@@ -88,9 +88,14 @@ Ensure `~/.local/bin` is in your PATH.
 ixado init
 ixado phase create "Phase: Example" "phase-example"
 ixado task create "Implement feature" "Do the implementation work" CODEX_CLI
-ixado phase run auto
+ixado phase run auto 0
 ixado status
 ```
+
+Phase loop mode/countdown examples:
+
+- `ixado phase run auto 0` starts the next task immediately in auto mode (no countdown delay).
+- `ixado phase run manual 0` runs in manual mode and accepts the same `countdownSeconds` argument shape.
 
 Useful commands:
 

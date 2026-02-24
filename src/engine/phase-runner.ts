@@ -267,9 +267,13 @@ Recovery: ${recoveryMessage}`,
     taskNumber: number,
     resumeSession: boolean,
   ): Promise<void> {
+    const effectiveAssignee: CLIAdapterId =
+      task.assignee !== "UNASSIGNED"
+        ? (task.assignee as CLIAdapterId)
+        : this.config.activeAssignee;
     const nextTaskLabel = `task #${taskNumber} ${task.title}`;
     console.info(
-      `Execution loop: starting ${nextTaskLabel} with ${this.config.activeAssignee}.`,
+      `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
     );
 
     let taskRunCount = 0;
@@ -279,7 +283,7 @@ Recovery: ${recoveryMessage}`,
       taskRunCount += 1;
       const updatedState = await this.control.startActiveTaskAndWait({
         taskNumber,
-        assignee: this.config.activeAssignee,
+        assignee: effectiveAssignee,
         resume: resumeSession,
       });
       const updatedPhase = this.resolveActivePhase(updatedState);
