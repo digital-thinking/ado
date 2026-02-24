@@ -227,7 +227,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 - [x] `P19-001` Fix tester auto-detection/default behavior so non-Node repositories do not deterministically fail tester workflow on first run. Ensure default tester behavior is repo-aware and does not create avoidable CI_FIX churn. Deps: `P18-004`. **Status: Done**.
 - [x] `P19-002` Fix `phase run` CLI argument parsing so `countdownSeconds=0` is accepted and documented consistently for `auto` and `manual` modes. **Status: Done**. Deps: `P18-004`.
-- [ ] `P19-003` Fix phase execution assignee routing to honor each task's persisted assignee instead of always using the global default coding CLI. **Status: InProgress**. Deps: `P18-004`.
+- [x] `P19-003` Fix phase execution assignee routing to honor each task's persisted assignee instead of always using the global default coding CLI. **Status: Done**. Deps: `P18-004`.
 - [ ] `P19-004` Add regression tests for Phase 19 fixes:
   - non-Node repo first task path does not auto-generate CI_FIX from invalid default tester command,
   - `ixado phase run auto 0` and `ixado phase run manual 0` start without usage failure,
