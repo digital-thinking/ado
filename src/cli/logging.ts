@@ -1,7 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { inspect } from "node:util";
-import { resolveGlobalSettingsFilePath } from "./settings";
 
 const DEFAULT_CLI_LOG_FILE = "cli.log";
 
@@ -20,24 +19,54 @@ function formatLogArg(value: unknown): string {
   });
 }
 
-function appendLogLine(logFilePath: string, level: string, args: unknown[]): void {
+function appendLogLine(
+  logFilePath: string,
+  level: string,
+  args: unknown[],
+): void {
   const line = `[${new Date().toISOString()}] [${level}] ${args.map(formatLogArg).join(" ")}\n`;
+  mkdirSync(dirname(logFilePath), { recursive: true });
   appendFileSync(logFilePath, line, "utf8");
 }
 
-export function resolveCliLogFilePath(_cwd: string): string {
+function createLogPathError(
+  logFilePath: string,
+  error: unknown,
+  override: boolean,
+): Error {
+  const cause = error instanceof Error ? error : new Error(String(error));
+  const reason = cause.message || String(error);
+  const hint = override
+    ? "Set IXADO_CLI_LOG_FILE to a writable file path."
+    : "Ensure the project directory is writable or set IXADO_CLI_LOG_FILE to a writable file path.";
+  return new Error(
+    `Failed to initialize CLI logging at \"${logFilePath}\": ${reason}. ${hint}`,
+    { cause },
+  );
+}
+
+function ensureWritableLogPath(logFilePath: string, override: boolean): void {
+  try {
+    mkdirSync(dirname(logFilePath), { recursive: true });
+    appendFileSync(logFilePath, "", "utf8");
+  } catch (error) {
+    throw createLogPathError(logFilePath, error, override);
+  }
+}
+
+export function resolveCliLogFilePath(cwd: string): string {
   const configuredPath = process.env.IXADO_CLI_LOG_FILE?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
 
-  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
-  return resolve(dirname(globalSettingsFilePath), DEFAULT_CLI_LOG_FILE);
+  return resolve(cwd, ".ixado", DEFAULT_CLI_LOG_FILE);
 }
 
 export function initializeCliLogging(cwd: string): string {
   const logFilePath = resolveCliLogFilePath(cwd);
-  mkdirSync(dirname(logFilePath), { recursive: true });
+  const hasExplicitOverride = Boolean(process.env.IXADO_CLI_LOG_FILE?.trim());
+  ensureWritableLogPath(logFilePath, hasExplicitOverride);
 
   if (!initialized) {
     const originalLog = console.log.bind(console);

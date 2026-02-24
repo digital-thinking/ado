@@ -189,7 +189,9 @@ export async function startWebControlCenter(
         );
       }
 
-      const adapter = createAdapter(workInput.assignee, processManager);
+      const adapter = createAdapter(workInput.assignee, processManager, {
+        bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
+      });
       const artifacts = await createPromptLogArtifacts({
         cwd: input.cwd,
         assignee: workInput.assignee,

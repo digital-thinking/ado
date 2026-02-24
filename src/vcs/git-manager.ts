@@ -55,7 +55,7 @@ function normalizeStatusPath(rawPath: string): string {
 function isIgnoredRuntimeArtifact(statusLine: string): boolean {
   const payload = statusLine.length > 3 ? statusLine.slice(3) : statusLine;
   const path = normalizeStatusPath(payload);
-  return path === ".ixado/cli.log";
+  return path === ".ixado" || path.startsWith(".ixado/");
 }
 
 export class GitManager {

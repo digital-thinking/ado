@@ -27,13 +27,61 @@ describe("GitManager", () => {
     );
   });
 
-  test("ignores ixado runtime cli log while checking clean working tree", async () => {
-    const runner = new MockProcessRunner([{ stdout: "?? .ixado/cli.log\n" }]);
+  test("untracked source file blocks clean-tree check with DIRTY_WORKTREE category", async () => {
+    const runner = new MockProcessRunner([{ stdout: "?? src/new-file.ts\n" }]);
     const manager = new GitManager(runner);
 
-    await expect(
-      manager.ensureCleanWorkingTree("C:/repo"),
-    ).resolves.toBeUndefined();
+    const error = await manager
+      .ensureCleanWorkingTree("C:/repo")
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("Git working tree is not clean.");
+    expect(error.category).toBe("DIRTY_WORKTREE");
+  });
+
+  test("modified tracked source file blocks clean-tree check with DIRTY_WORKTREE category", async () => {
+    const runner = new MockProcessRunner([{ stdout: " M src/modified.ts\n" }]);
+    const manager = new GitManager(runner);
+
+    const error = await manager
+      .ensureCleanWorkingTree("C:/repo")
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("Git working tree is not clean.");
+    expect(error.category).toBe("DIRTY_WORKTREE");
+  });
+
+  test("ignores all .ixado/ artifacts while checking clean working tree", async () => {
+    const artifacts = [
+      "?? .ixado/cli.log",
+      "?? .ixado/web.log",
+      "?? .ixado/audit.log",
+      "?? .ixado/state.json",
+      "?? .ixado/settings.json",
+      "?? .ixado/agents.json",
+      "?? .ixado/agent_logs/abc.log",
+      "?? .ixado/",
+    ];
+
+    for (const line of artifacts) {
+      const runner = new MockProcessRunner([{ stdout: `${line}\n` }]);
+      const manager = new GitManager(runner);
+
+      await expect(
+        manager.ensureCleanWorkingTree("C:/repo"),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  test("still fails when .ixado/ and real dirty files are mixed", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "?? .ixado/cli.log\n M src/file.ts\n" },
+    ]);
+    const manager = new GitManager(runner);
+
+    await expect(manager.ensureCleanWorkingTree("C:/repo")).rejects.toThrow(
+      "Git working tree is not clean.",
+    );
   });
 
   test("returns current branch", async () => {

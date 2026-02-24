@@ -224,7 +224,9 @@ function createControlCenterServiceWithAgentTracking(
       }
 
       const assigneeSettings = settings.agents[workInput.assignee];
-      const adapter = createAdapter(workInput.assignee, processManager);
+      const adapter = createAdapter(workInput.assignee, processManager, {
+        bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
+      });
       const artifacts = await createPromptLogArtifacts({
         cwd: projectRootDir,
         assignee: workInput.assignee,

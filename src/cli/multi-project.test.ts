@@ -11,10 +11,26 @@ import type { CliSettings } from "../types";
 import { TestSandbox } from "./test-helpers";
 
 const DEFAULT_AGENT_SETTINGS = {
-  CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  CODEX_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
+  CLAUDE_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
+  GEMINI_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
+  MOCK_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    bypassApprovalsAndSandbox: false,
+  },
 };
 
 const DEFAULT_LOOP_SETTINGS = {

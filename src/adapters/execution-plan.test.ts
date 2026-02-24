@@ -6,17 +6,30 @@ describe("buildAdapterExecutionPlan", () => {
   test("uses stdin and '-' for codex normal execution", () => {
     const plan = buildAdapterExecutionPlan({
       assignee: "CODEX_CLI",
-      baseArgs: ["exec", "--dangerously-bypass-approvals-and-sandbox"],
+      baseArgs: ["exec"],
       prompt: "hello",
       promptFilePath: "in.txt",
       resume: false,
     });
 
-    expect(plan.args).toEqual(["exec", "--dangerously-bypass-approvals-and-sandbox", "-"]);
+    expect(plan.args).toEqual(["exec", "-"]);
     expect(plan.stdin).toBe("hello");
   });
 
   test("uses resume --last for codex retry", () => {
+    const plan = buildAdapterExecutionPlan({
+      assignee: "CODEX_CLI",
+      baseArgs: ["exec"],
+      prompt: "hello",
+      promptFilePath: "in.txt",
+      resume: true,
+    });
+
+    expect(plan.args).toEqual(["exec", "resume", "--last", "-"]);
+    expect(plan.stdin).toBe("hello");
+  });
+
+  test("preserves explicit codex bypass flag for resume when configured", () => {
     const plan = buildAdapterExecutionPlan({
       assignee: "CODEX_CLI",
       baseArgs: ["exec", "--dangerously-bypass-approvals-and-sandbox"],
@@ -44,7 +57,11 @@ describe("buildAdapterExecutionPlan", () => {
       resume: true,
     });
 
-    expect(plan.args).toEqual(["--print", "--dangerously-skip-permissions", "--continue"]);
+    expect(plan.args).toEqual([
+      "--print",
+      "--dangerously-skip-permissions",
+      "--continue",
+    ]);
     expect(plan.stdin).toBe("hello");
   });
 
