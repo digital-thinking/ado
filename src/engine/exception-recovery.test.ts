@@ -158,7 +158,7 @@ describe("exception recovery", () => {
       },
     });
 
-    expect(capturedResume).toBe(false);
+    expect(capturedResume).toBeUndefined();
     expect(capturedPrompt).toContain("Return ONLY strict JSON");
     expect(capturedPrompt).toContain("Exception category: DIRTY_WORKTREE");
     expect(attempt.result.status).toBe("fixed");

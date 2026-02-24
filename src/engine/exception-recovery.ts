@@ -207,7 +207,7 @@ export async function runExceptionRecovery(
     prompt,
     phaseId: exception.phaseId,
     taskId: exception.taskId,
-    resume: shouldResumeOriginalSession,
+    ...(shouldResumeOriginalSession ? { resume: true } : {}),
   });
 
   const parsedResult: ExceptionRecoveryResult = shouldResumeOriginalSession
