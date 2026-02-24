@@ -97,6 +97,101 @@ describe("exception recovery", () => {
     expect(attempt.attemptNumber).toBe(1);
   });
 
+  test("DIRTY_WORKTREE attempt 1 resumes original session with plain nudge and skips JSON parsing", async () => {
+    const exception = classifyRecoveryException({
+      message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
+    });
+
+    let capturedPrompt = "";
+    let capturedResume: boolean | undefined;
+
+    const attempt = await runExceptionRecovery({
+      cwd: process.cwd(),
+      assignee: "MOCK_CLI",
+      exception,
+      attemptNumber: 1,
+      role: "admin",
+      policy: DEFAULT_AUTH_POLICY,
+      runInternalWork: async (work) => {
+        capturedPrompt = work.prompt;
+        capturedResume = work.resume;
+        return {
+          stdout: "non-json freeform model response",
+          stderr: "",
+        };
+      },
+    });
+
+    expect(capturedResume).toBe(true);
+    expect(capturedPrompt).toBe(
+      "You left uncommitted changes. Please `git add` and `git commit` all your work with a descriptive message, then verify the repository is clean.",
+    );
+    expect(capturedPrompt).not.toContain("Return ONLY strict JSON");
+    expect(attempt.result.status).toBe("fixed");
+  });
+
+  test("DIRTY_WORKTREE attempt 2 uses recovery-worker JSON prompt and does not resume", async () => {
+    const exception = classifyRecoveryException({
+      message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
+    });
+
+    let capturedPrompt = "";
+    let capturedResume: boolean | undefined;
+
+    const attempt = await runExceptionRecovery({
+      cwd: process.cwd(),
+      assignee: "MOCK_CLI",
+      exception,
+      attemptNumber: 2,
+      role: "admin",
+      policy: DEFAULT_AUTH_POLICY,
+      runInternalWork: async (work) => {
+        capturedPrompt = work.prompt;
+        capturedResume = work.resume;
+        return {
+          stdout:
+            '{"status":"fixed","reasoning":"cleaned up","actionsTaken":["git add --all","git commit -m \\"fix\\""],"filesTouched":["src/main.ts"]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(capturedResume).toBeUndefined();
+    expect(capturedPrompt).toContain("Return ONLY strict JSON");
+    expect(capturedPrompt).toContain("Exception category: DIRTY_WORKTREE");
+    expect(attempt.result.status).toBe("fixed");
+    expect(attempt.result.actionsTaken).toEqual([
+      "git add --all",
+      'git commit -m "fix"',
+    ]);
+  });
+
+  test("DIRTY_WORKTREE attempt 2 rejects non-JSON output because JSON parser path is used", async () => {
+    const exception = classifyRecoveryException({
+      message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
+    });
+
+    await expect(
+      runExceptionRecovery({
+        cwd: process.cwd(),
+        assignee: "MOCK_CLI",
+        exception,
+        attemptNumber: 2,
+        role: "admin",
+        policy: DEFAULT_AUTH_POLICY,
+        runInternalWork: async () => ({
+          stdout: "non-json freeform model response",
+          stderr: "",
+        }),
+      }),
+    ).rejects.toThrow(
+      "Recovery adapter output is not contract-compliant JSON.",
+    );
+  });
+
   test("returns unfixable and denies when role lacks permissions", async () => {
     const exception = classifyRecoveryException({
       message: "Execution loop stopped after FAILED task #2.",

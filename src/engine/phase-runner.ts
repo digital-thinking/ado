@@ -4,6 +4,7 @@ import {
   classifyRecoveryException,
   isRecoverableException,
   runExceptionRecovery,
+  verifyRecoveryPostcondition,
 } from "./exception-recovery";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
@@ -24,8 +25,8 @@ export type PhaseRunnerConfig = {
   countdownSeconds: number;
   activeAssignee: CLIAdapterId;
   maxRecoveryAttempts: number;
-  testerCommand: string;
-  testerArgs: string[];
+  testerCommand: string | null;
+  testerArgs: string[] | null;
   testerTimeoutMs: number;
   ciEnabled: boolean;
   ciBaseBranch: string;
@@ -147,6 +148,9 @@ export class PhaseRunner {
             errorMessage: message,
             category,
           });
+          if (category === "DIRTY_WORKTREE") {
+            await this.git.ensureCleanWorkingTree(this.config.projectRootDir);
+          }
           console.info(
             "Execution loop: recovery succeeded for branching preconditions, retrying.",
           );
@@ -370,6 +374,12 @@ Recovery: ${recoveryMessage}`,
         });
       },
     });
+
+    if (testerResult.status === "SKIPPED") {
+      console.warn(testerResult.reason);
+      await this.notifyLoopEvent?.(`Tester skipped: ${testerResult.reason}`);
+      return;
+    }
 
     if (testerResult.status === "FAILED") {
       console.info(
@@ -598,6 +608,13 @@ ${testerResult.fixTaskDescription}`.trim(),
         });
 
         if (recovery.result.status === "fixed") {
+          await verifyRecoveryPostcondition({
+            exception: recovery.exception,
+            verifiers: {
+              verifyDirtyWorktree: async () =>
+                this.git.ensureCleanWorkingTree(this.config.projectRootDir),
+            },
+          });
           console.info(`Recovery fixed: ${recovery.result.reasoning}`);
           return;
         }

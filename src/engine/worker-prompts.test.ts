@@ -14,7 +14,8 @@ const TEST_PHASE: Phase = {
 const TEST_TASK: Task = {
   id: "22222222-2222-4222-8222-222222222222",
   title: "P5-001 Define worker archetypes and prompts",
-  description: "Define worker archetypes and ensure reviewer consumes git diff context.",
+  description:
+    "Define worker archetypes and ensure reviewer consumes git diff context.",
   status: "TODO",
   assignee: "UNASSIGNED",
   dependencies: [],
@@ -25,7 +26,9 @@ describe("worker prompts", () => {
     expect(getWorkerSystemPrompt("CODER")).toContain("Implement the task");
     expect(getWorkerSystemPrompt("TESTER")).toContain("Execute validations");
     expect(getWorkerSystemPrompt("REVIEWER")).toContain("git diff");
-    expect(getWorkerSystemPrompt("FIXER")).toContain("Resolve reported failures");
+    expect(getWorkerSystemPrompt("FIXER")).toContain(
+      "Resolve reported failures",
+    );
   });
 
   test("builds coder prompt with project and task context", () => {
@@ -39,7 +42,15 @@ describe("worker prompts", () => {
 
     expect(prompt).toContain("Worker archetype: CODER");
     expect(prompt).toContain("Phase: Phase 5: CI Execution Loop");
-    expect(prompt).toContain("Task: P5-001 Define worker archetypes and prompts");
+    expect(prompt).toContain(
+      "Task: P5-001 Define worker archetypes and prompts",
+    );
+    expect(prompt).toContain(
+      "- Commit all changes with a descriptive git commit message before declaring the task done.",
+    );
+    expect(prompt).toContain(
+      "- Leave the repository in a clean state (no untracked or unstaged changes after your commit).",
+    );
   });
 
   test("fails fast when reviewer prompt has no git diff context", () => {
@@ -50,7 +61,7 @@ describe("worker prompts", () => {
         rootDir: "C:/repo",
         phase: TEST_PHASE,
         task: TEST_TASK,
-      })
+      }),
     ).toThrow("Reviewer prompt requires gitDiff context.");
   });
 

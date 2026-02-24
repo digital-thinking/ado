@@ -84,9 +84,17 @@ export function parseRecoveryResultFromOutput(
 
 function buildRecoveryPrompt(input: {
   exception: ExceptionMetadata;
+  attemptNumber: number;
   phaseName?: string;
   taskTitle?: string;
 }): string {
+  if (
+    input.exception.category === "DIRTY_WORKTREE" &&
+    input.attemptNumber === 1
+  ) {
+    return "You left uncommitted changes. Please `git add` and `git commit` all your work with a descriptive message, then verify the repository is clean.";
+  }
+
   return [
     "You are IxADO recovery worker.",
     "Return ONLY strict JSON that exactly matches this schema:",
@@ -126,6 +134,24 @@ export type RunExceptionRecoveryInput = {
   }>;
 };
 
+export type RecoveryPostconditionVerifiers = {
+  verifyDirtyWorktree?: () => Promise<void>;
+};
+
+export async function verifyRecoveryPostcondition(input: {
+  exception: ExceptionMetadata;
+  verifiers: RecoveryPostconditionVerifiers;
+}): Promise<void> {
+  if (input.exception.category === "DIRTY_WORKTREE") {
+    if (!input.verifiers.verifyDirtyWorktree) {
+      throw new Error(
+        "Missing recovery postcondition verifier for DIRTY_WORKTREE.",
+      );
+    }
+    await input.verifiers.verifyDirtyWorktree();
+  }
+}
+
 export async function runExceptionRecovery(
   input: RunExceptionRecoveryInput,
 ): Promise<RecoveryAttemptRecord> {
@@ -150,6 +176,7 @@ export async function runExceptionRecovery(
 
   const prompt = buildRecoveryPrompt({
     exception,
+    attemptNumber,
     phaseName: input.phaseName,
     taskTitle: input.taskTitle,
   });
@@ -173,16 +200,27 @@ export async function runExceptionRecovery(
     commandHash: computeCommandHash(`recovery-adapter-${input.assignee}`),
   });
 
+  const shouldResumeOriginalSession =
+    exception.category === "DIRTY_WORKTREE" && attemptNumber === 1;
   const adapterResult = await input.runInternalWork({
     assignee: input.assignee,
     prompt,
     phaseId: exception.phaseId,
     taskId: exception.taskId,
-    resume: true,
+    ...(shouldResumeOriginalSession ? { resume: true } : {}),
   });
 
-  const parsedResult = parseRecoveryResultFromOutput(adapterResult.stdout);
-  validateRecoveryActions(parsedResult.actionsTaken ?? []);
+  const parsedResult: ExceptionRecoveryResult = shouldResumeOriginalSession
+    ? {
+        status: "fixed",
+        reasoning:
+          "Resumed original coder session and requested local cleanup commit.",
+      }
+    : parseRecoveryResultFromOutput(adapterResult.stdout);
+
+  if (!shouldResumeOriginalSession) {
+    validateRecoveryActions(parsedResult.actionsTaken ?? []);
+  }
 
   await appendAuditLog(input.cwd, {
     actor: "cli:local",
