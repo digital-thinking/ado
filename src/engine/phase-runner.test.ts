@@ -195,6 +195,93 @@ describe("PhaseRunner", () => {
     });
   });
 
+  test("P17-001: recovery loop breaks after failed postcondition re-check (no infinite retry)", async () => {
+    const phaseId = "aa111111-1111-4111-8111-111111111111";
+    const taskId = "bb222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let porcelainCallCount = 0;
+    const mockControl = {
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      // Recovery always claims "fixed" but tree remains dirty
+      runInternalWork: mock(async () => ({
+        stdout: JSON.stringify({
+          status: "fixed",
+          reasoning: "staged everything",
+          actionsTaken: ["git add ."],
+        }),
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          porcelainCallCount++;
+          // Always return dirty — recovery never actually cleans it
+          return {
+            exitCode: 0,
+            stdout: "?? src/dirty-file.ts\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      mockConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((e) => e);
+
+    // Must have thrown — cannot succeed with perpetually dirty tree
+    expect(error).toBeInstanceOf(Error);
+
+    // Phase must be set to CI_FAILED, not DONE
+    const statusCalls = (mockControl.setPhaseStatus as ReturnType<typeof mock>)
+      .mock.calls;
+    const statuses = statusCalls.map((c: any[]) => c[0].status);
+    expect(statuses).toContain("CI_FAILED");
+    expect(statuses).not.toContain("DONE");
+
+    // Recovery was invoked once (not in an infinite loop)
+    expect(mockControl.recordRecoveryAttempt).toHaveBeenCalledTimes(1);
+
+    // Postcondition re-check ran after recovery (porcelain called at least twice:
+    // once for initial dirty check, once for postcondition)
+    expect(porcelainCallCount).toBeGreaterThanOrEqual(2);
+  });
+
   test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {
     const phaseId = "33333333-3333-4333-8333-333333333333";
     const taskId = "44444444-4444-4444-8444-444444444444";

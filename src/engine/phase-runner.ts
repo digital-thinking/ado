@@ -147,6 +147,9 @@ export class PhaseRunner {
             errorMessage: message,
             category,
           });
+          if (category === "DIRTY_WORKTREE") {
+            await this.git.ensureCleanWorkingTree(this.config.projectRootDir);
+          }
           console.info(
             "Execution loop: recovery succeeded for branching preconditions, retrying.",
           );
