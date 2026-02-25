@@ -66,11 +66,22 @@ export type AdapterInitializationDiagnostic = {
 };
 
 export type AdapterStartupSilenceDiagnostic = {
-  marker: "ixado.adapter.startup";
+  marker: "ixado.adapter.runtime";
   event: "startup-silence-timeout";
   adapterId: CLIAdapterId | "UNKNOWN";
   command: string;
   startupSilenceTimeoutMs: number;
+  hint: string;
+  message: string;
+};
+
+export type AdapterExecutionTimeoutDiagnostic = {
+  marker: "ixado.adapter.runtime";
+  event: "execution-timeout";
+  adapterId: CLIAdapterId | "UNKNOWN";
+  command: string;
+  timeoutMs: number;
+  outputReceived: boolean;
   hint: string;
   message: string;
 };
@@ -137,7 +148,7 @@ export function buildAdapterStartupSilenceDiagnostic(input: {
     adapterId === "UNKNOWN" ? undefined : getAdapterStartupPolicy(adapterId);
 
   return {
-    marker: "ixado.adapter.startup",
+    marker: "ixado.adapter.runtime",
     event: "startup-silence-timeout",
     adapterId,
     command: input.command,
@@ -150,8 +161,41 @@ export function buildAdapterStartupSilenceDiagnostic(input: {
   };
 }
 
+export function buildAdapterExecutionTimeoutDiagnostic(input: {
+  adapterId?: CLIAdapterId;
+  command: string;
+  timeoutMs: number;
+  outputReceived: boolean;
+}): AdapterExecutionTimeoutDiagnostic {
+  const adapterId = input.adapterId ?? "UNKNOWN";
+  const policy =
+    adapterId === "UNKNOWN" ? undefined : getAdapterStartupPolicy(adapterId);
+
+  return {
+    marker: "ixado.adapter.runtime",
+    event: "execution-timeout",
+    adapterId,
+    command: input.command,
+    timeoutMs: input.timeoutMs,
+    outputReceived: input.outputReceived,
+    hint:
+      policy?.startupHint ??
+      "Verify the adapter CLI is installed, on PATH, and authenticated in this shell.",
+    message:
+      "Execution exceeded configured timeout and process kill was requested.",
+  };
+}
+
 export function formatAdapterStartupDiagnostic(
-  diagnostic: AdapterInitializationDiagnostic | AdapterStartupSilenceDiagnostic,
+  diagnostic: AdapterInitializationDiagnostic,
 ): string {
   return `[ixado][adapter-startup] ${JSON.stringify(diagnostic)}`;
+}
+
+export function formatAdapterRuntimeDiagnostic(
+  diagnostic:
+    | AdapterStartupSilenceDiagnostic
+    | AdapterExecutionTimeoutDiagnostic,
+): string {
+  return `[ixado][adapter-runtime] ${JSON.stringify(diagnostic)}`;
 }

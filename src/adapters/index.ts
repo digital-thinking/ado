@@ -8,8 +8,10 @@ export { createAdapter } from "./factory";
 export { GeminiAdapter } from "./gemini-adapter";
 export { MockCLIAdapter } from "./mock-adapter";
 export {
+  buildAdapterExecutionTimeoutDiagnostic,
   buildAdapterInitializationDiagnostic,
   buildAdapterStartupSilenceDiagnostic,
+  formatAdapterRuntimeDiagnostic,
   formatAdapterStartupDiagnostic,
   getAdapterStartupPolicy,
 } from "./startup";

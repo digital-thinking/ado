@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildAdapterExecutionTimeoutDiagnostic,
   buildAdapterInitializationDiagnostic,
   buildAdapterStartupSilenceDiagnostic,
+  formatAdapterRuntimeDiagnostic,
   formatAdapterStartupDiagnostic,
   getAdapterStartupPolicy,
 } from "./startup";
@@ -61,14 +63,47 @@ describe("adapter startup diagnostics", () => {
       startupSilenceTimeoutMs: 60_000,
     });
 
-    expect(diagnostic.marker).toBe("ixado.adapter.startup");
+    expect(diagnostic.marker).toBe("ixado.adapter.runtime");
     expect(diagnostic.event).toBe("startup-silence-timeout");
     expect(diagnostic.adapterId).toBe("GEMINI_CLI");
     expect(diagnostic.command).toBe("gemini");
     expect(diagnostic.hint).toContain("Gemini");
 
-    const line = formatAdapterStartupDiagnostic(diagnostic);
-    expect(line).toContain("[ixado][adapter-startup]");
+    const line = formatAdapterRuntimeDiagnostic(diagnostic);
+    expect(line).toContain("[ixado][adapter-runtime]");
     expect(line).toContain('"event":"startup-silence-timeout"');
+  });
+
+  test("builds normalized execution-timeout diagnostic with adapter-specific hint", () => {
+    const diagnostic = buildAdapterExecutionTimeoutDiagnostic({
+      adapterId: "CODEX_CLI",
+      command: "codex",
+      timeoutMs: 3_600_000,
+      outputReceived: false,
+    });
+
+    expect(diagnostic.marker).toBe("ixado.adapter.runtime");
+    expect(diagnostic.event).toBe("execution-timeout");
+    expect(diagnostic.hint).toContain("codex auth login");
+
+    const line = formatAdapterRuntimeDiagnostic(diagnostic);
+    expect(line).toContain("[ixado][adapter-runtime]");
+    expect(line).toContain('"event":"execution-timeout"');
+  });
+
+  test("startup formatter remains stable for adapter initialization lines", () => {
+    const diagnostic = buildAdapterInitializationDiagnostic({
+      adapterId: "CLAUDE_CLI",
+      command: "claude",
+      baseArgs: ["--print"],
+      cwd: "/tmp/project",
+      timeoutMs: 120_000,
+      startupSilenceTimeoutMs: 5_000,
+    });
+
+    expect(diagnostic).toBeDefined();
+    const line = formatAdapterStartupDiagnostic(diagnostic!);
+    expect(line).toContain("[ixado][adapter-startup]");
+    expect(line).toContain('"event":"adapter-initialized"');
   });
 });

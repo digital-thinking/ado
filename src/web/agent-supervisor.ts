@@ -12,8 +12,9 @@ import { resolveCommandForSpawn } from "../process/command-resolver";
 import { ProcessStdinUnavailableError } from "../process/manager";
 import { AgentFailureError } from "../errors";
 import {
+  buildAdapterExecutionTimeoutDiagnostic,
   buildAdapterStartupSilenceDiagnostic,
-  formatAdapterStartupDiagnostic,
+  formatAdapterRuntimeDiagnostic,
 } from "../adapters/startup";
 import type { CLIAdapterId } from "../types";
 
@@ -436,15 +437,18 @@ export class AgentSupervisor {
           return;
         }
         if (!hasReceivedOutput && record.child !== undefined) {
-          const message = formatAdapterStartupDiagnostic(
+          const message = formatAdapterRuntimeDiagnostic(
             buildAdapterStartupSilenceDiagnostic({
               adapterId: record.adapterId,
               command: record.command,
               startupSilenceTimeoutMs: silenceMs,
             }),
           );
-          tailPush(record.outputTail, message);
+          const lines = tailPush(record.outputTail, message);
           this.persistRecord(record);
+          lines.forEach((line) =>
+            this.emit({ type: "output", agentId: record.id, line }),
+          );
         }
       }, silenceMs);
     }
@@ -584,9 +588,19 @@ export class AgentSupervisor {
         },
         onTimeout: () => {
           timedOut = true;
-          tailPush(
-            record.outputTail,
-            `Command timed out after ${input.timeoutMs}ms.`,
+          const timeoutMs = input.timeoutMs ?? 0;
+          const message = formatAdapterRuntimeDiagnostic(
+            buildAdapterExecutionTimeoutDiagnostic({
+              adapterId: record.adapterId,
+              command: record.command,
+              timeoutMs,
+              outputReceived: stdout.length > 0 || stderr.length > 0,
+            }),
+          );
+          const lines = tailPush(record.outputTail, message);
+          this.persistRecord(record);
+          lines.forEach((line) =>
+            this.emit({ type: "output", agentId: record.id, line }),
           );
         },
         onError: (error) => {

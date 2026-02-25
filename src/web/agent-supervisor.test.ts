@@ -336,6 +336,51 @@ describe("AgentSupervisor", () => {
       listed?.outputTail.some((line) => line.includes('"command":"claude"')),
     ).toBe(true);
   });
+  test("appends structured execution-timeout diagnostic with adapter hint", async () => {
+    const child = createFakeChild();
+    child.kill = () => {
+      queueMicrotask(() => {
+        child.emit("close", null, "SIGTERM");
+      });
+      return true;
+    };
+
+    const supervisor = new AgentSupervisor(() => child);
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Timeout worker",
+        command: "codex",
+        args: ["exec"],
+        cwd: "/tmp",
+        adapterId: "CODEX_CLI",
+        approvedAdapterSpawn: true,
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow("Command timed out");
+
+    const listed = supervisor.list().find((a) => a.name === "Timeout worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"event":"execution-timeout"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"adapterId":"CODEX_CLI"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"hint":"Run \'codex auth login\''),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("[ixado][adapter-runtime]"),
+      ),
+    ).toBe(true);
+  });
 
   test("does NOT append startup-silence diagnostic when output arrives before silence window expires", async () => {
     const child = createFakeChild();
@@ -359,9 +404,11 @@ describe("AgentSupervisor", () => {
     });
 
     const listed = supervisor.list().find((a) => a.name === "Active worker");
-    expect(listed?.outputTail.some((line) => line.includes("[ixado]"))).toBe(
-      false,
-    );
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("[ixado][adapter-runtime]"),
+      ),
+    ).toBe(false);
   });
 
   test("calls onFailure hook when agent is killed", (done) => {
