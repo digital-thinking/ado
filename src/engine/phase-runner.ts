@@ -13,6 +13,7 @@ import {
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
 import {
+  LifecycleHookExecutionError,
   LifecycleHookRegistry,
   type LifecycleHookRegistration,
 } from "./lifecycle-hooks";
@@ -459,6 +460,18 @@ Recovery: ${recoveryMessage}`,
 
     while (taskRunCount < maxTaskRunCount) {
       taskRunCount += 1;
+      if (this.lifecycleHooks.getHandlers("before_task_start").length > 0) {
+        await this.lifecycleHooks.run("before_task_start", {
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          taskId: task.id,
+          taskTitle: task.title,
+          taskNumber,
+          assignee: effectiveAssignee,
+          resume: resumeSession,
+        });
+      }
       const updatedState = await this.control.startActiveTaskAndWait({
         taskNumber,
         assignee: effectiveAssignee,
@@ -494,6 +507,18 @@ Recovery: ${recoveryMessage}`,
           },
         }),
       );
+      if (this.lifecycleHooks.getHandlers("after_task_done").length > 0) {
+        await this.lifecycleHooks.run("after_task_done", {
+          projectName: this.config.projectName,
+          phaseId: updatedPhase.id,
+          phaseName: updatedPhase.name,
+          taskId: resultTask.id,
+          taskTitle: resultTask.title,
+          taskNumber,
+          assignee: effectiveAssignee,
+          status: resultTask.status,
+        });
+      }
       if (resultTask.status !== "FAILED") {
         return;
       }
@@ -941,6 +966,17 @@ ${testerResult.fixTaskDescription}`.trim(),
           },
         }),
       );
+      if (this.lifecycleHooks.getHandlers("on_ci_failed").length > 0) {
+        await this.lifecycleHooks.run("on_ci_failed", {
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          prNumber,
+          prUrl,
+          ciStatusContext: ciFailureContext,
+          createdFixTaskCount: mapping.tasksToCreate.length,
+        });
+      }
       throw new Error(
         "Execution loop stopped after CI checks failed. Targeted CI_FIX tasks are pending.",
       );
@@ -1191,6 +1227,18 @@ ${testerResult.fixTaskDescription}`.trim(),
           exception: recovery.exception,
           result: recovery.result,
         });
+        if (this.lifecycleHooks.getHandlers("on_recovery").length > 0) {
+          await this.lifecycleHooks.run("on_recovery", {
+            projectName: this.config.projectName,
+            phaseId: input.phaseId,
+            phaseName: input.phaseName,
+            ...(input.taskId ? { taskId: input.taskId } : {}),
+            ...(input.taskTitle ? { taskTitle: input.taskTitle } : {}),
+            attemptNumber,
+            exception: recovery.exception,
+            result: recovery.result,
+          });
+        }
 
         if (recovery.result.status === "fixed") {
           await verifyRecoveryPostcondition({
@@ -1249,6 +1297,9 @@ ${testerResult.fixTaskDescription}`.trim(),
           `Recovery marked unfixable: ${recovery.result.reasoning}`,
         );
       } catch (error) {
+        if (error instanceof LifecycleHookExecutionError) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         lastError = new Error(message);
         console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);

@@ -276,7 +276,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 ## Phase 24: Extensibility Hooks (Roadmap)
 
 - [x] `P24-001` Define strict hook contracts and registration mechanism for lifecycle extension hooks: `before_task_start`, `after_task_done`, `on_recovery`, `on_ci_failed`. **Status: Done**. Deps: `P23-007`.
-- [ ] `P24-002` Implement hook runner with fail-fast isolation, deterministic ordering, timeout guardrails, and structured error propagation to phase-runner logs. Deps: `P24-001`.
-- [ ] `P24-003` Integrate lifecycle hooks into phase-runner and tester/recovery loop without introducing alternate execution paths. Deps: `P24-002`.
+- [x] `P24-002` Implement hook runner with fail-fast isolation, deterministic ordering, timeout guardrails, and structured error propagation to phase-runner logs. **Status: Done**. Deps: `P24-001`.
+- [x] `P24-003` Integrate lifecycle hooks into phase-runner and tester/recovery loop without introducing alternate execution paths. **Status: Done**. Deps: `P24-002`.
 - [ ] `P24-004` Add regression tests for hook contract validation, ordering guarantees, timeout behavior, and failure propagation semantics. Deps: `P24-003`.
 - [ ] `P24-005` Create PR Task: open Phase 24 PR after coding tasks are done. Deps: `P24-004`.

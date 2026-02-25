@@ -29,7 +29,7 @@ With shared services:
 - Selects runnable tasks and dispatches workers.
 - Runs tester/fixer flow where configured.
 - Updates task/phase statuses and persists transitions.
-- Accepts validated lifecycle hook registrations (`src/engine/lifecycle-hooks.ts`) for extension points around task start/completion, recovery, and CI failure events.
+- Accepts validated lifecycle hook registrations (`src/engine/lifecycle-hooks.ts`) and runs them inline in the single primary task/tester/recovery/CI orchestration path.
 
 ### 3) Adapter Execution (`src/adapters/`, `src/web/agent-supervisor.ts`)
 
