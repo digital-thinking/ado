@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 
 import { startWebControlCenter } from "../web";
 import type { CLIAdapterId, CliAgentSettings } from "../types";
+import { ValidationError } from "./validation";
 
 const WEB_READY_TIMEOUT_MS = 10_000;
 const WEB_STOP_TIMEOUT_MS = 10_000;
@@ -63,7 +64,10 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function parseWebRuntimeRecord(raw: unknown, runtimeFilePath: string): WebRuntimeRecord {
+function parseWebRuntimeRecord(
+  raw: unknown,
+  runtimeFilePath: string,
+): WebRuntimeRecord {
   if (!raw || typeof raw !== "object") {
     throw new Error(`Invalid web runtime file format: ${runtimeFilePath}`);
   }
@@ -78,7 +82,11 @@ function parseWebRuntimeRecord(raw: unknown, runtimeFilePath: string): WebRuntim
   if (!Number.isInteger(pid) || (pid as number) <= 0) {
     throw new Error(`Invalid web runtime PID in ${runtimeFilePath}`);
   }
-  if (!Number.isInteger(port) || (port as number) < 0 || (port as number) > 65535) {
+  if (
+    !Number.isInteger(port) ||
+    (port as number) < 0 ||
+    (port as number) > 65535
+  ) {
     throw new Error(`Invalid web runtime port in ${runtimeFilePath}`);
   }
   if (typeof url !== "string" || !url.trim()) {
@@ -123,7 +131,9 @@ function resolveGlobalIxadoDir(): string {
   const configuredHome = process.env.HOME?.trim();
   const homeDirectory = configuredHome || homedir().trim();
   if (!homeDirectory) {
-    throw new Error("Could not resolve home directory for global web runtime path.");
+    throw new Error(
+      "Could not resolve home directory for global web runtime path.",
+    );
   }
 
   return resolve(homeDirectory, ".ixado");
@@ -136,7 +146,12 @@ export function parseWebPort(raw: string | undefined): number | undefined {
 
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error("Invalid web port. Expected integer between 0 and 65535.");
+    throw new ValidationError(
+      `Invalid web port: '${raw}'. Expected an integer from 0 to 65535.`,
+      {
+        hint: "Provide a valid port number, e.g., 3000.",
+      },
+    );
   }
 
   return port;
@@ -159,7 +174,9 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
-export async function readWebRuntimeRecord(runtimeFilePath: string): Promise<WebRuntimeRecord | null> {
+export async function readWebRuntimeRecord(
+  runtimeFilePath: string,
+): Promise<WebRuntimeRecord | null> {
   let raw: string;
   try {
     raw = await readFile(runtimeFilePath, "utf8");
@@ -175,7 +192,9 @@ export async function readWebRuntimeRecord(runtimeFilePath: string): Promise<Web
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`Web runtime file contains invalid JSON: ${runtimeFilePath}`);
+    throw new Error(
+      `Web runtime file contains invalid JSON: ${runtimeFilePath}`,
+    );
   }
 
   return parseWebRuntimeRecord(parsed, runtimeFilePath);
@@ -183,17 +202,21 @@ export async function readWebRuntimeRecord(runtimeFilePath: string): Promise<Web
 
 export async function writeWebRuntimeRecord(
   runtimeFilePath: string,
-  record: WebRuntimeRecord
+  record: WebRuntimeRecord,
 ): Promise<void> {
   await mkdir(dirname(runtimeFilePath), { recursive: true });
-  await writeFile(runtimeFilePath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await writeFile(
+    runtimeFilePath,
+    `${JSON.stringify(record, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 async function waitForWebRuntimeRecord(
   runtimeFilePath: string,
   expectedPid: number,
   logFilePath: string,
-  startupMarkerLine: string
+  startupMarkerLine: string,
 ): Promise<WebRuntimeRecord> {
   const deadline = Date.now() + WEB_READY_TIMEOUT_MS;
   let exitedBeforeStartup = false;
@@ -218,7 +241,7 @@ async function waitForWebRuntimeRecord(
   const logTail = await readWebLogTail(
     logFilePath,
     WEB_START_ERROR_LOG_LINE_COUNT,
-    startupMarkerLine
+    startupMarkerLine,
   );
   if (!logTail) {
     throw new Error(`${baseMessage}\nLogs: ${logFilePath}`);
@@ -226,18 +249,20 @@ async function waitForWebRuntimeRecord(
 
   const childStartupFailure = extractChildStartupFailureMessage(logTail);
   if (childStartupFailure) {
-    throw new Error(`${baseMessage}\nCause: ${childStartupFailure}\nLogs: ${logFilePath}`);
+    throw new Error(
+      `${baseMessage}\nCause: ${childStartupFailure}\nLogs: ${logFilePath}`,
+    );
   }
 
   throw new Error(
-    `${baseMessage}\nRecent web log output:\n${logTail}\nLogs: ${logFilePath}`
+    `${baseMessage}\nRecent web log output:\n${logTail}\nLogs: ${logFilePath}`,
   );
 }
 
 async function readWebLogTail(
   logFilePath: string,
   maxLines: number,
-  startupMarkerLine: string
+  startupMarkerLine: string,
 ): Promise<string | null> {
   let raw: string;
   try {
@@ -277,9 +302,18 @@ function extractChildStartupFailureMessage(logTail: string): string | null {
     if (!line) {
       continue;
     }
-    const markerIndex = line.indexOf("Startup failed:");
-    if (markerIndex >= 0) {
-      const message = line.slice(markerIndex + "Startup failed:".length).trim();
+
+    const startupFailedIndex = line.indexOf("Startup failed:");
+    if (startupFailedIndex >= 0) {
+      const message = line
+        .slice(startupFailedIndex + "Startup failed:".length)
+        .trim();
+      return message || null;
+    }
+
+    const errorPrefixIndex = line.indexOf("Error:");
+    if (errorPrefixIndex >= 0) {
+      const message = line.slice(errorPrefixIndex + "Error:".length).trim();
       return message || null;
     }
   }
@@ -300,7 +334,9 @@ async function waitForProcessStop(pid: number): Promise<void> {
   throw new Error(`Timed out while waiting for process ${pid} to stop.`);
 }
 
-export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRuntimeRecord> {
+export async function startWebDaemon(
+  input: StartWebDaemonInput,
+): Promise<WebRuntimeRecord> {
   if (!input.cwd.trim()) {
     throw new Error("cwd must not be empty.");
   }
@@ -316,7 +352,7 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
   const existingRuntime = await readWebRuntimeRecord(runtimeFilePath);
   if (existingRuntime && isProcessRunning(existingRuntime.pid)) {
     throw new Error(
-      `Web control center is already running at ${existingRuntime.url} (pid: ${existingRuntime.pid}).`
+      `Web control center is already running at ${existingRuntime.url} (pid: ${existingRuntime.pid}).`,
     );
   }
   if (existingRuntime) {
@@ -325,11 +361,7 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
 
   await mkdir(dirname(logFilePath), { recursive: true });
   const startupMarkerLine = `[${new Date().toISOString()}] ${WEB_START_MARKER}`;
-  await appendFile(
-    logFilePath,
-    `${startupMarkerLine}\n`,
-    "utf8"
-  );
+  await appendFile(logFilePath, `${startupMarkerLine}\n`, "utf8");
 
   const spawnArgs = buildWebDaemonSpawnArgs(input.entryScriptPath, input.port);
 
@@ -364,11 +396,14 @@ export async function startWebDaemon(input: StartWebDaemonInput): Promise<WebRun
     runtimeFilePath,
     child.pid,
     logFilePath,
-    startupMarkerLine
+    startupMarkerLine,
   );
 }
 
-export function buildWebDaemonSpawnArgs(entryScriptPath: string, port?: number): string[] {
+export function buildWebDaemonSpawnArgs(
+  entryScriptPath: string,
+  port?: number,
+): string[] {
   const spawnArgs: string[] = [];
   const trimmedEntryScriptPath = entryScriptPath.trim();
   if (trimmedEntryScriptPath) {
@@ -442,7 +477,7 @@ export async function stopWebDaemon(cwd: string): Promise<StopWebDaemonResult> {
 }
 
 export async function serveWebControlCenter(
-  input: ServeWebControlCenterInput
+  input: ServeWebControlCenterInput,
 ): Promise<WebRuntimeRecord> {
   if (!input.settingsFilePath.trim()) {
     throw new Error("settingsFilePath must not be empty.");
@@ -457,7 +492,7 @@ export async function serveWebControlCenter(
   await appendFile(
     logFilePath,
     `[${new Date().toISOString()}] Web control center started at ${runtime.url} (pid: ${process.pid}).\n`,
-    "utf8"
+    "utf8",
   );
   const record: WebRuntimeRecord = {
     pid: process.pid,
@@ -479,7 +514,7 @@ export async function serveWebControlCenter(
     await appendFile(
       logFilePath,
       `[${new Date().toISOString()}] Web control center stopped (pid: ${process.pid}).\n`,
-      "utf8"
+      "utf8",
     );
     await rm(runtimeFilePath, { force: true });
   };

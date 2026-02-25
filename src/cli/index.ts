@@ -21,6 +21,7 @@ import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
 import { CommandRegistry, type CommandActionContext } from "./command-registry";
+import { ValidationError } from "./validation";
 import {
   getAvailableAgents,
   loadCliSettings,
@@ -451,7 +452,10 @@ async function runListCommand(_ctx: CommandActionContext): Promise<void> {
 async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
   const projectName = args[0]?.trim() ?? "";
   if (!projectName) {
-    throw new Error("Usage: ixado switch <project-name>");
+    throw new ValidationError("Missing required argument: <project-name>.", {
+      usage: "ixado switch <project-name>",
+      hint: "Run 'ixado list' to see registered projects.",
+    });
   }
 
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
@@ -459,9 +463,10 @@ async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
   const project = settings.projects.find((p) => p.name === projectName);
   if (!project) {
     const available = settings.projects.map((p) => p.name).join(", ");
-    throw new Error(
-      `Project '${projectName}' not found. Registered projects: ${available || "none"}.`,
-    );
+    throw new ValidationError(`Project '${projectName}' not found.`, {
+      usage: "ixado switch <project-name>",
+      hint: `Registered projects: ${available || "none"}. Run 'ixado list' for details.`,
+    });
   }
 
   settings.activeProject = project.name;
@@ -635,7 +640,10 @@ function resolvePhaseRunMode(
     return "MANUAL";
   }
 
-  throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds>=0]");
+  throw new ValidationError(`Invalid phase run mode: '${rawMode}'.`, {
+    usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+    hint: "Use 'auto' for fully automatic execution or 'manual' for step-by-step confirmation.",
+  });
 }
 
 function resolveCountdownSeconds(
@@ -649,8 +657,12 @@ function resolveCountdownSeconds(
 
   const parsed = Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(
-      "Usage: ixado phase run [auto|manual] [countdownSeconds>=0]",
+    throw new ValidationError(
+      `Invalid countdown seconds: '${rawCountdown}'. Expected a non-negative integer.`,
+      {
+        usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+        hint: "Use 0 to skip the countdown, or a positive number for a timed delay.",
+      },
     );
   }
 
@@ -673,13 +685,18 @@ async function resolveActivePhaseTaskForNumber(
     state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
     state.phases[0];
   if (!phase) {
-    throw new Error("No active phase found.");
+    throw new ValidationError("No active phase found.", {
+      hint: "Run 'ixado phase create <name> <branchName>' to create a phase first.",
+    });
   }
 
   const task = phase.tasks[taskNumber - 1];
   if (!task) {
-    throw new Error(
-      `Task #${taskNumber} not found in active phase ${phase.name}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} not found in active phase '${phase.name}'.`,
+      {
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
     );
   }
 
@@ -692,7 +709,13 @@ async function runTaskStartCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task start <taskNumber> [assignee]");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task start <taskNumber> [assignee]",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -720,9 +743,9 @@ async function runTaskStartCommand({
   const assignee = CLIAdapterIdSchema.parse(assigneeCandidate);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: `Available agents: ${availableAgents.join(", ")}. Enable the agent with 'ixado onboard'.`,
+    });
   }
   console.info(`Starting active-phase task #${taskNumber} with ${assignee}.`);
 
@@ -756,8 +779,12 @@ async function runTaskCreateCommand({
   const title = args[0]?.trim() ?? "";
   const description = args[1]?.trim() ?? "";
   if (!title || !description) {
-    throw new Error(
-      "Usage: ixado task create <title> <description> [assignee]",
+    throw new ValidationError(
+      "Missing required arguments: <title> and <description>.",
+      {
+        usage: "ixado task create <title> <description> [assignee]",
+        hint: "Enclose multi-word values in quotes.",
+      },
     );
   }
 
@@ -766,9 +793,10 @@ async function runTaskCreateCommand({
     ? WorkerAssigneeSchema.safeParse(rawAssignee)
     : { success: true as const, data: "UNASSIGNED" as const };
   if (!parsedAssignee.success) {
-    throw new Error(
-      "Usage: ixado task create <title> <description> [assignee]\nassignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
-    );
+    throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
+      usage: "ixado task create <title> <description> [assignee]",
+      hint: "assignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
+    });
   }
   const assignee = parsedAssignee.data;
   const settingsFilePath = resolveSettingsFilePath();
@@ -831,7 +859,13 @@ async function runTaskRetryCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task retry <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task retry <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -849,22 +883,25 @@ async function runTaskRetryCommand({
 
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
   if (task.status !== "FAILED") {
-    throw new Error(
-      `Task #${taskNumber} must be FAILED before retry. Current status: ${task.status}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
+      {
+        hint: "Only failed tasks can be retried.",
+      },
     );
   }
   if (task.assignee === "UNASSIGNED") {
-    throw new Error(
-      `Task #${taskNumber} has no retry assignee. Reset to TODO, assign an agent, and start it again.`,
-    );
+    throw new ValidationError(`Task #${taskNumber} has no assignee.`, {
+      hint: `Reset to TODO with 'ixado task reset ${taskNumber}', assign an agent, then start it again.`,
+    });
   }
 
   const assignee = CLIAdapterIdSchema.parse(task.assignee);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: `Available agents: ${availableAgents.join(", ")}. Enable the agent with 'ixado onboard'.`,
+    });
   }
 
   console.info(`Retrying active-phase task #${taskNumber} with ${assignee}.`);
@@ -898,7 +935,13 @@ async function runTaskLogsCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task logs <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task logs <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -934,7 +977,13 @@ async function runTaskResetCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task reset <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task reset <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -955,8 +1004,11 @@ async function runTaskResetCommand({
   );
 
   if (task.status !== "FAILED") {
-    throw new Error(
-      `Task #${taskNumber} must be FAILED before reset. Current status: ${task.status}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
+      {
+        hint: "Only failed tasks can be reset.",
+      },
     );
   }
 
@@ -1073,7 +1125,13 @@ async function runPhaseActiveCommand({
 }: CommandActionContext): Promise<void> {
   const phaseId = args[0]?.trim() ?? "";
   if (!phaseId) {
-    throw new Error("Usage: ixado phase active <phaseNumber|phaseId>");
+    throw new ValidationError(
+      "Missing required argument: <phaseNumber|phaseId>.",
+      {
+        usage: "ixado phase active <phaseNumber|phaseId>",
+        hint: "Run 'ixado phase list' to see available phases.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -1103,7 +1161,13 @@ async function runPhaseCreateCommand({
   const name = args[0]?.trim() ?? "";
   const branchName = args[1]?.trim() ?? "";
   if (!name || !branchName) {
-    throw new Error("Usage: ixado phase create <name> <branchName>");
+    throw new ValidationError(
+      "Missing required arguments: <name> and <branchName>.",
+      {
+        usage: "ixado phase create <name> <branchName>",
+        hint: "Provide a human-readable name and a valid git branch name.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -1200,10 +1264,20 @@ function parseConfigMode(rawMode: string): boolean {
     return false;
   }
 
-  throw new Error("Usage: ixado config mode <auto|manual>");
+  throw new ValidationError(
+    `Invalid mode: '${rawMode}'. Expected 'auto' or 'manual'.`,
+    {
+      usage: "ixado config mode <auto|manual>",
+      hint: "Use 'auto' for automatic execution or 'manual' for step-by-step.",
+    },
+  );
 }
 
-function parseConfigToggle(rawValue: string, usage: string): boolean {
+function parseConfigToggle(
+  rawValue: string,
+  usage: string,
+  hint: string,
+): boolean {
   const normalized = rawValue.trim().toLowerCase();
   if (normalized === "on") {
     return true;
@@ -1212,13 +1286,22 @@ function parseConfigToggle(rawValue: string, usage: string): boolean {
     return false;
   }
 
-  throw new Error(usage);
+  throw new ValidationError(
+    `Invalid toggle value: '${rawValue}'. Expected 'on' or 'off'.`,
+    { usage, hint },
+  );
 }
 
 function parseConfigRecoveryMaxAttempts(rawValue: string): number {
   const maxAttempts = Number(rawValue.trim());
   if (!Number.isInteger(maxAttempts) || maxAttempts < 0 || maxAttempts > 10) {
-    throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
+    throw new ValidationError(
+      `Invalid recovery max attempts: '${rawValue}'. Expected an integer from 0 to 10.`,
+      {
+        usage: "ixado config recovery <maxAttempts:0-10>",
+        hint: "Use 0 to disable recovery, or a value from 1-10 for the attempt limit.",
+      },
+    );
   }
 
   return maxAttempts;
@@ -1245,7 +1328,10 @@ async function runConfigModeCommand({
 }: CommandActionContext): Promise<void> {
   const rawMode = args[0]?.trim() ?? "";
   if (!rawMode) {
-    throw new Error("Usage: ixado config mode <auto|manual>");
+    throw new ValidationError("Missing required argument: <auto|manual>.", {
+      usage: "ixado config mode <auto|manual>",
+      hint: "Use 'auto' for automatic execution or 'manual' for step-by-step.",
+    });
   }
 
   const autoMode = parseConfigMode(rawMode);
@@ -1269,18 +1355,30 @@ async function runConfigAssigneeCommand({
 }: CommandActionContext): Promise<void> {
   const rawAssignee = args[0]?.trim() ?? "";
   if (!rawAssignee) {
-    throw new Error(
-      "Usage: ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+    throw new ValidationError(
+      "Missing required argument: <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>.",
+      {
+        usage:
+          "ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+        hint: "Run 'ixado config' to see available adapters.",
+      },
     );
   }
 
-  const assignee = CLIAdapterIdSchema.parse(rawAssignee);
+  const parsedAssignee = CLIAdapterIdSchema.safeParse(rawAssignee);
+  if (!parsedAssignee.success) {
+    throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
+      usage: "ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+      hint: "Valid values: CODEX_CLI, CLAUDE_CLI, GEMINI_CLI, MOCK_CLI.",
+    });
+  }
+  const assignee = parsedAssignee.data;
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   if (!settings.agents[assignee].enabled) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Enable it before setting as default.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: "Enable the agent in settings before setting it as default.",
+    });
   }
 
   const saved = await saveCliSettings(settingsFilePath, {
@@ -1299,12 +1397,16 @@ async function runConfigUsageCommand({
 }: CommandActionContext): Promise<void> {
   const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
-    throw new Error("Usage: ixado config usage <on|off>");
+    throw new ValidationError("Missing required argument: <on|off>.", {
+      usage: "ixado config usage <on|off>",
+      hint: "Use 'on' to enable usage tracking or 'off' to disable it.",
+    });
   }
 
   const codexbarEnabled = parseConfigToggle(
     rawValue,
-    "Usage: ixado config usage <on|off>",
+    "ixado config usage <on|off>",
+    "Use 'on' to enable usage tracking or 'off' to disable it.",
   );
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1327,7 +1429,13 @@ async function runConfigRecoveryCommand({
 }: CommandActionContext): Promise<void> {
   const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
-    throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
+    throw new ValidationError(
+      "Missing required argument: <maxAttempts:0-10>.",
+      {
+        usage: "ixado config recovery <maxAttempts:0-10>",
+        hint: "Use 0 to disable recovery, or a value from 1-10 for the attempt limit.",
+      },
+    );
   }
 
   const maxAttempts = parseConfigRecoveryMaxAttempts(rawValue);
@@ -1511,7 +1619,11 @@ async function runCli(args: string[]): Promise<void> {
 }
 
 await runCli(process.argv.slice(2)).catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Startup failed: ${message}`);
+  if (error instanceof ValidationError) {
+    console.error(error.format());
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+  }
   process.exitCode = 1;
 });

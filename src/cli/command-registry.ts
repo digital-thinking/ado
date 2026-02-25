@@ -1,3 +1,5 @@
+import { ValidationError } from "./validation";
+
 export interface CommandActionContext {
   args: string[]; // Arguments after the command name(s)
   fullArgs: string[]; // All arguments including command name(s)
@@ -49,7 +51,9 @@ export class CommandRegistry {
     const command = this.commands.find((c) => c.name === commandName);
 
     if (!command) {
-      throw new Error(`Unknown command: ${commandName}`);
+      throw new ValidationError(`Unknown command: '${commandName}'`, {
+        hint: "Run 'ixado help' to see all available commands.",
+      });
     }
 
     await this.executeCommand(command, args.slice(1), args);

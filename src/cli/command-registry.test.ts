@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import { CommandRegistry, type CommandDefinition } from "./command-registry";
+import { ValidationError } from "./validation";
 
 describe("CommandRegistry", () => {
   let originalInfo: typeof console.info;
@@ -140,10 +141,23 @@ describe("CommandRegistry", () => {
     expect(infoOutput[headerIdx + 1]).toBe("");
   });
 
-  test("throws on unknown command", async () => {
+  test("throws ValidationError on unknown command", async () => {
     const registry = new CommandRegistry(testCommands);
-    await expect(registry.run(["unknown"])).rejects.toThrow(
-      "Unknown command: unknown",
-    );
+    await expect(registry.run(["unknown"])).rejects.toThrow(ValidationError);
+  });
+
+  test("unknown command ValidationError includes quoted name and hint", async () => {
+    const registry = new CommandRegistry(testCommands);
+    try {
+      await registry.run(["nosuchcmd"]);
+      expect.assertions(1); // should not reach here
+    } catch (err) {
+      expect(err).toBeInstanceOf(ValidationError);
+      const ve = err as ValidationError;
+      expect(ve.message).toContain("nosuchcmd");
+      expect(ve.hint).toContain("ixado help");
+      expect(ve.format()).toContain("Error: Unknown command: 'nosuchcmd'");
+      expect(ve.format()).toContain("  Hint:  Run 'ixado help'");
+    }
   });
 });
