@@ -229,6 +229,114 @@ describe("PhaseRunner", () => {
     });
   });
 
+  test("P24-003: after_task_done fires once after terminal DONE when recovery fixes an intermediate failure", async () => {
+    const phaseId = "7a111111-1111-4111-8111-111111111111";
+    const taskId = "7b222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 24 Recovery Signal Order",
+          branchName: "phase-24-recovery-signal-order",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task with one recoverable failure",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              errorCategory: undefined,
+              errorLogs: undefined,
+            },
+          ],
+        },
+      ],
+    };
+
+    let taskRuns = 0;
+    const afterPayloads: any[] = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        taskRuns += 1;
+        if (taskRuns === 1) {
+          mockState.phases[0].tasks[0].status = "FAILED";
+          (mockState.phases[0].tasks[0] as any).errorCategory =
+            "DIRTY_WORKTREE";
+          (mockState.phases[0].tasks[0] as any).errorLogs =
+            "Git working tree is not clean.";
+          return mockState;
+        }
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: '{"status":"fixed","reasoning":"cleaned"}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return {
+            exitCode: 0,
+            stdout: "phase-24-recovery-signal-order",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        lifecycleHooks: [
+          {
+            id: "capture-after-task-done",
+            handlers: {
+              after_task_done: (payload) => {
+                afterPayloads.push(payload);
+              },
+            },
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    expect(afterPayloads).toHaveLength(1);
+    expect(afterPayloads[0]).toMatchObject({
+      projectName: "test-project",
+      phaseId,
+      phaseName: "Phase 24 Recovery Signal Order",
+      taskId,
+      taskTitle: "Task with one recoverable failure",
+      taskNumber: 1,
+      assignee: "MOCK_CLI",
+      status: "DONE",
+    });
+  });
+
   test("P24-003: runs on_recovery hook and propagates hook failures from recovery loop", async () => {
     const phaseId = "73111111-1111-4111-8111-111111111111";
     const taskId = "73222222-2222-4222-8222-222222222222";
@@ -340,6 +448,10 @@ describe("PhaseRunner", () => {
       attemptNumber: 1,
     });
     expect(porcelainCalls).toBeGreaterThanOrEqual(1);
+    const statuses = (
+      mockControl.setPhaseStatus as ReturnType<typeof mock>
+    ).mock.calls.map((call: any[]) => call[0].status);
+    expect(statuses).not.toContain("CI_FAILED");
   });
 
   test("creates draft PR and marks it ready after validation approval when configured", async () => {
@@ -602,6 +714,108 @@ describe("PhaseRunner", () => {
       phaseId: phaseId,
       status: "DONE",
     });
+  });
+
+  test("P24-003: does not force CI_FAILED when branching recovery on_recovery hook throws", async () => {
+    const phaseId = "1f111111-1111-4111-8111-111111111111";
+    const taskId = "1f222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 24 Branching Recovery Hook Failure",
+          branchName: "phase-24-branching-recovery-hook-failure",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let statusCallCount = 0;
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      runInternalWork: mock(async () => ({
+        stdout: JSON.stringify({
+          status: "fixed",
+          reasoning: "staged everything",
+          actionsTaken: ["git add ."],
+        }),
+        stderr: "",
+      })),
+      recordRecoveryAttempt: mock(async () => mockState),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("status")) {
+          statusCallCount += 1;
+          if (statusCallCount === 1) {
+            return { exitCode: 0, stdout: "M modified.ts", stderr: "" };
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-24-branching-recovery-hook-failure",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        lifecycleHooks: [
+          {
+            id: "branching-recovery-hook-failure",
+            handlers: {
+              on_recovery: () => {
+                throw new Error("on_recovery failed during branching recovery");
+              },
+            },
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((e) => e);
+    expect(error).toBeInstanceOf(LifecycleHookExecutionError);
+    const hookError = error as LifecycleHookExecutionError;
+    expect(hookError.hookName).toBe("on_recovery");
+    const statuses = (
+      mockControl.setPhaseStatus as ReturnType<typeof mock>
+    ).mock.calls.map((call: any[]) => call[0].status);
+    expect(statuses).not.toContain("CI_FAILED");
   });
 
   test("P23-003: maps failed CI checks to targeted CI_FIX tasks with rich diagnostics", async () => {
@@ -1158,6 +1372,109 @@ describe("PhaseRunner", () => {
     const statuses = statusCalls.map((c: any[]) => c[0].status);
     expect(statuses).toContain("CI_FAILED");
     expect(statuses).not.toContain("DONE");
+  });
+
+  test("P24-003: on_recovery fixed hook is not emitted before postcondition verification succeeds", async () => {
+    const phaseId = "9a111111-1111-4111-8111-111111111111";
+    const taskId = "9a222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 24 Recovery Postcondition Gate",
+          branchName: "phase-24-recovery-postcondition-gate",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              errorCategory: undefined,
+              errorLogs: undefined,
+            },
+          ],
+        },
+      ],
+    };
+
+    let porcelainCallCount = 0;
+    const recoveryPayloads: any[] = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "FAILED";
+        (mockState.phases[0].tasks[0] as any).errorCategory = "DIRTY_WORKTREE";
+        (mockState.phases[0].tasks[0] as any).errorLogs =
+          "Git working tree is not clean.";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: JSON.stringify({
+          status: "fixed",
+          reasoning: "cleaned up",
+          actionsTaken: ["git add ."],
+        }),
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          porcelainCallCount += 1;
+          if (porcelainCallCount === 1) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          return {
+            exitCode: 0,
+            stdout: "?? src/still-dirty.ts\n",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("--show-current")) {
+          return {
+            exitCode: 0,
+            stdout: "phase-24-recovery-postcondition-gate",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        lifecycleHooks: [
+          {
+            id: "capture-recovery-payloads",
+            handlers: {
+              on_recovery: (payload) => {
+                recoveryPayloads.push(payload);
+              },
+            },
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Recovery attempts exhausted");
+    expect(recoveryPayloads).toHaveLength(0);
   });
 
   test("P19-003: each task uses its own persisted assignee instead of global default", async () => {
