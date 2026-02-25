@@ -250,7 +250,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 - [x] `P21-002` Unify argument validation error style with actionable remediation hints and consistent exit behavior. **Status: Done**. Deps: `P21-001`.
 - [x] `P21-003` Clarify config precedence messaging (global vs project settings) in CLI outputs and docs. **Status: Done**. Deps: `P21-001`.
 - [x] `P21-004` Standardize command outcome summaries (`what changed`, `status result`, `next action`) for state-mutating commands. **Status: Done**. Deps: `P21-002`, `P21-003`.
-- [ ] `P21-005` Add regression/snapshot tests for help text, validation messages, and config precedence outputs. Deps: `P21-004`.
+- [x] `P21-005` Add regression/snapshot tests for help text, validation messages, and config precedence outputs. **Status: Done**. Deps: `P21-004`.
 - [ ] `P21-006` Create PR Task: open Phase 21 PR after coding tasks are done. Deps: `P21-005`.
 
 ## Phase 22: Adapter Health and Observability (Roadmap)

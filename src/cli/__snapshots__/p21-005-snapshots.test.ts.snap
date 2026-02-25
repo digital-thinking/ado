@@ -1,0 +1,62 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`P21-005 Snapshot Tests Global help output snapshot 1`] = `
+"IxADO CLI
+
+Usage:
+  ixado                                                 Run IxADO with stored settings
+  ixado status                                          Show project status and running agents
+  ixado init                                            Register current directory as project in global config
+  ixado list                                            Show all registered projects
+  ixado switch <project-name>                           Switch active project context
+  ixado onboard                                         Configure global CLI settings
+  ixado task list                                       List tasks in active phase with numbers
+  ixado task create <title> <description> [assignee]    Create task in active phase
+  ixado task start <taskNumber> [assignee]              Start active-phase task
+  ixado task retry <taskNumber>                         Retry FAILED task with same assignee/session
+  ixado task logs <taskNumber>                          Show logs/result for task in active phase
+  ixado task reset <taskNumber>                         Reset FAILED task to TODO and hard-reset repo
+  ixado phase create <name> <branchName>                Create phase and set it active
+  ixado phase active <phaseNumber|phaseId>              Set active phase
+  ixado phase run [auto|manual] [countdownSeconds>=0]   Run TODO/CI_FIX tasks in active phase sequentially
+  ixado config show                                     Show effective config (project overrides global)
+  ixado config mode <auto|manual>                       Set default phase-loop mode
+  ixado config assignee <CLI_ADAPTER>                   Set default coding CLI
+  ixado config recovery <maxAttempts:0-10>              Set exception recovery max attempts
+  ixado config usage <on|off>                           Enable/disable codexbar usage telemetry
+  ixado web start [port]                                Start local web control center in background
+  ixado web stop                                        Stop local web control center
+  ixado web serve [port]                                Run web control center in foreground
+  ixado help                                            Show this help
+
+Run 'ixado <command> help' for subcommand details."
+`;
+
+exports[`P21-005 Snapshot Tests Task command help output snapshot 1`] = `
+"Task commands:
+
+  ixado task list                                      List tasks in active phase with numbers
+  ixado task create <title> <description> [assignee]   Create task in active phase
+  ixado task start <taskNumber> [assignee]             Start active-phase task
+  ixado task retry <taskNumber>                        Retry FAILED task with same assignee/session
+  ixado task logs <taskNumber>                         Show logs/result for task in active phase
+  ixado task reset <taskNumber>                        Reset FAILED task to TODO and hard-reset repo"
+`;
+
+exports[`P21-005 Snapshot Tests Config command help output snapshot 1`] = `
+"Config commands:
+
+  ixado config show                          Show effective config (project overrides global)
+  ixado config mode <auto|manual>            Set default phase-loop mode
+  ixado config assignee <CLI_ADAPTER>        Set default coding CLI
+  ixado config recovery <maxAttempts:0-10>   Set exception recovery max attempts
+  ixado config usage <on|off>                Enable/disable codexbar usage telemetry"
+`;
+
+exports[`P21-005 Snapshot Tests ValidationError format snapshot (with usage and hint) 1`] = `
+"Error: Test error message
+  Usage: ixado test <arg>
+  Hint:  Try adding a valid argument."
+`;
+
+exports[`P21-005 Snapshot Tests ValidationError format snapshot (minimal) 1`] = `"Error: Minimal error"`;
