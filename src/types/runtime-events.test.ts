@@ -140,6 +140,40 @@ describe("runtime event contract", () => {
     ).toBe(false);
   });
 
+  test("formats adapter output payload line for Telegram", () => {
+    const event = createRuntimeEvent({
+      family: "adapter-output",
+      type: "adapter.output",
+      payload: {
+        stream: "stdout",
+        line: "npm test failed",
+      },
+      context: {
+        source: "AGENT_SUPERVISOR",
+      },
+    });
+
+    expect(formatRuntimeEventForTelegram(event)).toBe("npm test failed");
+  });
+
+  test("suppresses adapter output events at important Telegram level", () => {
+    const event = createRuntimeEvent({
+      family: "adapter-output",
+      type: "adapter.output",
+      payload: {
+        stream: "stderr",
+        line: "line noise",
+      },
+      context: {
+        source: "AGENT_SUPERVISOR",
+      },
+    });
+
+    expect(shouldNotifyRuntimeEventForTelegram(event, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(event, "important")).toBe(false);
+    expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(false);
+  });
+
   test("suppresses duplicate Telegram notifications when configured", () => {
     const event = createRuntimeEvent({
       family: "tester-recovery",

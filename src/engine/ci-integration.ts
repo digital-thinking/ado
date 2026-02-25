@@ -47,7 +47,7 @@ export function derivePullRequestMetadata(
   }
 
   const completedTasks = tasks
-    .filter((t) => t.status === "DONE" || t.status === "CI_FIX")
+    .filter((t) => t.status === "DONE")
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const taskList = completedTasks

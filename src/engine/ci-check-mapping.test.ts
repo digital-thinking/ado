@@ -60,6 +60,22 @@ describe("ci-check-mapping", () => {
     );
   });
 
+  test("does not create fallback CI_FIX task for non-terminal overall states like PENDING", () => {
+    const summary: CiStatusSummary = {
+      overall: "PENDING",
+      checks: [{ name: "build", state: "SUCCESS" }],
+    };
+
+    const mapping = deriveTargetedCiFixTasks({
+      summary,
+      prUrl: "https://github.com/org/repo/pull/23",
+      existingTasks: [],
+    });
+
+    expect(mapping.tasksToCreate).toHaveLength(0);
+    expect(mapping.skippedTaskTitles).toHaveLength(0);
+  });
+
   test("formats rich CI diagnostics with check counts and blocking entries", () => {
     const diagnostics = formatCiDiagnostics({
       prNumber: 42,

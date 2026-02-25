@@ -15,7 +15,7 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
 };
 
 describe("derivePullRequestMetadata", () => {
-  test("formats title and body with tasks sorted by ID", () => {
+  test("formats title and body with DONE tasks sorted by ID and excludes CI_FIX", () => {
     const tasks: Task[] = [
       {
         id: "t2",
@@ -48,10 +48,8 @@ describe("derivePullRequestMetadata", () => {
     expect(title).toBe("Phase 1");
     expect(body).toContain("## Phase: Phase 1");
     expect(body).toContain("### Completed Tasks");
-    // t1 should come before t2 due to sorting
-    const t1Index = body.indexOf("- **Task 1**");
-    const t2Index = body.indexOf("- **Task 2**");
-    expect(t1Index).toBeLessThan(t2Index);
+    expect(body).toContain("- **Task 1**: Desc 1");
+    expect(body).not.toContain("Task 2");
     expect(body).not.toContain("Task 3");
     expect(body).toContain(
       "*Automated PR created by [IxADO](https://github.com/digital-thinking/ado).*",

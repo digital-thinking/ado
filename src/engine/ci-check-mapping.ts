@@ -20,6 +20,15 @@ function isBlockingCheck(check: CiCheck): boolean {
   );
 }
 
+function isTerminalOverallState(overall: CiStatusSummary["overall"]): boolean {
+  return (
+    overall === "SUCCESS" ||
+    overall === "FAILURE" ||
+    overall === "CANCELLED" ||
+    overall === "UNKNOWN"
+  );
+}
+
 function buildTaskTitle(checkName: string): string {
   return `${CI_FIX_PREFIX}${normalizeCheckName(checkName)}`;
 }
@@ -95,7 +104,11 @@ export function deriveTargetedCiFixTasks(input: {
     .filter(isBlockingCheck)
     .sort((a, b) => checkSortKey(a).localeCompare(checkSortKey(b)));
 
-  if (blockingChecks.length === 0 && input.summary.overall !== "SUCCESS") {
+  if (
+    blockingChecks.length === 0 &&
+    isTerminalOverallState(input.summary.overall) &&
+    input.summary.overall !== "SUCCESS"
+  ) {
     blockingChecks.push({
       name: `CI pipeline (${input.summary.overall})`,
       state: input.summary.overall,

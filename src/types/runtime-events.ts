@@ -285,6 +285,8 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
       return `CI: ${event.payload.summary}`;
     case "terminal.outcome":
       return `Outcome: ${event.payload.summary}`;
+    case "adapter.output":
+      return event.payload.line;
     default:
       return event.type;
   }
@@ -340,6 +342,9 @@ export function shouldNotifyRuntimeEventForTelegram(
       event.type === "ci.activity" &&
       event.payload.stage === "poll-transition"
     ) {
+      return false;
+    }
+    if (event.type === "adapter.output") {
       return false;
     }
     return true;
