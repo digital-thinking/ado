@@ -255,7 +255,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 ## Phase 22: Adapter Health and Observability (Roadmap)
 
-- [ ] `P22-001` Standardize adapter startup health checks and startup diagnostics across Codex/Claude/Gemini adapters. Deps: `P21-006`.
+- [x] `P22-001` Standardize adapter startup health checks and startup diagnostics across Codex/Claude/Gemini adapters. **Status: Done**. Deps: `P21-006`.
 - [ ] `P22-002` Improve no-output and timeout telemetry with adapter-specific hints and consistent structured log markers. Deps: `P22-001`.
 - [ ] `P22-003` Define and apply a unified adapter failure taxonomy (auth/network/missing-binary/timeout/unknown) for runtime and recovery decisions. Deps: `P22-001`.
 - [ ] `P22-004` Improve per-agent log readability in CLI/web views (phase/task context, concise failure summaries, recovery trace links). Deps: `P22-002`, `P22-003`.

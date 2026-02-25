@@ -1,6 +1,7 @@
 import type { ProcessRunner } from "../process";
 
-import { BaseCliAdapter, type NonInteractiveConfig } from "./types";
+import { getRequiredAdapterStartupPolicy } from "./startup";
+import { BaseCliAdapter } from "./types";
 
 type CodexAdapterOptions = {
   command?: string;
@@ -8,16 +9,8 @@ type CodexAdapterOptions = {
   bypassApprovalsAndSandbox?: boolean;
 };
 
-const REQUIRED_CODEX_ARGS = ["exec"];
 const CODEX_BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox";
-
-// `exec` is the batch/non-interactive subcommand for codex.
-// `chat` and `interactive` are the known interactive subcommands that must
-// never appear in the arg list.
-const CODEX_NON_INTERACTIVE_CONFIG: NonInteractiveConfig = {
-  requiredArgs: ["exec"],
-  forbiddenArgs: ["chat", "interactive"],
-};
+const CODEX_STARTUP_POLICY = getRequiredAdapterStartupPolicy("CODEX_CLI");
 
 export class CodexAdapter extends BaseCliAdapter {
   constructor(runner: ProcessRunner, options: CodexAdapterOptions = {}) {
@@ -27,13 +20,13 @@ export class CodexAdapter extends BaseCliAdapter {
 
     super({
       id: "CODEX_CLI",
-      command: options.command ?? "codex",
+      command: options.command ?? CODEX_STARTUP_POLICY.defaultCommand,
       baseArgs: [
-        ...REQUIRED_CODEX_ARGS,
+        ...CODEX_STARTUP_POLICY.requiredBaseArgs,
         ...gatedBypassArgs,
         ...(options.baseArgs ?? []),
       ],
-      nonInteractiveConfig: CODEX_NON_INTERACTIVE_CONFIG,
+      nonInteractiveConfig: CODEX_STARTUP_POLICY.nonInteractiveConfig,
       runner,
     });
   }

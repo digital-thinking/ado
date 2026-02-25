@@ -5,8 +5,10 @@ import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import {
   buildAdapterExecutionPlan,
+  buildAdapterInitializationDiagnostic,
   CodexUsageTracker,
   createAdapter,
+  formatAdapterStartupDiagnostic,
 } from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
 import {
@@ -192,6 +194,17 @@ export async function startWebControlCenter(
       const adapter = createAdapter(workInput.assignee, processManager, {
         bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
       });
+      const startupDiagnostic = buildAdapterInitializationDiagnostic({
+        adapterId: workInput.assignee,
+        command: adapter.contract.command,
+        baseArgs: adapter.contract.baseArgs,
+        cwd: input.cwd,
+        timeoutMs: assigneeSettings.timeoutMs,
+        startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
+      });
+      if (startupDiagnostic) {
+        console.info(formatAdapterStartupDiagnostic(startupDiagnostic));
+      }
       const artifacts = await createPromptLogArtifacts({
         cwd: input.cwd,
         assignee: workInput.assignee,
@@ -222,6 +235,7 @@ export async function startWebControlCenter(
             timeoutMs: assigneeSettings.timeoutMs,
             startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
             stdin,
+            adapterId: workInput.assignee,
             approvedAdapterSpawn: true,
             phaseId: workInput.phaseId,
             taskId: workInput.taskId,

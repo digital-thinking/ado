@@ -6,7 +6,12 @@ import { resolve, basename } from "node:path";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
-import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
+import {
+  buildAdapterExecutionPlan,
+  buildAdapterInitializationDiagnostic,
+  createAdapter,
+  formatAdapterStartupDiagnostic,
+} from "../adapters";
 import { createTelegramRuntime } from "../bot";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { PhaseRunner } from "../engine/phase-runner";
@@ -228,6 +233,17 @@ function createControlCenterServiceWithAgentTracking(
       const adapter = createAdapter(workInput.assignee, processManager, {
         bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
       });
+      const startupDiagnostic = buildAdapterInitializationDiagnostic({
+        adapterId: workInput.assignee,
+        command: adapter.contract.command,
+        baseArgs: adapter.contract.baseArgs,
+        cwd: projectRootDir,
+        timeoutMs: assigneeSettings.timeoutMs,
+        startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
+      });
+      if (startupDiagnostic) {
+        console.info(formatAdapterStartupDiagnostic(startupDiagnostic));
+      }
       const artifacts = await createPromptLogArtifacts({
         cwd: projectRootDir,
         assignee: workInput.assignee,
@@ -254,6 +270,7 @@ function createControlCenterServiceWithAgentTracking(
           timeoutMs: assigneeSettings.timeoutMs,
           startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
           stdin,
+          adapterId: workInput.assignee,
           approvedAdapterSpawn: true,
           phaseId: workInput.phaseId,
           taskId: workInput.taskId,
