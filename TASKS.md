@@ -279,4 +279,4 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 - [x] `P24-002` Implement hook runner with fail-fast isolation, deterministic ordering, timeout guardrails, and structured error propagation to phase-runner logs. **Status: Done**. Deps: `P24-001`.
 - [x] `P24-003` Integrate lifecycle hooks into phase-runner and tester/recovery loop without introducing alternate execution paths. **Status: Done**. Deps: `P24-002`.
 - [x] `P24-004` Add regression tests for hook contract validation, ordering guarantees, timeout behavior, and failure propagation semantics. **Status: Done**. Deps: `P24-003`.
-- [ ] `P24-005` Create PR Task: open Phase 24 PR after coding tasks are done. Deps: `P24-004`.
+- [ ] `P24-005` Create PR Task: open Phase 24 PR after coding tasks are done. **Status: InProgress**. Deps: `P24-004`.
