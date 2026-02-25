@@ -97,12 +97,11 @@ export class CommandRegistry {
   }
 
   private printGlobalHelp(): void {
-    console.info("IxADO CLI");
-    console.info("");
-    console.info("Usage:");
+    // Collect all rows first so column width can be computed dynamically.
+    const rows: Array<{ usage: string; description: string }> = [];
     for (const cmd of this.commands) {
       if (cmd.name === "") {
-        console.info(`  ixado ${"".padEnd(14)} ${cmd.description}`);
+        rows.push({ usage: "", description: cmd.description });
         continue;
       }
       if (cmd.subcommands) {
@@ -110,27 +109,44 @@ export class CommandRegistry {
           const usage = sub.usage
             ? `${cmd.name} ${sub.usage}`
             : `${cmd.name} ${sub.name}`;
-          console.info(`  ixado ${usage.padEnd(14)} ${sub.description}`);
+          rows.push({ usage, description: sub.description });
         }
       } else {
         const usage = cmd.usage || cmd.name;
-        console.info(`  ixado ${usage.padEnd(14)} ${cmd.description}`);
+        rows.push({ usage, description: cmd.description });
       }
     }
-    console.info(`  ixado ${"help".padEnd(14)} Show this help`);
+    rows.push({ usage: "help", description: "Show this help" });
+
+    const colWidth = Math.max(...rows.map((r) => r.usage.length)) + 2;
+
+    console.info("IxADO CLI");
+    console.info("");
+    console.info("Usage:");
+    for (const row of rows) {
+      console.info(`  ixado ${row.usage.padEnd(colWidth)} ${row.description}`);
+    }
+    console.info("");
+    console.info("Run 'ixado <command> help' for subcommand details.");
   }
 
   private printCommandHelp(command: CommandDefinition): void {
     const label = command.name.charAt(0).toUpperCase() + command.name.slice(1);
     console.info(`${label} commands:`);
+    console.info("");
     if (command.subcommands) {
-      for (const sub of command.subcommands) {
-        const usage = sub.usage || sub.name;
-        console.info(`  ixado ${command.name} ${usage}`);
+      // Collect rows so column width can be computed dynamically.
+      const rows = command.subcommands.map((sub) => ({
+        usage: `ixado ${command.name} ${sub.usage || sub.name}`,
+        description: sub.description,
+      }));
+      const colWidth = Math.max(...rows.map((r) => r.usage.length)) + 2;
+      for (const row of rows) {
+        console.info(`  ${row.usage.padEnd(colWidth)} ${row.description}`);
       }
     } else {
-      const usage = command.usage || command.name;
-      console.info(`  ixado ${usage}`);
+      const usage = `ixado ${command.usage || command.name}`;
+      console.info(`  ${usage}  ${command.description}`);
     }
   }
 }
