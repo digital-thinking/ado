@@ -10,6 +10,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { TestSandbox, runIxado } from "./test-helpers";
 
 // ── 1. Global help output ────────────────────────────────────────────────────
@@ -237,7 +239,7 @@ describe("P21-005 per-group help text", () => {
 
     expect(result.exitCode).toBe(0);
     const out = result.stdout;
-    expect(out).toContain("Show effective config (project overrides global)");
+    expect(out).toContain("Show current global config");
     expect(out).toContain("Set default phase-loop mode");
     expect(out).toContain("Set default coding CLI");
     expect(out).toContain("Set exception recovery max attempts");
@@ -294,10 +296,8 @@ describe("P21-005 config command outcome summaries", () => {
     const out = result.stdout;
     expect(out).toContain("Execution loop mode set to AUTO.");
     expect(out).toContain("Settings saved to ");
-    expect(out).toContain("Scope: project overrides (");
-    expect(out).toContain(
-      "Precedence: project settings override global defaults (",
-    );
+    expect(out).toContain("Scope: global defaults (");
+    expect(out).not.toContain("Precedence: project settings override");
     expect(out).toContain(
       "Next:    Run 'ixado phase run' to apply the new mode.",
     );
@@ -314,7 +314,7 @@ describe("P21-005 config command outcome summaries", () => {
     const out = result.stdout;
     expect(out).toContain("Execution loop mode set to MANUAL.");
     expect(out).toContain("Settings saved to ");
-    expect(out).toContain("Scope: project overrides (");
+    expect(out).toContain("Scope: global defaults (");
     expect(out).toContain(
       "Next:    Run 'ixado phase run' to apply the new mode.",
     );
@@ -331,10 +331,8 @@ describe("P21-005 config command outcome summaries", () => {
     const out = result.stdout;
     expect(out).toContain("Default coding CLI set to MOCK_CLI.");
     expect(out).toContain("Settings saved to ");
-    expect(out).toContain("Scope: project overrides (");
-    expect(out).toContain(
-      "Precedence: project settings override global defaults (",
-    );
+    expect(out).toContain("Scope: global defaults (");
+    expect(out).not.toContain("Precedence: project settings override");
     expect(out).toContain(
       "Next:    Run 'ixado phase run' or 'ixado task start <n>' to use the new default.",
     );
@@ -351,7 +349,7 @@ describe("P21-005 config command outcome summaries", () => {
     const out = result.stdout;
     expect(out).toContain("Codexbar usage telemetry set to ON.");
     expect(out).toContain("Settings saved to ");
-    expect(out).toContain("Scope: project overrides (");
+    expect(out).toContain("Scope: global defaults (");
     expect(out).toContain("Next:    Usage data will be collected on next run.");
   });
 
@@ -382,12 +380,30 @@ describe("P21-005 config command outcome summaries", () => {
     const out = result.stdout;
     expect(out).toContain("Exception recovery max attempts set to 2.");
     expect(out).toContain("Settings saved to ");
-    expect(out).toContain("Scope: project overrides (");
-    expect(out).toContain(
-      "Precedence: project settings override global defaults (",
-    );
+    expect(out).toContain("Scope: global defaults (");
+    expect(out).not.toContain("Precedence: project settings override");
     expect(out).toContain(
       "Next:    Run 'ixado phase run' to apply the updated recovery limit.",
+    );
+  });
+
+  test("config usage off does not create local .ixado/settings.json", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p21-005-usage-global-only-",
+    );
+    sandboxes.push(sandbox);
+    const localSettingsFilePath = join(
+      sandbox.projectDir,
+      ".ixado",
+      "settings.json",
+    );
+
+    const result = runIxado(["config", "usage", "off"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(localSettingsFilePath)).toBe(false);
+    expect(result.stdout).toContain(
+      `Settings saved to ${sandbox.globalConfigFile}.`,
     );
   });
 
@@ -622,10 +638,8 @@ describe("P21-005 config show output structure", () => {
     expect(result.stderr).toBe("");
     const out = result.stdout;
     expect(out).toContain("Settings file: ");
-    expect(out).toContain("Scope: project overrides (");
-    expect(out).toContain(
-      "Precedence: project settings override global defaults (",
-    );
+    expect(out).toContain("Scope: global defaults (");
+    expect(out).not.toContain("Precedence: project settings override");
     expect(out).toContain("Execution loop mode: ");
     expect(out).toContain("Default coding CLI: ");
     expect(out).toContain("Exception recovery max attempts: ");
@@ -647,15 +661,16 @@ describe("P21-005 config show output structure", () => {
     expect(out).toContain("Codexbar usage telemetry: ON");
   });
 
-  test("config show: settings file path is project-scoped by default", async () => {
+  test("config show: settings file path is global by default", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-show-path-");
     sandboxes.push(sandbox);
 
     const result = runIxado(["config", "show"], sandbox);
 
     expect(result.exitCode).toBe(0);
-    // Settings file should be inside the sandbox project dir.
-    expect(result.stdout).toContain(`Settings file: ${sandbox.projectDir}`);
+    expect(result.stdout).toContain(
+      `Settings file: ${sandbox.globalConfigFile}`,
+    );
   });
 
   test("config show: reflects config mode after change", async () => {
@@ -686,16 +701,16 @@ describe("P21-005 config precedence message format", () => {
     sandboxes.length = 0;
   });
 
-  test("project-scope: Scope line uses 'project overrides' wording", async () => {
+  test("config mutators: Scope line uses 'global defaults' wording", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-prec-project-");
     sandboxes.push(sandbox);
 
     const result = runIxado(["config", "mode", "auto"], sandbox);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Scope: project overrides (");
-    expect(result.stdout).toContain(
-      "Precedence: project settings override global defaults (",
+    expect(result.stdout).toContain("Scope: global defaults (");
+    expect(result.stdout).not.toContain(
+      "Precedence: project settings override",
     );
   });
 
@@ -715,7 +730,7 @@ describe("P21-005 config precedence message format", () => {
     );
   });
 
-  test("mutation commands include precedence message in their output", async () => {
+  test("mutation commands include global defaults scope in output", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-prec-mutate-");
     sandboxes.push(sandbox);
 
@@ -730,7 +745,10 @@ describe("P21-005 config precedence message format", () => {
     for (const args of cases) {
       const result = runIxado(args, sandbox);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Scope: project overrides (");
+      expect(result.stdout).toContain("Scope: global defaults (");
+      expect(result.stdout).not.toContain(
+        "Precedence: project settings override",
+      );
     }
   });
 });

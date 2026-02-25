@@ -313,7 +313,7 @@ export function controlCenterHtml(params: {
 <body>
   <main class="layout">
     <section class="card wide">
-      <h1>IxADO Control Center <span class="pill">Phase 12</span></h1>
+      <h1>IxADO Control Center <span id="activePhaseBadge" class="pill">No active phase</span></h1>
       <div class="small">Web log: <span id="webLogPath" class="mono"></span> | CLI log: <span id="cliLogPath" class="mono"></span></div>
     </section>
 
@@ -490,13 +490,14 @@ export function controlCenterHtml(params: {
     const tabStrip = document.getElementById("tabStrip");
     const projectContent = document.getElementById("projectContent");
     const settingsContent = document.getElementById("settingsContent");
+    const activePhaseBadge = document.getElementById("activePhaseBadge");
 
-    const defaultInternalWorkAssignee = \${JSON.stringify(params.defaultInternalWorkAssignee)};
-    const defaultAutoMode = \${params.defaultAutoMode};
-    const defaultWebLogFilePath = \${JSON.stringify(params.webLogFilePath)};
-    const defaultCliLogFilePath = \${JSON.stringify(params.cliLogFilePath)};
-    const WORKER_ASSIGNEES = \${params.availableWorkerAssigneesJson};
-    const INITIAL_PROJECT_NAME = \${JSON.stringify(params.projectName)};
+    const defaultInternalWorkAssignee = ${JSON.stringify(params.defaultInternalWorkAssignee)};
+    const defaultAutoMode = ${params.defaultAutoMode};
+    const defaultWebLogFilePath = ${JSON.stringify(params.webLogFilePath)};
+    const defaultCliLogFilePath = ${JSON.stringify(params.cliLogFilePath)};
+    const WORKER_ASSIGNEES = ${params.availableWorkerAssigneesJson};
+    const INITIAL_PROJECT_NAME = ${JSON.stringify(params.projectName)};
 
     let latestAgents = [];
     let latestState = null;
@@ -726,7 +727,14 @@ export function controlCenterHtml(params: {
 
     async function refreshProjects() {
       try {
-        projects = await api("/api/projects");
+        const loadedProjects = await api("/api/projects");
+        projects = Array.isArray(loadedProjects) ? loadedProjects : [];
+        if (projects.length === 0) {
+          projects = [{ name: activeProjectName || INITIAL_PROJECT_NAME, rootDir: "" }];
+        }
+        if (!projects.some((project) => project.name === activeProjectName)) {
+          activeProjectName = projects[0].name;
+        }
         renderTabs();
       } catch (error) {
         console.error("Failed to refresh projects:", error);
@@ -773,6 +781,14 @@ export function controlCenterHtml(params: {
         }
         taskPhase.appendChild(option);
       });
+      if (activePhaseBadge) {
+        const activePhase = selectedPhaseId
+          ? state.phases.find((phase) => phase.id === selectedPhaseId)
+          : undefined;
+        activePhaseBadge.textContent = activePhase
+          ? activePhase.name + " (" + activePhase.status + ")"
+          : "No active phase";
+      }
       renderTaskDependenciesOptions();
     }
 
@@ -1138,13 +1154,25 @@ export function controlCenterHtml(params: {
     }
 
     async function globalRefresh() {
-      const [agents, usage] = await Promise.all([
-        api("/api/agents"),
-        api("/api/usage"),
+      const [agentsResult, usageResult] = await Promise.allSettled([
+        api("/api/agents", {}, 3000),
+        api("/api/usage", {}, 3000),
       ]);
-      renderAgents(agents);
-      usageStatus.textContent = usage.available ? "Available" : ("Unavailable: " + (usage.message || "unknown"));
-      usageRaw.textContent = usage.snapshot ? JSON.stringify(usage.snapshot.payload, null, 2) : "";
+
+      if (agentsResult.status === "fulfilled") {
+        renderAgents(agentsResult.value);
+      } else {
+        throw agentsResult.reason;
+      }
+
+      if (usageResult.status === "fulfilled") {
+        const usage = usageResult.value;
+        usageStatus.textContent = usage.available ? "Available" : ("Unavailable: " + (usage.message || "unknown"));
+        usageRaw.textContent = usage.snapshot ? JSON.stringify(usage.snapshot.payload, null, 2) : "";
+      } else {
+        usageStatus.textContent = "Unavailable: failed to load usage snapshot.";
+        usageRaw.textContent = "";
+      }
     }
 
     function handleRefreshError(error) {
@@ -1220,15 +1248,20 @@ export function controlCenterHtml(params: {
       importTasksButton.disabled = true;
       const startedAt = Date.now();
       importTasksStatus.textContent = "Importing... 0s";
+      await globalRefresh().catch(handleRefreshError);
       const ticker = setInterval(() => {
         const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
         importTasksStatus.textContent = "Importing... " + elapsedSeconds + "s";
+      }, 1000);
+      const agentTicker = setInterval(() => {
+        globalRefresh().catch(handleRefreshError);
       }, 1000);
       try {
         const result = await api("/api/import/tasks-md", {
           method: "POST",
           body: JSON.stringify({
-            projectName: activeProjectName
+            projectName: activeProjectName,
+            assignee: latestRuntimeConfig.defaultInternalWorkAssignee,
           }),
         });
         importTasksStatus.textContent =
@@ -1242,11 +1275,13 @@ export function controlCenterHtml(params: {
           result.sourceFilePath +
           ".";
         await refreshActiveProject();
+        await globalRefresh();
       } catch (error) {
         importTasksStatus.textContent = "";
         setError("importTasksError", error instanceof Error ? error.message : String(error));
       } finally {
         clearInterval(ticker);
+        clearInterval(agentTicker);
         importTasksButton.disabled = false;
       }
     });

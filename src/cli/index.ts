@@ -135,6 +135,42 @@ async function resolveProjectRootDir(): Promise<string> {
   return activeRootDir ?? process.cwd();
 }
 
+function resolveProjectExecutionSettings(
+  settings: Awaited<ReturnType<typeof loadCliSettings>>,
+  projectName: string,
+): { autoMode: boolean; defaultAssignee: CLIAdapterId } {
+  const project = settings.projects.find((p) => p.name === projectName);
+  return {
+    autoMode:
+      project?.executionSettings?.autoMode ?? settings.executionLoop.autoMode,
+    defaultAssignee:
+      project?.executionSettings?.defaultAssignee ??
+      settings.internalWork.assignee,
+  };
+}
+
+function resolveConfigTargetProjectIndex(
+  settings: Awaited<ReturnType<typeof loadCliSettings>>,
+): number | undefined {
+  if (settings.activeProject) {
+    const activeIndex = settings.projects.findIndex(
+      (project) => project.name === settings.activeProject,
+    );
+    if (activeIndex >= 0) {
+      return activeIndex;
+    }
+  }
+
+  const cwd = process.cwd();
+  const cwdIndex = settings.projects.findIndex(
+    (project) => project.rootDir === cwd,
+  );
+  if (cwdIndex >= 0) {
+    return cwdIndex;
+  }
+  return undefined;
+}
+
 async function loadOrInitializeState(
   engine: StateEngine,
   stateFilePath: string,
@@ -374,6 +410,10 @@ async function runDefaultCommand(): Promise<void> {
     projectName,
   );
   const availableAgents = getAvailableAgents(settings);
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
 
   console.info("IxADO bootstrap checks passed.");
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}.`);
@@ -404,7 +444,7 @@ async function runDefaultCommand(): Promise<void> {
       readState: () => control.getState(),
       listAgents: () => agents.list(),
       availableAssignees: availableAgents,
-      defaultAssignee: settings.internalWork.assignee,
+      defaultAssignee: projectExecutionSettings.defaultAssignee,
       startTask: async (input) =>
         control.startActiveTaskAndWait({
           taskNumber: input.taskNumber,
@@ -562,10 +602,14 @@ function resolveCliEntryScriptPath(): string {
 async function runWebStartCommand({
   args,
 }: CommandActionContext): Promise<void> {
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
   const stateFilePath = await resolveProjectAwareStateFilePath();
   const portFromArgs = parseWebPort(args[0]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
@@ -574,6 +618,7 @@ async function runWebStartCommand({
   const runtime = await startWebDaemon({
     cwd: projectRootDir,
     stateFilePath,
+    settingsFilePath,
     projectName,
     entryScriptPath: resolveCliEntryScriptPath(),
     port,
@@ -585,7 +630,7 @@ async function runWebStartCommand({
   console.info(`Web logs: ${runtime.logFilePath}`);
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
   console.info(
-    `Internal work default adapter: ${settings.internalWork.assignee}.`,
+    `Internal work default adapter: ${projectExecutionSettings.defaultAssignee}.`,
   );
   console.info("Use `ixado web stop` to stop it.");
 }
@@ -629,8 +674,12 @@ async function runWebServeCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
   const portFromArgs = parseWebPort(args[0]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
   const port = portFromArgs ?? portFromEnv;
@@ -640,8 +689,8 @@ async function runWebServeCommand({
     stateFilePath,
     settingsFilePath,
     projectName,
-    defaultInternalWorkAssignee: settings.internalWork.assignee,
-    defaultAutoMode: settings.executionLoop.autoMode,
+    defaultInternalWorkAssignee: projectExecutionSettings.defaultAssignee,
+    defaultAutoMode: projectExecutionSettings.autoMode,
     agentSettings: settings.agents,
     port,
   });
@@ -775,7 +824,12 @@ async function runTaskStartCommand({
   await control.ensureInitialized(projectName, projectRootDir);
 
   const explicitAssignee = args[1]?.trim();
-  let assigneeCandidate = explicitAssignee || settings.internalWork.assignee;
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
+  let assigneeCandidate =
+    explicitAssignee || projectExecutionSettings.defaultAssignee;
   if (!explicitAssignee) {
     const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
     if (task.status === "FAILED" && task.assignee !== "UNASSIGNED") {
@@ -1133,6 +1187,10 @@ async function runPhaseRunCommand({
     projectName,
   );
   await control.ensureInitialized(projectName, projectRootDir);
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
 
   // Reconcile stale RUNNING agents left over from a prior process crash so that
   // the agent registry does not show phantom RUNNING entries.
@@ -1143,13 +1201,13 @@ async function runPhaseRunCommand({
     );
   }
 
-  const mode = resolvePhaseRunMode(args[0], settings.executionLoop.autoMode);
+  const mode = resolvePhaseRunMode(args[0], projectExecutionSettings.autoMode);
   const countdownSeconds = resolveCountdownSeconds(
     args[1],
     settings.executionLoop.countdownSeconds,
   );
   const loopControl = new PhaseLoopControl();
-  const activeAssignee = settings.internalWork.assignee;
+  const activeAssignee = projectExecutionSettings.defaultAssignee;
   const telegram = resolveTelegramConfig(settings.telegram);
 
   let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
@@ -1420,26 +1478,25 @@ function parseConfigRecoveryMaxAttempts(rawValue: string): number {
 }
 
 function getSettingsPrecedenceMessage(settingsFilePath: string): string {
-  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
-  if (settingsFilePath === globalSettingsFilePath) {
-    return `Scope: global defaults (${globalSettingsFilePath}).`;
-  }
-
-  return [
-    `Scope: project overrides (${settingsFilePath}).`,
-    `Precedence: project settings override global defaults (${globalSettingsFilePath}).`,
-  ].join(" ");
+  return `Scope: global defaults (${settingsFilePath}).`;
 }
 
 async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const projectName = await resolveProjectName();
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
   console.info(`Settings file: ${settingsFilePath}`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
   console.info(
-    `Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`,
+    `Execution loop mode: ${projectExecutionSettings.autoMode ? "AUTO" : "MANUAL"}`,
   );
-  console.info(`Default coding CLI: ${settings.internalWork.assignee}`);
+  console.info(
+    `Default coding CLI: ${projectExecutionSettings.defaultAssignee}`,
+  );
   console.info(
     `Exception recovery max attempts: ${settings.exceptionRecovery.maxAttempts}`,
   );
@@ -1460,17 +1517,37 @@ async function runConfigModeCommand({
   }
 
   const autoMode = parseConfigMode(rawMode);
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const targetProjectIndex = resolveConfigTargetProjectIndex(settings);
+  const projects = settings.projects.map((project, index) =>
+    index !== targetProjectIndex
+      ? project
+      : {
+          ...project,
+          executionSettings: {
+            autoMode,
+            defaultAssignee:
+              project.executionSettings?.defaultAssignee ??
+              settings.internalWork.assignee,
+          },
+        },
+  );
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
     executionLoop: {
       ...settings.executionLoop,
       autoMode,
     },
+    projects,
   });
+  const resolvedMode =
+    targetProjectIndex === undefined
+      ? saved.executionLoop.autoMode
+      : (saved.projects[targetProjectIndex]?.executionSettings?.autoMode ??
+        saved.executionLoop.autoMode);
   console.info(
-    `Execution loop mode set to ${saved.executionLoop.autoMode ? "AUTO" : "MANUAL"}.`,
+    `Execution loop mode set to ${resolvedMode ? "AUTO" : "MANUAL"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
@@ -1500,7 +1577,7 @@ async function runConfigAssigneeCommand({
     });
   }
   const assignee = parsedAssignee.data;
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   if (!settings.agents[assignee].enabled) {
     throw new ValidationError(`Agent '${assignee}' is disabled.`, {
@@ -1508,14 +1585,29 @@ async function runConfigAssigneeCommand({
     });
   }
 
+  const targetProjectIndex = resolveConfigTargetProjectIndex(settings);
+  const projects = settings.projects.map((project, index) =>
+    index !== targetProjectIndex
+      ? project
+      : {
+          ...project,
+          executionSettings: {
+            autoMode:
+              project.executionSettings?.autoMode ??
+              settings.executionLoop.autoMode,
+            defaultAssignee: assignee,
+          },
+        },
+  );
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
     internalWork: {
       ...settings.internalWork,
       assignee,
     },
+    projects,
   });
-  console.info(`Default coding CLI set to ${saved.internalWork.assignee}.`);
+  console.info(`Default coding CLI set to ${assignee}.`);
   console.info(`Settings saved to ${settingsFilePath}.`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
   console.info(
@@ -1539,7 +1631,7 @@ async function runConfigUsageCommand({
     "ixado config usage <on|off>",
     "Use 'on' to enable usage tracking or 'off' to disable it.",
   );
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
@@ -1574,7 +1666,7 @@ async function runConfigRecoveryCommand({
   }
 
   const maxAttempts = parseConfigRecoveryMaxAttempts(rawValue);
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
@@ -1700,7 +1792,7 @@ async function runCli(args: string[]): Promise<void> {
       subcommands: [
         {
           name: "show",
-          description: "Show effective config (project overrides global)",
+          description: "Show current global config",
           action: runConfigShowCommand,
         },
         {

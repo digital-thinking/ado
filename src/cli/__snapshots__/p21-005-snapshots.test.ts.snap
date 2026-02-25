@@ -19,7 +19,7 @@ Usage:
   ixado phase create <name> <branchName>                Create phase and set it active
   ixado phase active <phaseNumber|phaseId>              Set active phase
   ixado phase run [auto|manual] [countdownSeconds>=0]   Run TODO/CI_FIX tasks in active phase sequentially
-  ixado config show                                     Show effective config (project overrides global)
+  ixado config show                                     Show current global config
   ixado config mode <auto|manual>                       Set default phase-loop mode
   ixado config assignee <CLI_ADAPTER>                   Set default coding CLI
   ixado config recovery <maxAttempts:0-10>              Set exception recovery max attempts
@@ -46,7 +46,7 @@ exports[`P21-005 Snapshot Tests Task command help output snapshot 1`] = `
 exports[`P21-005 Snapshot Tests Config command help output snapshot 1`] = `
 "Config commands:
 
-  ixado config show                          Show effective config (project overrides global)
+  ixado config show                          Show current global config
   ixado config mode <auto|manual>            Set default phase-loop mode
   ixado config assignee <CLI_ADAPTER>        Set default coding CLI
   ixado config recovery <maxAttempts:0-10>   Set exception recovery max attempts

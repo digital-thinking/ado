@@ -42,6 +42,7 @@ type StopWebDaemonResult =
 export type StartWebDaemonInput = {
   cwd: string;
   stateFilePath: string;
+  settingsFilePath: string;
   projectName: string;
   entryScriptPath: string;
   port?: number;
@@ -343,6 +344,9 @@ export async function startWebDaemon(
   if (!input.stateFilePath.trim()) {
     throw new Error("stateFilePath must not be empty.");
   }
+  if (!input.settingsFilePath.trim()) {
+    throw new Error("settingsFilePath must not be empty.");
+  }
   if (!input.projectName.trim()) {
     throw new Error("projectName must not be empty.");
   }
@@ -377,6 +381,7 @@ export async function startWebDaemon(
         env: {
           ...process.env,
           IXADO_STATE_FILE: input.stateFilePath,
+          IXADO_SETTINGS_FILE: input.settingsFilePath,
           IXADO_WEB_RUNTIME_FILE: runtimeFilePath,
           IXADO_WEB_LOG_FILE: logFilePath,
         },
