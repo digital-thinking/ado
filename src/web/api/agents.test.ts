@@ -2,6 +2,19 @@ import { describe, expect, test, mock } from "bun:test";
 import { handleAgentsApi, refreshRecoveryCache } from "./agents";
 import type { ApiDependencies } from "./types";
 import type { ProjectState } from "../../types";
+import { RuntimeEventSchema } from "../../types/runtime-events";
+
+function parseSsePayload(chunk: string): Record<string, unknown> {
+  const normalized = chunk.trim();
+  if (!normalized.startsWith("data: ")) {
+    throw new Error(`Unexpected SSE payload shape: ${chunk}`);
+  }
+
+  return JSON.parse(normalized.slice("data: ".length)) as Record<
+    string,
+    unknown
+  >;
+}
 
 describe("agents API enrichment", () => {
   const mockAgents = {
@@ -183,6 +196,14 @@ describe("agents API enrichment", () => {
     expect(payload1).toContain(
       '"formattedLine":"[phase: Phase 1 | task #1 Task One] line one"',
     );
+    const parsed1 = parseSsePayload(payload1);
+    const runtimeEvent1 = RuntimeEventSchema.parse(parsed1.runtimeEvent);
+    expect(runtimeEvent1.type).toBe("adapter.output");
+    expect(runtimeEvent1.source).toBe("WEB_API");
+    if (runtimeEvent1.type === "adapter.output") {
+      expect(runtimeEvent1.payload.stream).toBe("system");
+      expect(runtimeEvent1.payload.line).toBe("line one");
+    }
 
     setTimeout(() => {
       capturedListener?.({
@@ -198,5 +219,13 @@ describe("agents API enrichment", () => {
     expect(payload2).toContain('"failureSummary":"line one"');
     expect(payload2).toContain('"href":"#task-card-task-1"');
     expect(payload2).toContain('"href":"#task-recovery-task-1-1"');
+    const parsed2 = parseSsePayload(payload2);
+    const runtimeEvent2 = RuntimeEventSchema.parse(parsed2.runtimeEvent);
+    expect(runtimeEvent2.type).toBe("terminal.outcome");
+    expect(runtimeEvent2.source).toBe("WEB_API");
+    if (runtimeEvent2.type === "terminal.outcome") {
+      expect(runtimeEvent2.payload.outcome).toBe("failure");
+      expect(runtimeEvent2.payload.agentStatus).toBe("FAILED");
+    }
   });
 });

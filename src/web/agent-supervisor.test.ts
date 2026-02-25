@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { AgentSupervisor } from "./agent-supervisor";
 import { ProcessStdinUnavailableError } from "../process/manager";
+import { RuntimeEventSchema } from "../types/runtime-events";
 
 type FakeChild = ChildProcess & {
   stdout: PassThrough;
@@ -129,6 +130,61 @@ describe("AgentSupervisor", () => {
       true,
     );
     expect(listed?.lastExitCode).toBe(2);
+  });
+
+  test("P22-006: emits structured telemetry events with expected runtime contract fields", () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+    const started = supervisor.start({
+      name: "Telemetry worker",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp/repo",
+      adapterId: "CODEX_CLI",
+      phaseId: "phase-1",
+      taskId: "task-1",
+      projectName: "ixado",
+      approvedAdapterSpawn: true,
+    });
+
+    const events: unknown[] = [];
+    supervisor.subscribe(started.id, (event) => {
+      events.push(event);
+    });
+
+    child.stdout.write("stdout line\n");
+    child.stderr.write("stderr line\n");
+    child.emit("close", 0, null);
+
+    const parsed = events.map((event) => RuntimeEventSchema.parse(event));
+    expect(parsed.some((event) => event.type === "adapter.output")).toBe(true);
+    expect(parsed.some((event) => event.type === "terminal.outcome")).toBe(
+      true,
+    );
+
+    const stdoutEvent = parsed.find(
+      (event) =>
+        event.type === "adapter.output" &&
+        event.payload.stream === "stdout" &&
+        event.payload.line === "stdout line",
+    );
+    expect(stdoutEvent?.source).toBe("AGENT_SUPERVISOR");
+    expect(stdoutEvent?.family).toBe("adapter-output");
+    expect(stdoutEvent?.adapterId).toBe("CODEX_CLI");
+    expect(stdoutEvent?.projectName).toBe("ixado");
+    expect(stdoutEvent?.phaseId).toBe("phase-1");
+    expect(stdoutEvent?.taskId).toBe("task-1");
+
+    const terminalEvent = parsed.find(
+      (event) => event.type === "terminal.outcome",
+    );
+    if (!terminalEvent || terminalEvent.type !== "terminal.outcome") {
+      throw new Error("Expected terminal.outcome event.");
+    }
+    expect(terminalEvent.family).toBe("terminal-outcome");
+    expect(terminalEvent.payload.outcome).toBe("success");
+    expect(terminalEvent.payload.agentStatus).toBe("STOPPED");
+    expect(terminalEvent.payload.exitCode).toBe(0);
   });
 
   test("assigns and clears task ownership", () => {
@@ -380,6 +436,50 @@ describe("AgentSupervisor", () => {
         line.includes("[ixado][adapter-runtime]"),
       ),
     ).toBe(true);
+  });
+
+  test("P22-006: maps runtime non-zero exit with auth-like output to AGENT_FAILURE/auth taxonomy", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+
+    const runPromise = supervisor.runToCompletion({
+      name: "Auth failure worker",
+      command: "claude",
+      args: ["--print"],
+      cwd: "/tmp",
+      adapterId: "CLAUDE_CLI",
+      approvedAdapterSpawn: true,
+    });
+
+    child.stderr.write("unauthorized: token expired\n");
+    child.emit("close", 1, null);
+
+    await expect(runPromise).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "auth",
+    });
+  });
+
+  test("P22-006: maps runtime non-zero exit with unknown output to AGENT_FAILURE/unknown taxonomy fallback", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+
+    const runPromise = supervisor.runToCompletion({
+      name: "Unknown failure worker",
+      command: "gemini",
+      args: ["--yolo"],
+      cwd: "/tmp",
+      adapterId: "GEMINI_CLI",
+      approvedAdapterSpawn: true,
+    });
+
+    child.stderr.write("unexpected fatal condition\n");
+    child.emit("close", 7, null);
+
+    await expect(runPromise).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "unknown",
+    });
   });
 
   test("does NOT append startup-silence diagnostic when output arrives before silence window expires", async () => {

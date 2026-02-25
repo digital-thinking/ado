@@ -260,7 +260,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 - [x] `P22-003` Define and apply a unified adapter failure taxonomy (auth/network/missing-binary/timeout/unknown) for runtime and recovery decisions. **Status: Done**. Deps: `P22-001`.
 - [x] `P22-004` Improve per-agent log readability in CLI/web views (phase/task context, concise failure summaries, recovery trace links). **Status: Done**. Deps: `P22-002`, `P22-003`.
 - [x] `P22-005` Introduce a structured runtime event contract shared across CLI/Web/Telegram for task lifecycle, adapter output, tester/recovery, and terminal outcomes. **Status: Done**. Deps: `P22-004`.
-- [ ] `P22-006` Add regression tests for startup health detection, telemetry emission, failure taxonomy mapping, and runtime event-contract conformance. Deps: `P22-005`.
+- [x] `P22-006` Add regression tests for startup health detection, telemetry emission, failure taxonomy mapping, and runtime event-contract conformance. **Status: Done**. Deps: `P22-005`.
 - [ ] `P22-007` Create PR Task: open Phase 22 PR after coding tasks are done. Deps: `P22-006`.
 
 ## Phase 23: Integrations Expansion (Approved Scope)

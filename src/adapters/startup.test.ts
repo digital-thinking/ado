@@ -106,4 +106,29 @@ describe("adapter startup diagnostics", () => {
     expect(line).toContain("[ixado][adapter-startup]");
     expect(line).toContain('"event":"adapter-initialized"');
   });
+
+  test("P22-006: startup health detection returns no initialization diagnostic for unsupported startup adapters", () => {
+    const diagnostic = buildAdapterInitializationDiagnostic({
+      adapterId: "MOCK_CLI",
+      command: "mock-cli",
+      baseArgs: ["run"],
+      cwd: "/tmp/project",
+      timeoutMs: 120_000,
+      startupSilenceTimeoutMs: 5_000,
+    });
+
+    expect(diagnostic).toBeUndefined();
+  });
+
+  test("P22-006: startup-silence diagnostic falls back to UNKNOWN adapter taxonomy when adapter identity is unavailable", () => {
+    const diagnostic = buildAdapterStartupSilenceDiagnostic({
+      command: "missing-adapter",
+      startupSilenceTimeoutMs: 30_000,
+    });
+
+    expect(diagnostic.adapterId).toBe("UNKNOWN");
+    expect(diagnostic.hint).toContain(
+      "Verify the adapter CLI is installed, on PATH, and authenticated",
+    );
+  });
 });
