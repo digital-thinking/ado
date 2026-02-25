@@ -42,7 +42,7 @@ Status markers:
 - [x] `P25-005` Add regression/integration tests for Phase 25: terminal-phase continuation semantics, side-effect verification gating, capability preflight failures, and runtime heartbeat telemetry behavior. Deps: `P25-001`, `P25-002`, `P25-003`, `P25-004`.
 - [x] `P25-007` Add web UI execution controls for auto-mode start/stop/status via backend endpoints, including clean stop/reset to the last completed task, plus regression tests. Deps: `P24-005`.
 - [x] `P25-008` Enforce single active execution per project across CLI `phase run` and web auto execution using a shared run lock with stale-lock recovery and fail-fast duplicate-start rejection. Deps: `P25-007`.
-- [ ] `P25-006` Create PR Task: open Phase 25 PR after coding tasks are done. Deps: `P25-005`.
+- [x] `P25-006` Create PR Task: open Phase 25 PR after coding tasks are done. Deps: `P25-005`.
 
 ### Phase 26: State Consistency & Orchestration Hardening (from validated BUGS.md points)
 
