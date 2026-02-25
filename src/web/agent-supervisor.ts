@@ -285,6 +285,40 @@ export class AgentSupervisor {
     this.writePersistedAgents(current);
   }
 
+  /**
+   * Reconciles persisted agents that are still marked RUNNING from a prior
+   * process that is no longer alive.  Should be called once at startup before
+   * any new agents are spawned so that stale RUNNING entries do not pollute the
+   * UI or the task-execution tracking logic.
+   *
+   * Returns the number of agents that were updated.
+   */
+  reconcileStaleRunningAgents(): number {
+    if (!this.registryFilePath) {
+      return 0;
+    }
+
+    const persisted = this.readPersistedAgents();
+    let reconcileCount = 0;
+    const updated = persisted.map((agent) => {
+      if (agent.status !== "RUNNING") {
+        return agent;
+      }
+      reconcileCount += 1;
+      return {
+        ...agent,
+        status: "STOPPED" as AgentStatus,
+        stoppedAt: nowIso(),
+      };
+    });
+
+    if (reconcileCount > 0) {
+      this.writePersistedAgents(updated);
+    }
+
+    return reconcileCount;
+  }
+
   list(): AgentView[] {
     const inMemory = [...this.records.values()].map(toView);
     if (!this.registryFilePath) {

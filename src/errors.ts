@@ -31,3 +31,18 @@ export class AgentFailureError extends RecoverableError {
     super(message);
   }
 }
+
+/**
+ * Thrown when phase-loop startup validation fails before any git or task work
+ * begins.  Unlike RecoverableError subclasses, PhasePreflightError is never
+ * routed through the AI exception-recovery path — the user must resolve the
+ * condition manually.
+ *
+ * Examples: terminal phase status, empty/missing branch name, stale activePhaseId.
+ */
+export class PhasePreflightError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PhasePreflightError";
+  }
+}

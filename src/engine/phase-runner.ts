@@ -18,7 +18,32 @@ import { ProcessManager, type ProcessRunner } from "../process";
 import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
+import { PhasePreflightError } from "../errors";
 import { type CLIAdapterId, type Phase, type Task } from "../types";
+
+/**
+ * Picks the index of the next task to execute, applying explicit priority rules
+ * for deterministic, stable ordering across TODO and CI_FIX task sets.
+ *
+ * Selection rules (highest priority first):
+ *   1. CI_FIX tasks — must be resolved before new work so the repository
+ *      stays in a passing state after every tester run.
+ *   2. TODO tasks   — normal forward-progress work.
+ *
+ * Within each priority tier the task with the lowest array index is chosen,
+ * providing stable ordering across state reloads and consistent task numbering.
+ *
+ * Returns the index of the selected task, or -1 when no actionable task exists.
+ */
+export function pickNextTask(tasks: readonly { status: string }[]): number {
+  // Priority 1: resolve CI_FIX tasks before advancing to new work.
+  const ciFixIndex = tasks.findIndex((task) => task.status === "CI_FIX");
+  if (ciFixIndex >= 0) {
+    return ciFixIndex;
+  }
+  // Priority 2: fall back to the earliest pending TODO task.
+  return tasks.findIndex((task) => task.status === "TODO");
+}
 
 export type PhaseRunnerConfig = {
   mode: "AUTO" | "MANUAL";
@@ -70,8 +95,23 @@ export class PhaseRunner {
     );
 
     try {
+      // Reconcile any IN_PROGRESS tasks left over from a prior process crash
+      // before the execution loop starts to avoid status drift and ensure the
+      // loop picks them up cleanly as TODO items.
+      const reconciledTasks = await this.control.reconcileInProgressTasks();
+      if (reconciledTasks > 0) {
+        console.info(
+          `Startup: reconciled ${reconciledTasks} IN_PROGRESS task(s) to TODO after process restart.`,
+        );
+      }
+
       const state = await this.control.getState();
       const phase = this.resolveActivePhase(state);
+
+      // Preflight: validate phase metadata and status before any git work.
+      // Identical gate in both AUTO and MANUAL modes — deterministic fail-closed
+      // semantics that cannot be bypassed by exception recovery.
+      this.runPreflightChecks(phase);
 
       await this.prepareBranch(phase);
       const completedPhase = await this.executionLoop(phase, rl);
@@ -90,14 +130,61 @@ export class PhaseRunner {
   }
 
   private resolveActivePhase(state: any): Phase {
-    const phase =
-      state.phases.find(
-        (candidate: any) => candidate.id === state.activePhaseId,
-      ) ?? state.phases[0];
-    if (!phase) {
-      throw new Error("No active phase found.");
+    if (!state.phases || state.phases.length === 0) {
+      throw new PhasePreflightError(
+        "No phases found in project state. Run 'ixado phase create' to add a phase before running.",
+      );
     }
-    return phase;
+
+    if (state.activePhaseId) {
+      const phase = state.phases.find(
+        (candidate: any) => candidate.id === state.activePhaseId,
+      );
+      if (!phase) {
+        throw new PhasePreflightError(
+          `Active phase ID "${state.activePhaseId}" not found in project state. ` +
+            `Run 'ixado phase list' to verify phase IDs, or 'ixado phase set-active <id>' to update.`,
+        );
+      }
+      return phase;
+    }
+
+    // No activePhaseId set — fall back to the first phase (initial-run convenience).
+    return state.phases[0];
+  }
+
+  /**
+   * Validates phase metadata and status before any git or task work begins.
+   * Throws PhasePreflightError (non-recoverable) when the phase cannot be run,
+   * producing an actionable user-facing message and preventing AI recovery from
+   * being invoked for conditions the user must resolve manually.
+   *
+   * Checks performed (identical for AUTO and MANUAL modes):
+   *   1. Phase status is not terminal — DONE / AWAITING_CI / READY_FOR_REVIEW
+   *      indicate no further coding work remains.
+   *   2. branchName is non-empty — an empty branch name would produce a
+   *      confusing git error rather than a clear failure.
+   */
+  private runPreflightChecks(phase: Phase): void {
+    const TERMINAL_STATUSES = [
+      "DONE",
+      "AWAITING_CI",
+      "READY_FOR_REVIEW",
+    ] as const;
+    if (TERMINAL_STATUSES.some((s) => s === (phase.status as string))) {
+      throw new PhasePreflightError(
+        `Phase "${phase.name}" is already in terminal status "${phase.status}" ` +
+          `and cannot be re-executed. ` +
+          `Run 'ixado phase list' to check the current status, or create a new phase with 'ixado phase create'.`,
+      );
+    }
+
+    if (!phase.branchName || !phase.branchName.trim()) {
+      throw new PhasePreflightError(
+        `Phase "${phase.name}" has an empty or missing branchName. ` +
+          `Update the phase with a valid git branch name before running.`,
+      );
+    }
   }
 
   private async prepareBranch(phase: Phase): Promise<void> {
@@ -192,9 +279,7 @@ Recovery: ${recoveryMessage}`,
 
       const state = await this.control.getState();
       const currentPhase = this.resolveActivePhase(state);
-      const nextTaskIndex = currentPhase.tasks.findIndex(
-        (task) => task.status === "TODO" || task.status === "CI_FIX",
-      );
+      const nextTaskIndex = pickNextTask(currentPhase.tasks);
 
       if (nextTaskIndex < 0) {
         console.info(
@@ -368,6 +453,29 @@ Recovery: ${recoveryMessage}`,
       testerTimeoutMs: this.config.testerTimeoutMs,
       runner: this.testerRunner,
       createFixTask: async (input) => {
+        // Dedup: skip if a CI_FIX task already exists in the phase that covers
+        // this failure (either by exact title match or by depending on the
+        // same triggering task). Repeated tester failures for the same
+        // underlying issue must not generate duplicate CI_FIX tasks.
+        const latestState = await this.control.getState();
+        const latestPhase = latestState.phases.find(
+          (p: any) => p.id === input.phaseId,
+        );
+        const alreadyExists = latestPhase?.tasks.some(
+          (t: any) =>
+            t.status === "CI_FIX" &&
+            (t.title === input.title ||
+              t.dependencies.includes(task.id) ||
+              input.dependencies.some((depId) =>
+                t.dependencies.includes(depId),
+              )),
+        );
+        if (alreadyExists) {
+          console.info(
+            `Tester: CI_FIX task for "${task.title}" already exists (title match or shared dependency) — skipping duplicate creation.`,
+          );
+          return;
+        }
         await this.control.createTask({
           phaseId: input.phaseId,
           title: input.title,

@@ -28,9 +28,9 @@ describe("phase19 CLI phase run argument parsing", () => {
 
     // countdownSeconds=0 must NOT produce a usage error
     expect(result.stderr).not.toContain("Usage: ixado phase run [auto|manual]");
-    // It should fail with "No active phase" since the sandbox has no phases,
+    // It should fail with a preflight error since the sandbox has no phases,
     // not with an argument parsing error.
-    expect(result.stderr).toContain("No active phase found");
+    expect(result.stderr).toContain("No phases found in project state");
     expect(result.exitCode).toBe(1);
   });
 
@@ -42,9 +42,9 @@ describe("phase19 CLI phase run argument parsing", () => {
 
     // countdownSeconds=0 must NOT produce a usage error
     expect(result.stderr).not.toContain("Usage: ixado phase run [auto|manual]");
-    // It should fail with "No active phase" since the sandbox has no phases,
+    // It should fail with a preflight error since the sandbox has no phases,
     // not with an argument parsing error.
-    expect(result.stderr).toContain("No active phase found");
+    expect(result.stderr).toContain("No phases found in project state");
     expect(result.exitCode).toBe(1);
   });
 

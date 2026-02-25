@@ -67,6 +67,22 @@ export class TestSandbox {
     return JSON.parse(raw) as ProjectState;
   }
 
+  async writeProjectState(state: ProjectState): Promise<void> {
+    await mkdir(join(this.projectDir, ".ixado"), { recursive: true });
+    await Bun.write(
+      join(this.projectDir, ".ixado", "state.json"),
+      JSON.stringify(state, null, 2),
+    );
+  }
+
+  async writeAgents(agents: any[]): Promise<void> {
+    await mkdir(join(this.projectDir, ".ixado"), { recursive: true });
+    await Bun.write(
+      join(this.projectDir, ".ixado", "agents.json"),
+      JSON.stringify(agents, null, 2),
+    );
+  }
+
   async cleanup(): Promise<void> {
     await rm(this.projectDir, { recursive: true, force: true });
   }

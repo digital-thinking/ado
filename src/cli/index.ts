@@ -978,13 +978,22 @@ async function runPhaseRunCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
     projectName,
   );
   await control.ensureInitialized(projectName, projectRootDir);
+
+  // Reconcile stale RUNNING agents left over from a prior process crash so that
+  // the agent registry does not show phantom RUNNING entries.
+  const reconciledAgents = agents.reconcileStaleRunningAgents();
+  if (reconciledAgents > 0) {
+    console.info(
+      `Startup: reconciled ${reconciledAgents} stale RUNNING agent(s) to STOPPED after process restart.`,
+    );
+  }
 
   const mode = resolvePhaseRunMode(args[0], settings.executionLoop.autoMode);
   const countdownSeconds = resolveCountdownSeconds(
