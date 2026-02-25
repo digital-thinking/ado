@@ -51,6 +51,8 @@ const BASE_CONFIG: PhaseRunnerConfig = {
     markReadyOnApproval: false,
   },
   validationMaxRetries: 1,
+  ciFixMaxFanOut: 10,
+  ciFixMaxDepth: 3,
   projectRootDir: "/tmp/project",
   projectName: "test-project",
   policy: DEFAULT_AUTH_POLICY,

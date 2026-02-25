@@ -128,6 +128,8 @@ export const ExecutionLoopSettingsSchema = z.object({
   ciEnabled: z.boolean().default(false),
   ciBaseBranch: z.string().min(1).default("main"),
   validationMaxRetries: z.number().int().min(0).max(20).default(3),
+  ciFixMaxFanOut: z.number().int().min(1).max(50).default(10),
+  ciFixMaxDepth: z.number().int().min(1).max(10).default(3),
   pullRequest: PullRequestAutomationSettingsSchema.default({
     defaultTemplatePath: null,
     templateMappings: [],
@@ -210,6 +212,8 @@ export const CliSettingsSchema = z
       ciEnabled: false,
       ciBaseBranch: "main",
       validationMaxRetries: 3,
+      ciFixMaxFanOut: 10,
+      ciFixMaxDepth: 3,
       pullRequest: {
         defaultTemplatePath: null,
         templateMappings: [],
@@ -300,6 +304,8 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   ciEnabled: z.boolean().optional(),
   ciBaseBranch: z.string().min(1).optional(),
   validationMaxRetries: z.number().int().min(0).max(20).optional(),
+  ciFixMaxFanOut: z.number().int().min(1).max(50).optional(),
+  ciFixMaxDepth: z.number().int().min(1).max(10).optional(),
   pullRequest: PullRequestAutomationSettingsOverrideSchema.optional(),
 });
 

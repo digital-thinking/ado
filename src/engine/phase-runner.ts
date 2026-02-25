@@ -101,6 +101,8 @@ export type PhaseRunnerConfig = {
   ciBaseBranch: string;
   ciPullRequest: PullRequestAutomationSettings;
   validationMaxRetries: number;
+  ciFixMaxFanOut: number;
+  ciFixMaxDepth: number;
   projectRootDir: string;
   projectName: string;
   policy: AuthPolicy;
@@ -618,6 +620,22 @@ Recovery: ${recoveryMessage}`,
         const latestPhase = latestState.phases.find(
           (p: any) => p.id === input.phaseId,
         );
+
+        // Guardrail: enforce depth cap for the fix-task chain.
+        if (!latestPhase) {
+          throw new Error(
+            `Phase not found while creating CI_FIX task: ${input.phaseId}`,
+          );
+        }
+        const depth = this.calculateTaskDepth(latestPhase, task);
+        if (depth >= this.config.ciFixMaxDepth) {
+          throw new Error(
+            `CI_FIX cascade depth cap exceeded (${this.config.ciFixMaxDepth}). ` +
+              `The fix task chain for "${task.title}" has reached the maximum allowed depth. ` +
+              `Manual intervention is required to break the failure cycle.`,
+          );
+        }
+
         const alreadyExists = latestPhase?.tasks.some(
           (t: any) =>
             t.status === "CI_FIX" &&
@@ -724,6 +742,47 @@ ${testerResult.fixTaskDescription}`.trim(),
         },
       }),
     );
+  }
+
+  private calculateTaskDepth(phase: Phase, task: Task): number {
+    const isFixTask =
+      task.status === "CI_FIX" ||
+      task.title.startsWith("CI_FIX: ") ||
+      task.title.startsWith("Fix tests after ");
+
+    if (!isFixTask) {
+      return 0;
+    }
+
+    let depth = 1;
+    let currentTask = task;
+    const visited = new Set<string>();
+
+    while (currentTask.dependencies.length > 0) {
+      if (visited.has(currentTask.id)) {
+        break; // Cycle protection
+      }
+      visited.add(currentTask.id);
+
+      const parentId = currentTask.dependencies[0];
+      const parentTask = phase.tasks.find((t) => t.id === parentId);
+      if (!parentTask) {
+        break;
+      }
+
+      const isParentFixTask =
+        parentTask.status === "CI_FIX" ||
+        parentTask.title.startsWith("CI_FIX: ") ||
+        parentTask.title.startsWith("Fix tests after ");
+
+      if (!isParentFixTask) {
+        break;
+      }
+
+      depth += 1;
+      currentTask = parentTask;
+    }
+    return depth;
   }
 
   private async handleCiIntegration(phase: Phase): Promise<void> {
@@ -905,6 +964,60 @@ ${testerResult.fixTaskDescription}`.trim(),
         prUrl,
         existingTasks: currentPhase.tasks,
       });
+
+      // Guardrail: enforce fan-out count cap (fail fast if too many new tasks are required)
+      if (mapping.tasksToCreate.length > this.config.ciFixMaxFanOut) {
+        const fanOutError =
+          `CI_FIX fan-out count cap exceeded (${this.config.ciFixMaxFanOut}). ` +
+          `Detected ${mapping.tasksToCreate.length} new failing CI checks, which exceeds the allowed fan-out limit. ` +
+          `Manual intervention is required to address the large number of failures.`;
+
+        await this.control.setPhaseStatus({
+          phaseId: phase.id,
+          status: "CI_FAILED",
+          failureKind: "REMOTE_CI" as PhaseFailureKind,
+          ciStatusContext: [ciDiagnostics, fanOutError].join("\n\n"),
+        });
+
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "ci-pr-lifecycle",
+            type: "ci.activity",
+            payload: {
+              stage: "failed",
+              summary: fanOutError,
+              prNumber,
+              overall: "FAILURE",
+              createdFixTaskCount: 0,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "terminal-outcome",
+            type: "terminal.outcome",
+            payload: {
+              outcome: "failure",
+              summary: fanOutError,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+
+        throw new Error(fanOutError);
+      }
 
       for (const taskInput of mapping.tasksToCreate) {
         await this.control.createTask({

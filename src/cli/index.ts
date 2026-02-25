@@ -1295,6 +1295,8 @@ async function runPhaseRunCommand({
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
       ciPullRequest: settings.executionLoop.pullRequest,
       validationMaxRetries: settings.executionLoop.validationMaxRetries,
+      ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
+      ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
       projectRootDir,
       projectName,
       policy,
