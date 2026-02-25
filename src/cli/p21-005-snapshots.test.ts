@@ -144,11 +144,6 @@ describe("P21-005 Snapshot Tests", () => {
           name: "stop",
           description: "Stop local web control center",
         },
-        {
-          name: "serve",
-          description: "Run web control center in foreground",
-          usage: "serve [port]",
-        },
       ],
     },
   ]);

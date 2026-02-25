@@ -4,8 +4,17 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import {
+  classifyAdapterFailure,
+  type AdapterFailureKind,
+} from "../adapters/failure-taxonomy";
 import { buildWorkerPrompt } from "../engine/worker-prompts";
 import { parseJsonFromModelOutput } from "../engine/json-parser";
+import {
+  ProcessExecutionError,
+  ProcessManager,
+  type ProcessRunner,
+} from "../process";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
@@ -14,6 +23,7 @@ import {
   PhaseSchema,
   PhaseStatusSchema,
   RecoveryAttemptRecordSchema,
+  TaskCompletionVerificationSchema,
   TaskSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
@@ -23,9 +33,12 @@ import {
   type PhaseStatus,
   type ProjectState,
   type RecoveryAttemptRecord,
+  type SideEffectContract,
   type Task,
+  type TaskCompletionVerification,
   type WorkerAssignee,
 } from "../types";
+import { parsePullRequestNumberFromUrl } from "../vcs";
 
 const DEFAULT_TASKS_MARKDOWN_PATH = "TASKS.md";
 const TASKS_IMPORT_TIMEOUT_MS = 180_000;
@@ -271,6 +284,115 @@ function resolvePhaseIdForReference(
   throw new Error(`Phase not found: ${phaseReference}`);
 }
 
+const SIDE_EFFECT_CONTRACT_PATTERNS: ReadonlyArray<{
+  contract: SideEffectContract;
+  patterns: ReadonlyArray<RegExp>;
+}> = [
+  {
+    contract: "PR_CREATION",
+    patterns: [
+      /\bcreate pr task\b/i,
+      /\bcreate pull request\b/i,
+      /\bopen pr\b/i,
+      /\bpull request\b/i,
+    ],
+  },
+  {
+    contract: "REMOTE_PUSH",
+    patterns: [
+      /\bremote push\b/i,
+      /\bpush branch\b/i,
+      /\bpush to origin\b/i,
+      /\bpush changes\b/i,
+    ],
+  },
+  {
+    contract: "CI_TRIGGERED_UPDATE",
+    patterns: [
+      /\bci-triggered updates?\b/i,
+      /\bci triggered updates?\b/i,
+      /\btrigger ci\b/i,
+      /\bci status updates?\b/i,
+    ],
+  },
+];
+
+const GITHUB_BOUND_SIDE_EFFECT_CONTRACTS: readonly SideEffectContract[] = [
+  "PR_CREATION",
+  "REMOTE_PUSH",
+  "CI_TRIGGERED_UPDATE",
+];
+
+type SideEffectProbeResult = TaskCompletionVerification["probes"][number];
+
+type SideEffectProbeRunResult = {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  details: string;
+  failureKind?: AdapterFailureKind;
+};
+
+type GitHubCapabilityPreflightFailure = {
+  completionVerification: TaskCompletionVerification;
+  adapterFailureKind: AdapterFailureKind;
+};
+
+export function resolveTaskCompletionSideEffectContracts(
+  task: Pick<Task, "title" | "description">,
+): SideEffectContract[] {
+  const text = `${task.title}\n${task.description}`;
+
+  return SIDE_EFFECT_CONTRACT_PATTERNS.flatMap((entry) => {
+    const matches = entry.patterns.some((pattern) => pattern.test(text));
+    return matches ? [entry.contract] : [];
+  });
+}
+
+function resolveGitHubBoundContracts(
+  contracts: SideEffectContract[],
+): SideEffectContract[] {
+  return contracts.filter((contract) =>
+    GITHUB_BOUND_SIDE_EFFECT_CONTRACTS.includes(contract),
+  );
+}
+
+function hasCiTriggeredUpdateSignal(phase: Phase): boolean {
+  if (
+    phase.status === "AWAITING_CI" ||
+    phase.status === "CI_FAILED" ||
+    phase.status === "READY_FOR_REVIEW"
+  ) {
+    return true;
+  }
+
+  if (Boolean(phase.ciStatusContext?.trim())) {
+    return true;
+  }
+
+  return phase.tasks.some((task) => task.status === "CI_FIX");
+}
+
+function summarizeVerificationFailure(
+  verification: TaskCompletionVerification,
+): string {
+  const details =
+    verification.missingSideEffects.length > 0
+      ? verification.missingSideEffects.join(" | ")
+      : "Missing side effects were detected.";
+  return `Completion side-effect verification failed: ${details}`;
+}
+
+function summarizeCapabilityPreflightFailure(
+  verification: TaskCompletionVerification,
+): string {
+  const details =
+    verification.missingSideEffects.length > 0
+      ? verification.missingSideEffects.join(" | ")
+      : "GitHub runtime capability mismatch detected.";
+  return `Runtime capability preflight failed for GitHub-bound task: ${details}`;
+}
+
 export class ControlCenterService {
   private readonly stateEngineFactory: StateEngineFactory;
   private readonly projectStateEngines = new Map<string, StateEngine>();
@@ -282,6 +404,7 @@ export class ControlCenterService {
     projectName: string,
     state: ProjectState,
   ) => void;
+  private readonly sideEffectProbeRunner: ProcessRunner;
   private defaultProjectName?: string;
 
   constructor(
@@ -290,6 +413,7 @@ export class ControlCenterService {
     internalWorkRunner?: InternalWorkRunner,
     repositoryResetRunner?: RepositoryResetRunner,
     onStateChange?: (projectName: string, state: ProjectState) => void,
+    sideEffectProbeRunner: ProcessRunner = new ProcessManager(),
   ) {
     if (typeof stateOrFactory === "function") {
       this.stateEngineFactory = stateOrFactory;
@@ -300,6 +424,7 @@ export class ControlCenterService {
     this.internalWorkRunner = internalWorkRunner;
     this.repositoryResetRunner = repositoryResetRunner;
     this.onStateChange = onStateChange;
+    this.sideEffectProbeRunner = sideEffectProbeRunner;
   }
 
   private async getEngine(projectName?: string): Promise<StateEngine> {
@@ -830,6 +955,7 @@ export class ControlCenterService {
       status: "IN_PROGRESS",
       resultContext: undefined,
       errorLogs: undefined,
+      completionVerification: undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -1013,6 +1139,372 @@ export class ControlCenterService {
     };
   }
 
+  private async runSideEffectProbe(
+    cwd: string,
+    args: string[],
+  ): Promise<SideEffectProbeRunResult> {
+    return this.runCommandProbe(cwd, "git", args);
+  }
+
+  private async runCommandProbe(
+    cwd: string,
+    command: string,
+    args: string[],
+  ): Promise<SideEffectProbeRunResult> {
+    try {
+      const result = await this.sideEffectProbeRunner.run({
+        command,
+        args,
+        cwd,
+      });
+      return {
+        success: true,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        details: "ok",
+      };
+    } catch (error) {
+      const failureKind = classifyAdapterFailure(error);
+      if (error instanceof ProcessExecutionError) {
+        const stderr = error.result.stderr.trim();
+        const details = stderr
+          ? `${command} ${args.join(" ")} failed: ${stderr}`
+          : `${command} ${args.join(" ")} failed with exit code ${error.result.exitCode}.`;
+        return {
+          success: false,
+          stdout: error.result.stdout,
+          stderr: error.result.stderr,
+          details,
+          failureKind,
+        };
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        details: `${command} ${args.join(" ")} failed: ${message}`,
+        failureKind,
+      };
+    }
+  }
+
+  private async runGitHubRuntimeCapabilityPreflight(input: {
+    phaseId: string;
+    taskId: string;
+    projectName?: string;
+  }): Promise<GitHubCapabilityPreflightFailure | undefined> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find(
+      (candidate) => candidate.id === input.phaseId,
+    );
+    if (!phase) {
+      throw new Error(
+        `Phase not found while running GitHub capability preflight: ${input.phaseId}`,
+      );
+    }
+
+    const task = phase.tasks.find((candidate) => candidate.id === input.taskId);
+    if (!task) {
+      throw new Error(
+        `Task not found while running GitHub capability preflight: ${input.taskId}`,
+      );
+    }
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    const githubContracts = resolveGitHubBoundContracts(contracts);
+    if (githubContracts.length === 0) {
+      return undefined;
+    }
+
+    const probes: SideEffectProbeResult[] = [];
+    const missingSideEffects: string[] = [];
+    let adapterFailureKind: AdapterFailureKind = "unknown";
+    const setFailureKind = (kind?: AdapterFailureKind) => {
+      if (!kind || kind === "unknown" || adapterFailureKind !== "unknown") {
+        return;
+      }
+      adapterFailureKind = kind;
+    };
+
+    const ghToolingProbe = await this.runCommandProbe(state.rootDir, "gh", [
+      "--version",
+    ]);
+    if (ghToolingProbe.success) {
+      const versionLine =
+        ghToolingProbe.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length > 0) ?? "gh is available.";
+      probes.push({
+        name: "gh --version",
+        success: true,
+        details: `Tooling available: ${versionLine}`,
+      });
+    } else {
+      setFailureKind(ghToolingProbe.failureKind);
+      probes.push({
+        name: "gh --version",
+        success: false,
+        details: ghToolingProbe.details,
+      });
+      missingSideEffects.push(
+        `Tooling preflight failed: ${ghToolingProbe.details} Install GitHub CLI and ensure 'gh' is available on PATH.`,
+      );
+    }
+
+    if (!ghToolingProbe.success) {
+      probes.push({
+        name: "gh auth status --hostname github.com",
+        success: false,
+        details:
+          "Skipped because GitHub CLI tooling check failed (gh is unavailable).",
+      });
+      missingSideEffects.push(
+        "Auth preflight was skipped because GitHub CLI is unavailable. Install GitHub CLI, then run 'gh auth login --hostname github.com'.",
+      );
+    } else {
+      const ghAuthProbe = await this.runCommandProbe(state.rootDir, "gh", [
+        "auth",
+        "status",
+        "--hostname",
+        "github.com",
+      ]);
+      if (ghAuthProbe.success) {
+        probes.push({
+          name: "gh auth status --hostname github.com",
+          success: true,
+          details: "GitHub CLI authentication is valid for github.com.",
+        });
+      } else {
+        setFailureKind(ghAuthProbe.failureKind);
+        probes.push({
+          name: "gh auth status --hostname github.com",
+          success: false,
+          details: ghAuthProbe.details,
+        });
+        missingSideEffects.push(
+          `Auth preflight failed: ${ghAuthProbe.details} Run 'gh auth login --hostname github.com' and verify access to this repository.`,
+        );
+      }
+    }
+
+    const networkProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "ls-remote",
+      "https://github.com/github/gitignore.git",
+      "HEAD",
+    ]);
+    const hasGitHubResponse = networkProbe.stdout.trim().length > 0;
+    if (networkProbe.success && hasGitHubResponse) {
+      probes.push({
+        name: "git ls-remote github.com",
+        success: true,
+        details: "Network reachability to github.com verified.",
+      });
+    } else {
+      setFailureKind(networkProbe.failureKind);
+      probes.push({
+        name: "git ls-remote github.com",
+        success: false,
+        details: networkProbe.success
+          ? "git ls-remote github.com returned no output."
+          : networkProbe.details,
+      });
+      missingSideEffects.push(
+        `Network preflight failed: ${
+          networkProbe.success
+            ? "git ls-remote github.com returned no output."
+            : networkProbe.details
+        } Verify outbound connectivity to github.com (VPN/proxy/firewall) and retry.`,
+      );
+    }
+
+    if (missingSideEffects.length === 0) {
+      return undefined;
+    }
+
+    return {
+      completionVerification: TaskCompletionVerificationSchema.parse({
+        checkedAt: new Date().toISOString(),
+        contracts: githubContracts,
+        status: "FAILED",
+        probes,
+        missingSideEffects,
+      }),
+      adapterFailureKind,
+    };
+  }
+
+  private async verifyTaskCompletionSideEffects(input: {
+    phaseId: string;
+    taskId: string;
+    projectName?: string;
+  }): Promise<TaskCompletionVerification | undefined> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find(
+      (candidate) => candidate.id === input.phaseId,
+    );
+    if (!phase) {
+      throw new Error(
+        `Phase not found while verifying completion side effects: ${input.phaseId}`,
+      );
+    }
+
+    const task = phase.tasks.find((candidate) => candidate.id === input.taskId);
+    if (!task) {
+      throw new Error(
+        `Task not found while verifying completion side effects: ${input.taskId}`,
+      );
+    }
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    if (contracts.length === 0) {
+      return undefined;
+    }
+
+    const probes: SideEffectProbeResult[] = [];
+    const missingSideEffects: string[] = [];
+
+    if (contracts.includes("PR_CREATION")) {
+      const prUrl = phase.prUrl?.trim();
+      if (!prUrl) {
+        probes.push({
+          name: "phase.prUrl",
+          success: false,
+          details: "Missing phase PR URL.",
+        });
+        missingSideEffects.push(
+          "PR creation was not verified because phase.prUrl is missing.",
+        );
+      } else {
+        try {
+          parsePullRequestNumberFromUrl(prUrl);
+          probes.push({
+            name: "phase.prUrl",
+            success: true,
+            details: `PR URL present: ${prUrl}`,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          probes.push({
+            name: "phase.prUrl",
+            success: false,
+            details: `Invalid PR URL: ${prUrl}`,
+          });
+          missingSideEffects.push(
+            `PR creation was not verified because phase.prUrl is invalid (${message}).`,
+          );
+        }
+      }
+    }
+
+    if (contracts.includes("REMOTE_PUSH")) {
+      const branchProbe = await this.runSideEffectProbe(state.rootDir, [
+        "branch",
+        "--show-current",
+      ]);
+      const branchName = branchProbe.stdout.trim();
+      if (!branchProbe.success || !branchName) {
+        probes.push({
+          name: "git branch --show-current",
+          success: false,
+          details: branchProbe.success
+            ? "Current branch is empty."
+            : branchProbe.details,
+        });
+        missingSideEffects.push(
+          "Remote push was not verified because current branch could not be resolved.",
+        );
+      } else {
+        probes.push({
+          name: "git branch --show-current",
+          success: true,
+          details: `Current branch: ${branchName}`,
+        });
+
+        const upstreamProbe = await this.runSideEffectProbe(state.rootDir, [
+          "for-each-ref",
+          "--format=%(upstream:short)",
+          `refs/heads/${branchName}`,
+        ]);
+        const upstream = upstreamProbe.stdout.trim();
+        if (!upstreamProbe.success || !upstream) {
+          probes.push({
+            name: "git upstream",
+            success: false,
+            details: upstreamProbe.success
+              ? "No upstream configured."
+              : upstreamProbe.details,
+          });
+          missingSideEffects.push(
+            `Remote push was not verified because branch "${branchName}" has no upstream tracking ref.`,
+          );
+        } else {
+          probes.push({
+            name: "git upstream",
+            success: true,
+            details: `Upstream: ${upstream}`,
+          });
+        }
+
+        const remoteHeadProbe = await this.runSideEffectProbe(state.rootDir, [
+          "ls-remote",
+          "--heads",
+          "origin",
+          branchName,
+        ]);
+        const hasRemoteHead = remoteHeadProbe.stdout.trim().length > 0;
+        if (!remoteHeadProbe.success || !hasRemoteHead) {
+          probes.push({
+            name: "git ls-remote",
+            success: false,
+            details: remoteHeadProbe.success
+              ? `Remote branch origin/${branchName} not found.`
+              : remoteHeadProbe.details,
+          });
+          missingSideEffects.push(
+            `Remote push was not verified because origin/${branchName} is missing.`,
+          );
+        } else {
+          probes.push({
+            name: "git ls-remote",
+            success: true,
+            details: `Remote branch origin/${branchName} exists.`,
+          });
+        }
+      }
+    }
+
+    if (contracts.includes("CI_TRIGGERED_UPDATE")) {
+      const hasSignal = hasCiTriggeredUpdateSignal(phase);
+      probes.push({
+        name: "phase CI signal",
+        success: hasSignal,
+        details: hasSignal
+          ? `Detected CI signal from phase status ${phase.status}.`
+          : "No CI signal detected (status/context/CI_FIX task).",
+      });
+      if (!hasSignal) {
+        missingSideEffects.push(
+          "CI-triggered update was not verified because phase has no CI signal.",
+        );
+      }
+    }
+
+    const verification = TaskCompletionVerificationSchema.parse({
+      checkedAt: new Date().toISOString(),
+      contracts,
+      status: missingSideEffects.length === 0 ? "PASSED" : "FAILED",
+      probes,
+      missingSideEffects,
+    });
+    return verification;
+  }
+
   private async executeTaskRun(input: {
     phaseId: string;
     taskId: string;
@@ -1023,6 +1515,40 @@ export class ControlCenterService {
     projectName?: string;
   }): Promise<void> {
     try {
+      const capabilityPreflight =
+        await this.runGitHubRuntimeCapabilityPreflight({
+          phaseId: input.phaseId,
+          taskId: input.taskId,
+          projectName: input.projectName,
+        });
+      if (capabilityPreflight) {
+        try {
+          await this.updateTaskResult(
+            input.phaseId,
+            input.taskId,
+            "FAILED",
+            undefined,
+            summarizeCapabilityPreflightFailure(
+              capabilityPreflight.completionVerification,
+            ),
+            "AGENT_FAILURE",
+            capabilityPreflight.adapterFailureKind,
+            input.startedFromStatus,
+            capabilityPreflight.completionVerification,
+            input.projectName,
+          );
+        } catch (updateError) {
+          const message =
+            updateError instanceof Error
+              ? updateError.message
+              : String(updateError);
+          console.error(
+            `Failed to persist FAILED preflight state for task ${input.taskId}: ${message}`,
+          );
+        }
+        return;
+      }
+
       const result = await this.runInternalWork({
         assignee: input.assignee,
         prompt: input.prompt,
@@ -1035,8 +1561,31 @@ export class ControlCenterService {
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
         .filter((value) => value.length > 0)
         .join("\n\n");
+      const completionVerification = await this.verifyTaskCompletionSideEffects(
+        {
+          phaseId: input.phaseId,
+          taskId: input.taskId,
+          projectName: input.projectName,
+        },
+      );
 
       try {
+        if (completionVerification?.status === "FAILED") {
+          await this.updateTaskResult(
+            input.phaseId,
+            input.taskId,
+            "FAILED",
+            undefined,
+            summarizeVerificationFailure(completionVerification),
+            "UNKNOWN",
+            undefined,
+            input.startedFromStatus,
+            completionVerification,
+            input.projectName,
+          );
+          return;
+        }
+
         await this.updateTaskResult(
           input.phaseId,
           input.taskId,
@@ -1046,6 +1595,7 @@ export class ControlCenterService {
           undefined,
           undefined,
           input.startedFromStatus,
+          completionVerification,
           input.projectName,
         );
       } catch (updateError) {
@@ -1071,6 +1621,7 @@ export class ControlCenterService {
           category,
           adapterFailureKind,
           input.startedFromStatus,
+          undefined,
           input.projectName,
         );
       } catch (updateError) {
@@ -1094,6 +1645,7 @@ export class ControlCenterService {
     errorCategory: any, // Use any for now or import ExceptionCategory
     adapterFailureKind: any,
     startedFromStatus: Task["status"],
+    completionVerification: TaskCompletionVerification | undefined,
     projectName?: string,
   ): Promise<void> {
     const engine = await this.getEngine(projectName);
@@ -1116,12 +1668,22 @@ export class ControlCenterService {
     const normalizedErrorLogs = errorLogs
       ? truncateForState(errorLogs)
       : undefined;
+    const normalizedCompletionVerification = completionVerification
+      ? TaskCompletionVerificationSchema.parse(completionVerification)
+      : undefined;
+    const currentVerificationJson = currentTask.completionVerification
+      ? JSON.stringify(currentTask.completionVerification)
+      : undefined;
+    const nextVerificationJson = normalizedCompletionVerification
+      ? JSON.stringify(normalizedCompletionVerification)
+      : undefined;
 
     if (currentTask.status === status) {
       if (status === "DONE") {
         if (
-          !normalizedResultContext ||
-          currentTask.resultContext === normalizedResultContext
+          (!normalizedResultContext ||
+            currentTask.resultContext === normalizedResultContext) &&
+          currentVerificationJson === nextVerificationJson
         ) {
           return;
         }
@@ -1129,7 +1691,8 @@ export class ControlCenterService {
         (!normalizedErrorLogs ||
           currentTask.errorLogs === normalizedErrorLogs) &&
         currentTask.errorCategory === errorCategory &&
-        (currentTask as any).adapterFailureKind === adapterFailureKind
+        (currentTask as any).adapterFailureKind === adapterFailureKind &&
+        currentVerificationJson === nextVerificationJson
       ) {
         return;
       }
@@ -1159,6 +1722,7 @@ export class ControlCenterService {
         status === "FAILED"
           ? (adapterFailureKind ?? (currentTask as any).adapterFailureKind)
           : undefined,
+      completionVerification: normalizedCompletionVerification,
     });
 
     const nextPhases = [...state.phases];
@@ -1214,6 +1778,7 @@ export class ControlCenterService {
         errorLogs: undefined,
         errorCategory: undefined,
         adapterFailureKind: undefined,
+        completionVerification: undefined,
       });
     });
 
@@ -1278,6 +1843,7 @@ export class ControlCenterService {
       status: "FAILED",
       resultContext: undefined,
       errorLogs: truncateForState(reason),
+      completionVerification: undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -1342,6 +1908,9 @@ export class ControlCenterService {
       assignee: "UNASSIGNED",
       resultContext: undefined,
       errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      completionVerification: undefined,
     });
 
     const nextPhases = [...state.phases];

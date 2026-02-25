@@ -16,6 +16,7 @@ import type {
   StartTaskInput,
   UpdateTaskInput,
 } from "./control-center-service";
+import type { AutoExecutionStatus } from "./execution-control-service";
 import type { UsageService } from "./usage-service";
 import type {
   CLIAdapterId,
@@ -81,6 +82,12 @@ export type RuntimeConfig = {
   autoMode: boolean;
 };
 
+export type ExecutionControl = {
+  getStatus: (projectName?: string) => Promise<AutoExecutionStatus>;
+  startAuto: (input: { projectName?: string }) => Promise<AutoExecutionStatus>;
+  stop: (input: { projectName?: string }) => Promise<AutoExecutionStatus>;
+};
+
 export type WebAppDependencies = {
   control: ControlCenterControl;
   agents: AgentControl;
@@ -103,6 +110,7 @@ export type WebAppDependencies = {
   ) => Promise<ProjectRecord>;
   getGlobalSettings: () => Promise<CliSettings>;
   updateGlobalSettings: (patch: CliSettingsOverride) => Promise<CliSettings>;
+  execution?: ExecutionControl;
   webLogFilePath: string;
   cliLogFilePath: string;
 };

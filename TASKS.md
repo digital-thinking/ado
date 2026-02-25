@@ -35,12 +35,14 @@ Status markers:
 
 ### Phase 25: Execution Correctness & Runtime Transparency (from BUGS.md)
 
-- [ ] `P25-001` Allow deterministic continuation after terminal phase status when actionable tasks are added post-completion: define explicit gate semantics (e.g., terminal + pending TODO/CI_FIX => resumable transition) and preserve fail-fast behavior for truly closed phases. Deps: `P24-005`.
-- [ ] `P25-002` Add task completion verification contracts for side-effect-bound tasks (PR creation, remote push, CI-triggered updates): require explicit verification probes before persisting `DONE`, and persist structured failure context when side effects are missing. Deps: `P24-005`.
-- [ ] `P25-003` Add runtime capability preflight for GitHub-bound operations (network/auth/tooling) in worker execution context and fail fast with actionable diagnostics when capability mismatches are detected. Deps: `P25-002`.
-- [ ] `P25-004` Improve long-running task observability with heartbeat/idle diagnostics surfaced consistently in CLI and web agent views to distinguish slow progress from stalls. Deps: `P24-005`.
-- [ ] `P25-005` Add regression/integration tests for Phase 25: terminal-phase continuation semantics, side-effect verification gating, capability preflight failures, and runtime heartbeat telemetry behavior. Deps: `P25-001`, `P25-002`, `P25-003`, `P25-004`.
-- [ ] `P25-006` Create PR Task: open Phase 25 PR after coding tasks are done. Deps: `P25-005`.
+- [x] `P25-001` Allow deterministic continuation after terminal phase status when actionable tasks are added post-completion: define explicit gate semantics (e.g., terminal + pending TODO/CI_FIX => resumable transition) and preserve fail-fast behavior for truly closed phases. Deps: `P24-005`.
+- [x] `P25-002` Add task completion verification contracts for side-effect-bound tasks (PR creation, remote push, CI-triggered updates): require explicit verification probes before persisting `DONE`, and persist structured failure context when side effects are missing. Deps: `P24-005`.
+- [x] `P25-003` Add runtime capability preflight for GitHub-bound operations (network/auth/tooling) in worker execution context and fail fast with actionable diagnostics when capability mismatches are detected. Deps: `P25-002`.
+- [x] `P25-004` Improve long-running task observability with heartbeat/idle diagnostics surfaced consistently in CLI and web agent views to distinguish slow progress from stalls. Deps: `P24-005`.
+- [x] `P25-005` Add regression/integration tests for Phase 25: terminal-phase continuation semantics, side-effect verification gating, capability preflight failures, and runtime heartbeat telemetry behavior. Deps: `P25-001`, `P25-002`, `P25-003`, `P25-004`.
+- [x] `P25-007` Add web UI execution controls for auto-mode start/stop/status via backend endpoints, including clean stop/reset to the last completed task, plus regression tests. Deps: `P24-005`.
+- [x] `P25-008` Enforce single active execution per project across CLI `phase run` and web auto execution using a shared run lock with stale-lock recovery and fail-fast duplicate-start rejection. Deps: `P25-007`.
+- [x] `P25-006` Create PR Task: open Phase 25 PR after coding tasks are done. Deps: `P25-005`.
 
 ### Phase 26: State Consistency & Orchestration Hardening (from validated BUGS.md points)
 
@@ -56,7 +58,11 @@ Status markers:
 - [ ] `P26-010` Validate branch base preconditions before creating a phase branch from `HEAD` to avoid accidental branch-from-branch drift. Deps: `P26-008`.
 - [ ] `P26-011` Refactor `ControlCenterService` constructor to a typed options object (remove positional optional-argument anti-pattern) and update call sites. Deps: `P26-006`.
 - [ ] `P26-012` Add regression/integration tests for Phase 26: failure-kind transitions, CI_FIX cap behavior, all-phase reconciliation, restart consistency hooks, atomic persistence, adapter-ID schema parsing, active-phase selection policy, truncation markers, and branch-base verification. Deps: `P26-002`, `P26-004`, `P26-007`, `P26-008`, `P26-009`, `P26-010`, `P26-011`.
-- [ ] `P26-013` Create PR Task: open Phase 26 PR after coding tasks are done. Deps: `P26-012`.
+- [ ] `P26-014` Cap agent lists in web UI to the most recent 5 records for both Global Agents and per-project Running Agents using deterministic recency ordering. Deps: `P26-005`.
+- [ ] `P26-015` Filter agent log stream content to hide file-interaction chatter and show only reasoning/thinking progress plus terminal outcome context. Deps: `P26-009`.
+- [ ] `P26-016` Fix GitHub capability preflight false negatives and environment mismatch diagnostics: correct network probe semantics, capture effective runtime identity/env fingerprints, and report actionable auth/runtime differences. Deps: `P26-001`.
+- [ ] `P26-017` Add regression/integration tests for new Phase 26 agent UX + preflight tasks (top-5 agent truncation, reasoning-only log stream filter, and GitHub preflight parity diagnostics). Deps: `P26-014`, `P26-015`, `P26-016`.
+- [ ] `P26-013` Create PR Task: open Phase 26 PR after coding tasks are done. Deps: `P26-012`, `P26-017`.
 
 ## Deferred / Later
 

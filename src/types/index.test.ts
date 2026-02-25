@@ -4,6 +4,7 @@ import {
   CliSettingsSchema,
   CLIAdapterSchema,
   ExceptionRecoveryResultSchema,
+  TaskSchema,
   RecoveryAttemptRecordSchema,
   ProjectStateSchema,
   TaskStatusSchema,
@@ -99,6 +100,34 @@ describe("type contracts", () => {
       },
     });
     expect(parsed.result.status).toBe("unfixable");
+  });
+
+  test("supports task completion verification context for side effects", () => {
+    const parsed = TaskSchema.parse({
+      id: "33333333-3333-4333-8333-333333333333",
+      title: "Create PR Task",
+      description: "Open pull request",
+      status: "FAILED",
+      assignee: "CODEX_CLI",
+      dependencies: [],
+      errorLogs: "verification failed",
+      completionVerification: {
+        checkedAt: "2026-02-25T00:00:00.000Z",
+        contracts: ["PR_CREATION"],
+        status: "FAILED",
+        probes: [
+          {
+            name: "phase.prUrl",
+            success: false,
+            details: "Missing phase PR URL.",
+          },
+        ],
+        missingSideEffects: ["phase.prUrl is missing"],
+      },
+    });
+
+    expect(parsed.completionVerification?.contracts).toEqual(["PR_CREATION"]);
+    expect(parsed.completionVerification?.status).toBe("FAILED");
   });
 
   test("supports optional per-project execution settings", () => {

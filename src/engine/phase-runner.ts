@@ -61,6 +61,33 @@ export function pickNextTask(tasks: readonly { status: string }[]): number {
   return tasks.findIndex((task) => task.status === "TODO");
 }
 
+const TERMINAL_PHASE_STATUSES = [
+  "DONE",
+  "AWAITING_CI",
+  "READY_FOR_REVIEW",
+  "CI_FAILED",
+] as const;
+
+const ACTIONABLE_TASK_STATUSES = ["TODO", "CI_FIX"] as const;
+
+export type PhaseExecutionGate = "OPEN" | "RESUMABLE" | "CLOSED";
+
+export function resolvePhaseExecutionGate(
+  phase: Pick<Phase, "status" | "tasks">,
+): PhaseExecutionGate {
+  const isTerminal = TERMINAL_PHASE_STATUSES.some(
+    (status) => status === phase.status,
+  );
+  if (!isTerminal) {
+    return "OPEN";
+  }
+
+  const hasActionableTask = phase.tasks.some((task) =>
+    ACTIONABLE_TASK_STATUSES.some((status) => status === task.status),
+  );
+  return hasActionableTask ? "RESUMABLE" : "CLOSED";
+}
+
 export type PhaseRunnerConfig = {
   mode: "AUTO" | "MANUAL";
   countdownSeconds: number;
@@ -126,8 +153,8 @@ export class PhaseRunner {
       const phase = this.resolveActivePhase(state);
 
       // Preflight: validate phase metadata and status before any git work.
-      // Identical gate in both AUTO and MANUAL modes — deterministic fail-closed
-      // semantics that cannot be bypassed by exception recovery.
+      // Identical gate in both AUTO and MANUAL modes — deterministic execution
+      // gate semantics that cannot be bypassed by exception recovery.
       this.runPreflightChecks(phase);
 
       await this.prepareBranch(phase);
@@ -193,22 +220,25 @@ export class PhaseRunner {
    * being invoked for conditions the user must resolve manually.
    *
    * Checks performed (identical for AUTO and MANUAL modes):
-   *   1. Phase status is not terminal — DONE / AWAITING_CI / READY_FOR_REVIEW
-   *      indicate no further coding work remains.
+   *   1. Terminal status gate:
+   *      - terminal + no actionable TODO/CI_FIX tasks => CLOSED (fail fast)
+   *      - terminal + actionable TODO/CI_FIX tasks => RESUMABLE (allow run)
+   *      - non-terminal statuses => OPEN
    *   2. branchName is non-empty — an empty branch name would produce a
    *      confusing git error rather than a clear failure.
    */
   private runPreflightChecks(phase: Phase): void {
-    const TERMINAL_STATUSES = [
-      "DONE",
-      "AWAITING_CI",
-      "READY_FOR_REVIEW",
-    ] as const;
-    if (TERMINAL_STATUSES.some((s) => s === (phase.status as string))) {
+    const gate = resolvePhaseExecutionGate(phase);
+    if (gate === "CLOSED") {
       throw new PhasePreflightError(
-        `Phase "${phase.name}" is already in terminal status "${phase.status}" ` +
+        `Phase "${phase.name}" is in terminal status "${phase.status}" with no actionable TODO/CI_FIX tasks ` +
           `and cannot be re-executed. ` +
           `Run 'ixado phase list' to check the current status, or create a new phase with 'ixado phase create'.`,
+      );
+    }
+    if (gate === "RESUMABLE") {
+      console.info(
+        `Preflight: phase "${phase.name}" is terminal (${phase.status}) but has pending TODO/CI_FIX tasks; resuming execution.`,
       );
     }
 

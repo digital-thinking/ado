@@ -324,7 +324,7 @@ export function controlCenterHtml(params: {
       </div>
       <table id="agentTopTable" class="compact-table">
         <thead>
-          <tr><th>Project</th><th>Agent</th><th>Task</th><th>Status</th><th>PID</th><th>Actions</th></tr>
+          <tr><th>Project</th><th>Agent</th><th>Task</th><th>Status</th><th>PID</th><th>Runtime</th><th>Actions</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -347,11 +347,17 @@ export function controlCenterHtml(params: {
             <label class="small" for="runtimeDefaultAssignee" style="margin-top: 8px; display: block;">Default Coding CLI</label>
             <select id="runtimeDefaultAssignee" required style="width: 100%;"></select>
             <button type="submit" style="margin-top: 12px; width: 100%;">Save Settings</button>
+            <div class="row" style="margin-top: 12px;">
+              <button id="startAutoModeButton" type="button">Run Auto Mode</button>
+              <button id="stopAutoModeButton" type="button" class="secondary" disabled>Stop Auto Mode</button>
+            </div>
           </form>
           <div>
             <div class="small">Configure how this project executes tasks. Loop mode 'Auto' will automatically proceed to the next available task.</div>
             <div id="runtimeSettingsStatus" class="small" style="margin-top: 8px; font-weight: 600;"></div>
+            <div id="autoModeStatus" class="small" style="margin-top: 8px; font-weight: 600;"></div>
             <div id="runtimeSettingsError" class="error"></div>
+            <div id="autoModeError" class="error"></div>
           </div>
         </div>
       </details>
@@ -452,7 +458,7 @@ export function controlCenterHtml(params: {
       <div id="agentError" class="error"></div>
       <table id="agentTable">
         <thead>
-          <tr><th>Project</th><th>Name</th><th>Status</th><th>PID</th><th>Task</th><th>Actions</th><th>Output Tail</th></tr>
+          <tr><th>Project</th><th>Name</th><th>Status</th><th>PID</th><th>Task</th><th>Actions</th><th>Runtime</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -480,6 +486,10 @@ export function controlCenterHtml(params: {
     const runtimeMode = document.getElementById("runtimeMode");
     const runtimeDefaultAssignee = document.getElementById("runtimeDefaultAssignee");
     const runtimeSettingsStatus = document.getElementById("runtimeSettingsStatus");
+    const startAutoModeButton = document.getElementById("startAutoModeButton");
+    const stopAutoModeButton = document.getElementById("stopAutoModeButton");
+    const autoModeStatus = document.getElementById("autoModeStatus");
+    const autoModeError = document.getElementById("autoModeError");
     const kanbanBoard = document.getElementById("kanbanBoard");
     const taskPhase = document.getElementById("taskPhase");
     const taskDependencies = document.getElementById("taskDependencies");
@@ -510,6 +520,7 @@ export function controlCenterHtml(params: {
     let isSettingsActive = false;
     const projectStateCache = new Map();
     let currentEventSource = null;
+    let latestExecutionStatus = null;
 
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
@@ -667,6 +678,7 @@ export function controlCenterHtml(params: {
           });
         }
       }
+      await refreshExecutionStatus();
     }
 
     async function switchSettings() {
@@ -760,6 +772,7 @@ export function controlCenterHtml(params: {
           const config = await api("/api/runtime-config");
           renderRuntimeConfig(config);
         }
+        await refreshExecutionStatus();
       } catch (error) {
         setError("kanbanError", error.message);
       }
@@ -811,6 +824,54 @@ export function controlCenterHtml(params: {
       if (runtimeSettingsStatus) {
         runtimeSettingsStatus.textContent =
           "Mode: " + (config.autoMode ? "Auto" : "Manual") + " | Default CLI: " + config.defaultInternalWorkAssignee;
+      }
+    }
+
+    function setAutoModeStatus(message) {
+      if (autoModeStatus instanceof HTMLElement) {
+        autoModeStatus.textContent = message || "";
+      }
+    }
+
+    function setAutoModeError(message) {
+      if (autoModeError instanceof HTMLElement) {
+        autoModeError.textContent = message || "";
+      }
+    }
+
+    function syncAutoModeButtons() {
+      const isRunning = Boolean(latestExecutionStatus && latestExecutionStatus.running);
+      if (startAutoModeButton instanceof HTMLButtonElement) {
+        startAutoModeButton.disabled = isRunning;
+      }
+      if (stopAutoModeButton instanceof HTMLButtonElement) {
+        stopAutoModeButton.disabled = !isRunning;
+      }
+    }
+
+    function renderExecutionStatus(status) {
+      latestExecutionStatus = status;
+      const projectPrefix =
+        status && status.projectName
+          ? "[" + status.projectName + "] "
+          : "";
+      const message =
+        status && typeof status.message === "string"
+          ? status.message
+          : "Auto mode is idle.";
+      setAutoModeStatus(projectPrefix + message);
+      syncAutoModeButtons();
+    }
+
+    async function refreshExecutionStatus() {
+      try {
+        const status = await api(
+          "/api/execution?projectName=" + encodeURIComponent(activeProjectName),
+        );
+        renderExecutionStatus(status);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setAutoModeError(message);
       }
     }
 
@@ -1115,6 +1176,15 @@ export function controlCenterHtml(params: {
           return agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
         })();
         const pid = agent.pid === undefined || agent.pid === null ? "-" : agent.pid;
+        const runtimeSummary = (() => {
+          const summary = agent.runtimeDiagnostic && typeof agent.runtimeDiagnostic.summary === "string"
+            ? agent.runtimeDiagnostic.summary
+            : "";
+          if (summary) {
+            return summary;
+          }
+          return (agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ");
+        })();
 
         const row = document.createElement("tr");
         row.innerHTML = \`
@@ -1130,7 +1200,7 @@ export function controlCenterHtml(params: {
               <button data-action="restart" data-id="\${escapeHtml(agent.id)}" class="secondary">Restart</button>
             </div>
           </td>
-          <td><div class="mono small">\${escapeHtml((agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | "))}</div></td>
+          <td><div class="mono small">\${escapeHtml(runtimeSummary || "-")}</div></td>
         \`;
         agentTableBody.appendChild(row);
 
@@ -1141,6 +1211,7 @@ export function controlCenterHtml(params: {
           <td class="mono">\${escapeHtml(String(taskName))}</td>
           <td>\${escapeHtml(agent.status)}\${agent.recoveryAttempted ? ' <span class="pill" title="' + escapeHtml(agent.recoveryReasoning || "") + '">!</span>' : ''}</td>
           <td>\${escapeHtml(String(pid))}</td>
+          <td><div class="mono small">\${escapeHtml(runtimeSummary || "-")}</div></td>
           <td>
             <div class="row">
               <button data-action="show-logs" data-id="\${escapeHtml(agent.id)}" class="secondary small">Logs</button>
@@ -1214,6 +1285,42 @@ export function controlCenterHtml(params: {
         }
       }
     });
+
+    if (startAutoModeButton instanceof HTMLButtonElement) {
+      startAutoModeButton.addEventListener("click", async () => {
+        setAutoModeError("");
+        try {
+          const status = await api("/api/execution/start", {
+            method: "POST",
+            body: JSON.stringify({ projectName: activeProjectName }),
+          });
+          renderExecutionStatus(status);
+          await refreshActiveProject();
+          await globalRefresh().catch(handleRefreshError);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setAutoModeError(message);
+        }
+      });
+    }
+
+    if (stopAutoModeButton instanceof HTMLButtonElement) {
+      stopAutoModeButton.addEventListener("click", async () => {
+        setAutoModeError("");
+        try {
+          const status = await api("/api/execution/stop", {
+            method: "POST",
+            body: JSON.stringify({ projectName: activeProjectName }),
+          });
+          renderExecutionStatus(status);
+          await refreshActiveProject();
+          await globalRefresh().catch(handleRefreshError);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setAutoModeError(message);
+        }
+      });
+    }
 
     document.getElementById("taskForm").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1721,9 +1828,11 @@ export function controlCenterHtml(params: {
       await refreshProjects();
       await switchProject(activeProjectName);
       await globalRefresh();
+      await refreshExecutionStatus();
       
       setInterval(() => {
         globalRefresh().catch(handleRefreshError);
+        refreshExecutionStatus().catch(handleRefreshError);
         if (!isProjectUiInteractionActive()) {
           refreshActiveProject().catch(handleRefreshError);
         }

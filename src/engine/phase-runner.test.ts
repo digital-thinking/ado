@@ -2,6 +2,7 @@ import { describe, expect, test, mock } from "bun:test";
 import {
   PhaseRunner,
   pickNextTask,
+  resolvePhaseExecutionGate,
   type PhaseRunnerConfig,
 } from "./phase-runner";
 import { DEFAULT_AUTH_POLICY } from "../security/policy";
@@ -1555,6 +1556,40 @@ describe("pickNextTask", () => {
   });
 });
 
+describe("resolvePhaseExecutionGate", () => {
+  test("returns OPEN for non-terminal phase statuses", () => {
+    const gate = resolvePhaseExecutionGate({
+      status: "CODING",
+      tasks: [],
+    } as any);
+    expect(gate).toBe("OPEN");
+  });
+
+  test("returns RESUMABLE for terminal status with TODO task", () => {
+    const gate = resolvePhaseExecutionGate({
+      status: "DONE",
+      tasks: [{ status: "TODO" }],
+    } as any);
+    expect(gate).toBe("RESUMABLE");
+  });
+
+  test("returns RESUMABLE for terminal status with CI_FIX task", () => {
+    const gate = resolvePhaseExecutionGate({
+      status: "READY_FOR_REVIEW",
+      tasks: [{ status: "CI_FIX" }],
+    } as any);
+    expect(gate).toBe("RESUMABLE");
+  });
+
+  test("returns CLOSED for terminal status with no actionable task", () => {
+    const gate = resolvePhaseExecutionGate({
+      status: "AWAITING_CI",
+      tasks: [{ status: "DONE" }, { status: "FAILED" }],
+    } as any);
+    expect(gate).toBe("CLOSED");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // P20-003: phase-loop preflight consistency
 // ---------------------------------------------------------------------------
@@ -1623,7 +1658,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     ["READY_FOR_REVIEW", "AUTO"],
     ["READY_FOR_REVIEW", "MANUAL"],
   ] as const)(
-    "phase in terminal status %s throws PhasePreflightError in %s mode",
+    "phase in terminal status %s without actionable tasks throws PhasePreflightError in %s mode",
     async (terminalStatus, mode) => {
       const state = {
         projectName: "test-project",
@@ -1639,7 +1674,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
               {
                 id: taskId,
                 title: "Task 1",
-                status: "TODO",
+                status: "DONE",
                 assignee: "UNASSIGNED",
                 dependencies: [],
               },
@@ -1664,6 +1699,76 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       expect((error as PhasePreflightError).message).toContain(terminalStatus);
       // No git operations should have been attempted
       expect(wasCalled()).toBe(false);
+    },
+  );
+
+  test.each([
+    ["DONE", "TODO", "AUTO"],
+    ["DONE", "CI_FIX", "MANUAL"],
+    ["AWAITING_CI", "TODO", "MANUAL"],
+    ["READY_FOR_REVIEW", "CI_FIX", "AUTO"],
+  ] as const)(
+    "phase in terminal status %s with actionable %s task is resumable in %s mode",
+    async (terminalStatus, actionableStatus, mode) => {
+      const state: any = {
+        projectName: "test-project",
+        rootDir: "/tmp/project",
+        activePhaseId: phaseId,
+        phases: [
+          {
+            id: phaseId,
+            name: "Phase 1",
+            branchName: "feat/phase-1",
+            status: terminalStatus,
+            tasks: [
+              {
+                id: taskId,
+                title: "Task 1",
+                status: actionableStatus,
+                assignee: "UNASSIGNED",
+                dependencies: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      const mockRunner: ProcessRunner = {
+        run: mock(async (input: any) => {
+          if (input.args.includes("--porcelain")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (input.args.includes("--show-current")) {
+            return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }),
+      } as any;
+
+      const control = {
+        ...makeMockControl(state),
+        getState: mock(async () => state),
+        startActiveTaskAndWait: mock(async () => {
+          state.phases[0].tasks[0].status = "DONE";
+          return state;
+        }),
+        setPhaseStatus: mock(async () => state),
+      } as unknown as ControlCenterService;
+
+      const pr = new PhaseRunner(
+        control,
+        { ...baseConfig, mode },
+        undefined,
+        undefined,
+        mockRunner,
+      );
+
+      await expect(pr.run()).resolves.toBeUndefined();
+      expect(control.startActiveTaskAndWait).toHaveBeenCalled();
+      expect(control.setPhaseStatus).toHaveBeenCalledWith({
+        phaseId,
+        status: "BRANCHING",
+      });
     },
   );
 

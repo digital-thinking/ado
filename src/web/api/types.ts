@@ -1,12 +1,17 @@
 import type {
+  AgentControl,
+  ControlCenterControl,
+  ExecutionControl,
+  RuntimeConfig,
+} from "../app";
+import type { UsageService } from "../usage-service";
+import type {
   CLIAdapterId,
   CliSettings,
   CliSettingsOverride,
   ProjectRecord,
   ProjectState,
 } from "../../types";
-import type { AgentControl, ControlCenterControl, RuntimeConfig } from "../app";
-import type { UsageService } from "../usage-service";
 
 export interface ApiDependencies {
   control: ControlCenterControl;
@@ -28,4 +33,5 @@ export interface ApiDependencies {
   ) => Promise<ProjectRecord>;
   getGlobalSettings: () => Promise<CliSettings>;
   updateGlobalSettings: (patch: CliSettingsOverride) => Promise<CliSettings>;
+  execution?: ExecutionControl;
 }

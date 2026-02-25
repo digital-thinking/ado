@@ -159,30 +159,17 @@ describe("web-control helpers", () => {
     await mkdir(dirname(entryScriptPath), { recursive: true });
     await writeFile(entryScriptPath, "console.log('ixado');\n", "utf8");
 
-    expect(buildWebDaemonSpawnArgs(entryScriptPath, 8787)).toEqual([
-      entryScriptPath,
-      "web",
-      "serve",
-      "8787",
-    ]);
+    expect(buildWebDaemonSpawnArgs(entryScriptPath)).toEqual([entryScriptPath]);
   });
 
   test("buildWebDaemonSpawnArgs omits script path when it does not exist", () => {
     const missingEntryScriptPath = join(sandboxDir, "missing-entry.ts");
 
-    expect(buildWebDaemonSpawnArgs(missingEntryScriptPath, 8787)).toEqual([
-      "web",
-      "serve",
-      "8787",
-    ]);
+    expect(buildWebDaemonSpawnArgs(missingEntryScriptPath)).toEqual([]);
   });
 
   test("buildWebDaemonSpawnArgs omits virtual Bun entry path", () => {
-    expect(buildWebDaemonSpawnArgs("/$bunfs/root/ixado", 8787)).toEqual([
-      "web",
-      "serve",
-      "8787",
-    ]);
+    expect(buildWebDaemonSpawnArgs("/$bunfs/root/ixado")).toEqual([]);
   });
 
   test("startWebDaemon includes startup error details when child exits", async () => {

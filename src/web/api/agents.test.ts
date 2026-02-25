@@ -3,6 +3,11 @@ import { handleAgentsApi, refreshRecoveryCache } from "./agents";
 import type { ApiDependencies } from "./types";
 import type { ProjectState } from "../../types";
 import { RuntimeEventSchema } from "../../types/runtime-events";
+import {
+  buildAgentHeartbeatDiagnostic,
+  buildAgentIdleDiagnostic,
+  formatAgentRuntimeDiagnostic,
+} from "../../agent-runtime-diagnostics";
 
 function parseSsePayload(chunk: string): Record<string, unknown> {
   const normalized = chunk.trim();
@@ -108,6 +113,93 @@ describe("agents API enrichment", () => {
 
     expect(mockAgents.list.mock.calls.length).toBe(initialListCount + 1);
     // Ensure no other agent methods were called (like start, kill, assign, etc if we had mocked them)
+  });
+
+  test("GET /api/agents includes latest runtime diagnostic summary", async () => {
+    const idleDiagnostic = formatAgentRuntimeDiagnostic(
+      buildAgentIdleDiagnostic({
+        agentId: "agent-1",
+        adapterId: "CODEX_CLI",
+        command: "codex",
+        elapsedMs: 120_000,
+        idleMs: 120_000,
+        idleThresholdMs: 60_000,
+        occurredAt: "2026-02-25T20:00:00.000Z",
+      }),
+    );
+    const deps: ApiDependencies = {
+      ...mockDeps,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: [idleDiagnostic],
+          },
+        ],
+      } as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(1);
+    expect(data[0].runtimeDiagnostic).toEqual({
+      event: "idle-diagnostic",
+      occurredAt: "2026-02-25T20:00:00.000Z",
+      summary: "Idle 2m0s (elapsed 2m0s).",
+    });
+  });
+
+  test("GET /api/agents summarizes heartbeat diagnostics for runtime telemetry", async () => {
+    const heartbeatDiagnostic = formatAgentRuntimeDiagnostic(
+      buildAgentHeartbeatDiagnostic({
+        agentId: "agent-1",
+        adapterId: "CODEX_CLI",
+        command: "codex",
+        elapsedMs: 120_000,
+        idleMs: 45_000,
+        occurredAt: "2026-02-25T20:05:00.000Z",
+      }),
+    );
+    const deps: ApiDependencies = {
+      ...mockDeps,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: [heartbeatDiagnostic],
+          },
+        ],
+      } as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(1);
+    expect(data[0].runtimeDiagnostic).toEqual({
+      event: "heartbeat",
+      occurredAt: "2026-02-25T20:05:00.000Z",
+      summary: "Heartbeat: elapsed 2m0s, idle 45s.",
+    });
   });
 
   test("GET /api/agents/:id/logs/stream includes formatted line, context, and recovery links", async () => {
@@ -227,5 +319,82 @@ describe("agents API enrichment", () => {
       expect(runtimeEvent2.payload.outcome).toBe("failure");
       expect(runtimeEvent2.payload.agentStatus).toBe("FAILED");
     }
+  });
+
+  test("GET /api/agents/:id/logs/stream formats runtime diagnostics for readability", async () => {
+    const idleDiagnostic = formatAgentRuntimeDiagnostic(
+      buildAgentIdleDiagnostic({
+        agentId: "agent-1",
+        adapterId: "CODEX_CLI",
+        command: "codex",
+        elapsedMs: 120_000,
+        idleMs: 120_000,
+        idleThresholdMs: 60_000,
+      }),
+    );
+    const deps: ApiDependencies = {
+      control: {
+        getState: async () =>
+          ({
+            projectName: "project-a",
+            rootDir: "/tmp/a",
+            phases: [
+              {
+                id: "phase-1",
+                name: "Phase 1",
+                branchName: "phase-1",
+                status: "CODING",
+                tasks: [
+                  {
+                    id: "task-1",
+                    title: "Task One",
+                    status: "IN_PROGRESS",
+                    assignee: "CODEX_CLI",
+                    dependencies: [],
+                  },
+                ],
+              },
+            ],
+          }) as any,
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            phaseId: "phase-1",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: [idleDiagnostic],
+          },
+        ],
+        subscribe: () => () => {},
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/logs/stream"),
+      new URL("http://localhost/api/agents/agent-1/logs/stream"),
+      deps,
+    );
+    expect(response).not.toBeNull();
+    const reader = response!.body!.getReader();
+    const decoder = new TextDecoder();
+    const chunk = await reader.read();
+    const payload = parseSsePayload(decoder.decode(chunk.value));
+
+    expect(payload.formattedLine).toContain("[agent-runtime] Idle 2m0s");
   });
 });

@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  buildAgentHeartbeatDiagnostic,
+  formatAgentRuntimeDiagnostic,
+} from "../agent-runtime-diagnostics";
 
 import {
   RuntimeEventSchema,
@@ -172,6 +176,34 @@ describe("runtime event contract", () => {
     expect(shouldNotifyRuntimeEventForTelegram(event, "all")).toBe(true);
     expect(shouldNotifyRuntimeEventForTelegram(event, "important")).toBe(false);
     expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(false);
+  });
+
+  test("formats agent runtime diagnostics for CLI adapter output", () => {
+    const line = formatAgentRuntimeDiagnostic(
+      buildAgentHeartbeatDiagnostic({
+        agentId: "agent-1",
+        adapterId: "CODEX_CLI",
+        command: "codex",
+        elapsedMs: 90_000,
+        idleMs: 15_000,
+      }),
+    );
+    const event = createRuntimeEvent({
+      family: "adapter-output",
+      type: "adapter.output",
+      payload: {
+        stream: "system",
+        line,
+      },
+      context: {
+        source: "AGENT_SUPERVISOR",
+        agentId: "agent-1",
+      },
+    });
+
+    expect(formatRuntimeEventForCli(event)).toBe(
+      "Agent runtime: Heartbeat: elapsed 1m30s, idle 15s.",
+    );
   });
 
   test("suppresses duplicate Telegram notifications when configured", () => {

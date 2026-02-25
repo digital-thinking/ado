@@ -3,6 +3,11 @@ import type { ApiDependencies } from "./types";
 import { json, readJson, asString } from "./utils";
 import type { ProjectState } from "../../types";
 import {
+  parseAgentRuntimeDiagnostic,
+  resolveLatestAgentRuntimeDiagnostic,
+  summarizeAgentRuntimeDiagnostic,
+} from "../../agent-runtime-diagnostics";
+import {
   createRuntimeEvent,
   toLegacyAgentEvent,
   type RuntimeEvent,
@@ -114,6 +119,32 @@ async function resolveStateForAgent(
   }
 }
 
+function resolveRuntimeDiagnosticSummary(outputTail: readonly string[]): {
+  event: "heartbeat" | "idle-diagnostic";
+  occurredAt: string;
+  summary: string;
+} | null {
+  const latest = resolveLatestAgentRuntimeDiagnostic(outputTail);
+  if (!latest) {
+    return null;
+  }
+
+  return {
+    event: latest.event,
+    occurredAt: latest.occurredAt,
+    summary: summarizeAgentRuntimeDiagnostic(latest),
+  };
+}
+
+function formatOutputLineForAgentView(line: string): string {
+  const diagnostic = parseAgentRuntimeDiagnostic(line);
+  if (!diagnostic) {
+    return line;
+  }
+
+  return `[agent-runtime] ${summarizeAgentRuntimeDiagnostic(diagnostic)}`;
+}
+
 export async function handleAgentsApi(
   request: Request,
   url: URL,
@@ -142,6 +173,9 @@ export async function handleAgentsApi(
         const recovery = agent.taskId
           ? recoveryCache.get(agent.taskId)
           : undefined;
+        const runtimeDiagnostic = resolveRuntimeDiagnosticSummary(
+          agent.outputTail,
+        );
         const projectState = statesByProject.get(
           agent.projectName ?? deps.projectName,
         );
@@ -155,6 +189,7 @@ export async function handleAgentsApi(
           phaseName: context.phaseName,
           taskTitle: context.taskTitle,
           taskNumber: context.taskNumber,
+          runtimeDiagnostic,
         };
       }),
     );
@@ -229,13 +264,14 @@ export async function handleAgentsApi(
         const sendRuntimeEvent = (event: RuntimeEvent) => {
           const legacy = toLegacyAgentEvent(event);
           if (legacy?.type === "output") {
+            const displayLine = formatOutputLineForAgentView(legacy.line);
             send({
               ...legacy,
               runtimeEvent: event,
               context: contextLabel,
               formattedLine: contextLabel
-                ? `[${contextLabel}] ${legacy.line}`
-                : legacy.line,
+                ? `[${contextLabel}] ${displayLine}`
+                : displayLine,
             });
             return;
           }

@@ -367,7 +367,7 @@ export async function startWebDaemon(
   const startupMarkerLine = `[${new Date().toISOString()}] ${WEB_START_MARKER}`;
   await appendFile(logFilePath, `${startupMarkerLine}\n`, "utf8");
 
-  const spawnArgs = buildWebDaemonSpawnArgs(input.entryScriptPath, input.port);
+  const spawnArgs = buildWebDaemonSpawnArgs(input.entryScriptPath);
 
   const stdoutFd = openSync(logFilePath, "a");
   const stderrFd = openSync(logFilePath, "a");
@@ -384,6 +384,10 @@ export async function startWebDaemon(
           IXADO_SETTINGS_FILE: input.settingsFilePath,
           IXADO_WEB_RUNTIME_FILE: runtimeFilePath,
           IXADO_WEB_LOG_FILE: logFilePath,
+          IXADO_WEB_DAEMON_MODE: "1",
+          ...(input.port !== undefined
+            ? { IXADO_WEB_PORT: String(input.port) }
+            : {}),
         },
       });
     } finally {
@@ -405,10 +409,7 @@ export async function startWebDaemon(
   );
 }
 
-export function buildWebDaemonSpawnArgs(
-  entryScriptPath: string,
-  port?: number,
-): string[] {
+export function buildWebDaemonSpawnArgs(entryScriptPath: string): string[] {
   const spawnArgs: string[] = [];
   const trimmedEntryScriptPath = entryScriptPath.trim();
   if (trimmedEntryScriptPath) {
@@ -417,11 +418,6 @@ export function buildWebDaemonSpawnArgs(
     if (!isVirtualBunFsPath && existsSync(resolvedEntryScriptPath)) {
       spawnArgs.push(resolvedEntryScriptPath);
     }
-  }
-
-  spawnArgs.push("web", "serve");
-  if (port !== undefined) {
-    spawnArgs.push(String(port));
   }
 
   return spawnArgs;
