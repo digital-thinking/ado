@@ -391,6 +391,10 @@ export async function startWebControlCenter(
         telegram: {
           ...current.telegram,
           ...(validatedPatch.telegram ?? {}),
+          notifications: {
+            ...current.telegram.notifications,
+            ...(validatedPatch.telegram?.notifications ?? {}),
+          },
         },
         internalWork: {
           ...current.internalWork,

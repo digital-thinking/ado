@@ -41,6 +41,10 @@ describe("type contracts", () => {
     expect(parsed.telegram.enabled).toBe(true);
     expect(parsed.telegram.botToken).toBe("token");
     expect(parsed.telegram.ownerId).toBe(123);
+    expect(parsed.telegram.notifications).toEqual({
+      level: "all",
+      suppressDuplicates: true,
+    });
     expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
     expect(parsed.executionLoop.autoMode).toBe(false);
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
@@ -167,6 +171,24 @@ describe("type contracts", () => {
         },
       }),
     ).toThrow("templateMappings branchPrefix values must be unique");
+  });
+
+  test("supports telegram notification noise controls", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: {
+        enabled: true,
+        botToken: "token",
+        ownerId: 1,
+        notifications: {
+          level: "critical",
+          suppressDuplicates: false,
+        },
+      },
+    });
+    expect(parsed.telegram.notifications).toEqual({
+      level: "critical",
+      suppressDuplicates: false,
+    });
   });
 
   test("rejects invalid project state", () => {

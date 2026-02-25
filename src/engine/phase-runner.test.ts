@@ -220,6 +220,7 @@ describe("PhaseRunner", () => {
         return { exitCode: 0, stdout: "", stderr: "" };
       }),
     } as any;
+    const runtimeEvents: Array<{ type: string; payload: any }> = [];
 
     const runner = new PhaseRunner(
       mockControl,
@@ -238,7 +239,9 @@ describe("PhaseRunner", () => {
         },
       },
       undefined,
-      undefined,
+      async (event) => {
+        runtimeEvents.push({ type: event.type, payload: event.payload });
+      },
       mockRunner,
     );
 
@@ -273,6 +276,25 @@ describe("PhaseRunner", () => {
       "statusCheckRollup",
     ]);
     expect(ghCalls[3].args).toEqual(["pr", "ready", "2301"]);
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "pr.activity" && event.payload.stage === "created",
+      ),
+    ).toBe(true);
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "pr.activity" &&
+          event.payload.stage === "ready-for-review",
+      ),
+    ).toBe(true);
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "ci.activity" && event.payload.stage === "succeeded",
+      ),
+    ).toBe(true);
   });
 
   test("recovery fallback: handles DirtyWorktreeError during branching", async () => {
@@ -678,8 +700,8 @@ describe("PhaseRunner", () => {
       },
       undefined,
       async (event) => {
-        if (event.type === "task.lifecycle.progress") {
-          runtimeMessages.push(event.payload.message);
+        if (event.type === "ci.activity") {
+          runtimeMessages.push(event.payload.summary);
         }
       },
       mockRunner,

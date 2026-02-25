@@ -154,6 +154,28 @@ export type ProjectExecutionSettings = z.infer<
   typeof ProjectExecutionSettingsSchema
 >;
 
+export const TelegramNotificationLevelSchema = z.enum([
+  "all",
+  "important",
+  "critical",
+]);
+export type TelegramNotificationLevel = z.infer<
+  typeof TelegramNotificationLevelSchema
+>;
+
+export const TelegramNotificationSettingsSchema = z
+  .object({
+    level: TelegramNotificationLevelSchema.default("all"),
+    suppressDuplicates: z.boolean().default(true),
+  })
+  .default({
+    level: "all",
+    suppressDuplicates: true,
+  });
+export type TelegramNotificationSettings = z.infer<
+  typeof TelegramNotificationSettingsSchema
+>;
+
 // 2. CLI Settings
 export const ProjectRecordSchema = z.object({
   name: z.string().min(1),
@@ -170,6 +192,7 @@ export const CliSettingsSchema = z
       enabled: z.boolean().default(false),
       botToken: z.string().min(1).optional(),
       ownerId: z.number().int().positive().optional(),
+      notifications: TelegramNotificationSettingsSchema,
     }),
     internalWork: z
       .object({
@@ -292,6 +315,12 @@ export const CliSettingsOverrideSchema = z.object({
       enabled: z.boolean().optional(),
       botToken: z.string().min(1).optional(),
       ownerId: z.number().int().positive().optional(),
+      notifications: z
+        .object({
+          level: TelegramNotificationLevelSchema.optional(),
+          suppressDuplicates: z.boolean().optional(),
+        })
+        .optional(),
     })
     .optional(),
   internalWork: z

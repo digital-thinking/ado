@@ -769,10 +769,16 @@ ${testerResult.fixTaskDescription}`.trim(),
     );
     await this.publishRuntimeEvent(
       createRuntimeEvent({
-        family: "task-lifecycle",
-        type: "task.lifecycle.progress",
+        family: "ci-pr-lifecycle",
+        type: "pr.activity",
         payload: {
-          message: `PR Created: ${phase.name} -> ${ciResult.prUrl}`,
+          stage: "created",
+          summary: `Created PR #${parsePullRequestNumberFromUrl(ciResult.prUrl)}: ${ciResult.prUrl}`,
+          prUrl: ciResult.prUrl,
+          prNumber: parsePullRequestNumberFromUrl(ciResult.prUrl),
+          baseBranch: ciResult.baseBranch,
+          headBranch: ciResult.headBranch,
+          draft: this.config.ciPullRequest.createAsDraft,
         },
         context: {
           source: "PHASE_RUNNER",
@@ -816,10 +822,20 @@ ${testerResult.fixTaskDescription}`.trim(),
         console.info(transitionMessage);
         await this.publishRuntimeEvent(
           createRuntimeEvent({
-            family: "task-lifecycle",
-            type: "task.lifecycle.progress",
+            family: "ci-pr-lifecycle",
+            type: "ci.activity",
             payload: {
-              message: transitionMessage,
+              stage: "poll-transition",
+              summary: transitionMessage,
+              prNumber,
+              previousOverall: transition.previousOverall ?? undefined,
+              overall: transition.overall,
+              pollCount: transition.pollCount,
+              rerun: transition.isRerun,
+              terminal: transition.isTerminal,
+              terminalObservationCount: transition.terminalObservationCount,
+              requiredTerminalObservations:
+                transition.requiredTerminalObservations,
             },
             context: {
               source: "PHASE_RUNNER",
@@ -884,6 +900,26 @@ ${testerResult.fixTaskDescription}`.trim(),
 
       await this.publishRuntimeEvent(
         createRuntimeEvent({
+          family: "ci-pr-lifecycle",
+          type: "ci.activity",
+          payload: {
+            stage: "failed",
+            summary: `CI checks failed for PR #${prNumber}; created ${mapping.tasksToCreate.length} CI_FIX task(s).`,
+            prNumber,
+            overall: "FAILURE",
+            createdFixTaskCount: mapping.tasksToCreate.length,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
           family: "terminal-outcome",
           type: "terminal.outcome",
           payload: {
@@ -945,6 +981,24 @@ ${testerResult.fixTaskDescription}`.trim(),
       );
       await this.publishRuntimeEvent(
         createRuntimeEvent({
+          family: "ci-pr-lifecycle",
+          type: "ci.activity",
+          payload: {
+            stage: "validation-max-retries",
+            summary: `Review requires fixes after ${validationResult.fixAttempts} attempts.`,
+            prNumber,
+            overall: "FAILURE",
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
           family: "terminal-outcome",
           type: "terminal.outcome",
           payload: {
@@ -978,6 +1032,24 @@ ${testerResult.fixTaskDescription}`.trim(),
         cwd: this.config.projectRootDir,
       });
       console.info(`Marked draft PR #${prNumber} as ready for review.`);
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "ci-pr-lifecycle",
+          type: "pr.activity",
+          payload: {
+            stage: "ready-for-review",
+            summary: `Marked PR #${prNumber} as ready for review.`,
+            prNumber,
+            prUrl,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
     }
 
     await this.control.setPhaseStatus({
@@ -987,6 +1059,24 @@ ${testerResult.fixTaskDescription}`.trim(),
 
     console.info(
       `CI validation loop approved after ${validationResult.reviews.length} review round(s) and ${validationResult.fixAttempts} fix attempt(s).`,
+    );
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "ci-pr-lifecycle",
+        type: "ci.activity",
+        payload: {
+          stage: "succeeded",
+          summary: `CI checks and review approved for PR #${prNumber}.`,
+          prNumber,
+          overall: "SUCCESS",
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
     );
     await this.publishRuntimeEvent(
       createRuntimeEvent({
@@ -1126,6 +1216,27 @@ ${testerResult.fixTaskDescription}`.trim(),
           );
           return;
         }
+
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "tester-recovery",
+            type: "recovery.activity",
+            payload: {
+              stage: "attempt-unfixable",
+              summary: recovery.result.reasoning,
+              attemptNumber,
+              category: exception.category,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: input.phaseId,
+              phaseName: input.phaseName,
+              taskId: input.taskId,
+              taskTitle: input.taskTitle,
+            },
+          }),
+        );
 
         throw new Error(
           `Recovery marked unfixable: ${recovery.result.reasoning}`,

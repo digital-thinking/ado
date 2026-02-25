@@ -21,6 +21,10 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
   projects: [],
   telegram: {
     enabled: false,
+    notifications: {
+      level: "all",
+      suppressDuplicates: true,
+    },
   },
   internalWork: {
     assignee: "CODEX_CLI",
@@ -166,6 +170,10 @@ function mergeCliSettings(
     telegram: {
       ...base.telegram,
       ...override.telegram,
+      notifications: {
+        ...base.telegram.notifications,
+        ...override.telegram?.notifications,
+      },
     },
     internalWork: {
       ...base.internalWork,
@@ -599,6 +607,7 @@ export async function runOnboard(
           enabled: existingSettings.telegram.enabled,
           botToken: existingSettings.telegram.botToken,
           ownerId: existingSettings.telegram.ownerId,
+          notifications: existingSettings.telegram.notifications,
         },
         internalWork: {
           assignee: internalWorkAssignee,
@@ -617,6 +626,7 @@ export async function runOnboard(
         projects: existingSettings.projects,
         telegram: {
           enabled: false,
+          notifications: existingSettings.telegram.notifications,
         },
         internalWork: {
           assignee: internalWorkAssignee,
@@ -678,6 +688,7 @@ export async function runOnboard(
         enabled: true,
         botToken,
         ownerId,
+        notifications: existingSettings.telegram.notifications,
       },
       internalWork: {
         assignee: internalWorkAssignee,
