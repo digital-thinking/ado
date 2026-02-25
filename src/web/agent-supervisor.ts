@@ -17,6 +17,11 @@ import {
   buildAdapterStartupSilenceDiagnostic,
   formatAdapterRuntimeDiagnostic,
 } from "../adapters/startup";
+import {
+  buildAgentHeartbeatDiagnostic,
+  buildAgentIdleDiagnostic,
+  formatAgentRuntimeDiagnostic,
+} from "../agent-runtime-diagnostics";
 import type { CLIAdapterId } from "../types";
 import {
   createRuntimeEvent,
@@ -66,6 +71,10 @@ export type AgentSupervisorOptions = {
   spawnFn?: SpawnFn;
   registryFilePath?: string;
   onFailure?: (agent: AgentView) => void | Promise<void>;
+  runtimeDiagnostics?: {
+    heartbeatIntervalMs?: number;
+    idleThresholdMs?: number;
+  };
 };
 
 export type AssignAgentInput = {
@@ -74,6 +83,14 @@ export type AssignAgentInput = {
 };
 
 export type AgentEvent = RuntimeEvent;
+
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS = 120_000;
+
+type RuntimeDiagnosticsConfig = {
+  heartbeatIntervalMs: number;
+  idleThresholdMs: number;
+};
 
 type AgentRecord = {
   id: string;
@@ -106,6 +123,7 @@ function nowIso(): string {
 }
 
 const MAX_TAIL_LINE_LENGTH = 240;
+const IXADO_DIAGNOSTIC_PREFIX = "[ixado][";
 
 function toView(record: AgentRecord): AgentView {
   const { child: _child, runToken: _runToken, ...view } = record;
@@ -113,6 +131,10 @@ function toView(record: AgentRecord): AgentView {
 }
 
 function truncateTailLine(line: string): string {
+  if (line.startsWith(IXADO_DIAGNOSTIC_PREFIX)) {
+    return line;
+  }
+
   if (line.length <= MAX_TAIL_LINE_LENGTH) {
     return line;
   }
@@ -206,6 +228,7 @@ export class AgentSupervisor {
   private readonly spawnFn: SpawnFn;
   private readonly registryFilePath?: string;
   private readonly onFailure?: (agent: AgentView) => void | Promise<void>;
+  private readonly runtimeDiagnostics: RuntimeDiagnosticsConfig;
   private readonly records = new Map<string, AgentRecord>();
   private readonly emitter = new EventEmitter();
 
@@ -216,12 +239,36 @@ export class AgentSupervisor {
     if (typeof spawnOrOptions === "function") {
       this.spawnFn = spawnOrOptions;
       this.registryFilePath = registryFilePath;
+      this.runtimeDiagnostics = {
+        heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
+        idleThresholdMs: DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS,
+      };
       return;
     }
 
     this.spawnFn = spawnOrOptions.spawnFn ?? spawn;
     this.registryFilePath = spawnOrOptions.registryFilePath;
     this.onFailure = spawnOrOptions.onFailure;
+    this.runtimeDiagnostics = {
+      heartbeatIntervalMs:
+        spawnOrOptions.runtimeDiagnostics?.heartbeatIntervalMs ??
+        DEFAULT_HEARTBEAT_INTERVAL_MS,
+      idleThresholdMs:
+        spawnOrOptions.runtimeDiagnostics?.idleThresholdMs ??
+        DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS,
+    };
+    if (
+      !Number.isFinite(this.runtimeDiagnostics.heartbeatIntervalMs) ||
+      this.runtimeDiagnostics.heartbeatIntervalMs <= 0
+    ) {
+      throw new Error("runtime heartbeatIntervalMs must be > 0.");
+    }
+    if (
+      !Number.isFinite(this.runtimeDiagnostics.idleThresholdMs) ||
+      this.runtimeDiagnostics.idleThresholdMs <= 0
+    ) {
+      throw new Error("runtime idleThresholdMs must be > 0.");
+    }
   }
 
   subscribe(
@@ -486,10 +533,32 @@ export class AgentSupervisor {
 
     let timeoutHandle: NodeJS.Timeout | undefined;
     let silenceHandle: NodeJS.Timeout | undefined;
+    let heartbeatHandle: NodeJS.Timeout | undefined;
     let hasReceivedOutput = false;
+    const startedAtMs = Date.now();
+    let lastOutputAtMs = startedAtMs;
+    let lastIdleDiagnosticBucket = -1;
 
     const cancelSilenceTimer = () => {
       clearTimeout(silenceHandle);
+    };
+    const appendSystemOutput = (message: string) => {
+      const lines = tailPush(record.outputTail, message);
+      this.persistRecord(record);
+      lines.forEach((line) => this.emitAdapterOutput(record, "system", line));
+    };
+    const markOutputReceived = () => {
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        cancelSilenceTimer();
+      }
+      lastOutputAtMs = Date.now();
+      lastIdleDiagnosticBucket = -1;
+    };
+    const clearRuntimeTimers = () => {
+      clearTimeout(timeoutHandle);
+      cancelSilenceTimer();
+      clearInterval(heartbeatHandle);
     };
 
     if (options.startupSilenceTimeoutMs !== undefined) {
@@ -506,23 +575,57 @@ export class AgentSupervisor {
               startupSilenceTimeoutMs: silenceMs,
             }),
           );
-          const lines = tailPush(record.outputTail, message);
-          this.persistRecord(record);
-          lines.forEach((line) =>
-            this.emitAdapterOutput(record, "system", line),
-          );
+          appendSystemOutput(message);
         }
       }, silenceMs);
     }
+
+    heartbeatHandle = setInterval(() => {
+      if (runToken !== record.runToken || record.child === undefined) {
+        return;
+      }
+      const nowMs = Date.now();
+      const elapsedMs = Math.max(0, nowMs - startedAtMs);
+      const idleMs = Math.max(0, nowMs - lastOutputAtMs);
+      const heartbeat = formatAgentRuntimeDiagnostic(
+        buildAgentHeartbeatDiagnostic({
+          agentId: record.id,
+          adapterId: record.adapterId,
+          command: record.command,
+          elapsedMs,
+          idleMs,
+        }),
+      );
+      appendSystemOutput(heartbeat);
+
+      if (idleMs < this.runtimeDiagnostics.idleThresholdMs) {
+        return;
+      }
+      const idleBucket = Math.floor(
+        idleMs / this.runtimeDiagnostics.idleThresholdMs,
+      );
+      if (idleBucket <= lastIdleDiagnosticBucket) {
+        return;
+      }
+      lastIdleDiagnosticBucket = idleBucket;
+      const diagnostic = formatAgentRuntimeDiagnostic(
+        buildAgentIdleDiagnostic({
+          agentId: record.id,
+          adapterId: record.adapterId,
+          command: record.command,
+          elapsedMs,
+          idleMs,
+          idleThresholdMs: this.runtimeDiagnostics.idleThresholdMs,
+        }),
+      );
+      appendSystemOutput(diagnostic);
+    }, this.runtimeDiagnostics.heartbeatIntervalMs);
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
       if (runToken !== record.runToken) {
         return;
       }
-      if (!hasReceivedOutput) {
-        hasReceivedOutput = true;
-        cancelSilenceTimer();
-      }
+      markOutputReceived();
       const value = chunk.toString();
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
@@ -533,10 +636,7 @@ export class AgentSupervisor {
       if (runToken !== record.runToken) {
         return;
       }
-      if (!hasReceivedOutput) {
-        hasReceivedOutput = true;
-        cancelSilenceTimer();
-      }
+      markOutputReceived();
       const value = chunk.toString();
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
@@ -544,8 +644,7 @@ export class AgentSupervisor {
       options.onStderr?.(value);
     });
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timeoutHandle);
-      cancelSilenceTimer();
+      clearRuntimeTimers();
       if (runToken !== record.runToken) {
         return;
       }
@@ -580,8 +679,7 @@ export class AgentSupervisor {
       options.onClose?.(exitCode, signal);
     });
     child.on("error", (error) => {
-      clearTimeout(timeoutHandle);
-      cancelSilenceTimer();
+      clearRuntimeTimers();
       if (runToken !== record.runToken) {
         return;
       }

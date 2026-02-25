@@ -324,7 +324,7 @@ export function controlCenterHtml(params: {
       </div>
       <table id="agentTopTable" class="compact-table">
         <thead>
-          <tr><th>Project</th><th>Agent</th><th>Task</th><th>Status</th><th>PID</th><th>Actions</th></tr>
+          <tr><th>Project</th><th>Agent</th><th>Task</th><th>Status</th><th>PID</th><th>Runtime</th><th>Actions</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -458,7 +458,7 @@ export function controlCenterHtml(params: {
       <div id="agentError" class="error"></div>
       <table id="agentTable">
         <thead>
-          <tr><th>Project</th><th>Name</th><th>Status</th><th>PID</th><th>Task</th><th>Actions</th><th>Output Tail</th></tr>
+          <tr><th>Project</th><th>Name</th><th>Status</th><th>PID</th><th>Task</th><th>Actions</th><th>Runtime</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -1176,6 +1176,15 @@ export function controlCenterHtml(params: {
           return agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
         })();
         const pid = agent.pid === undefined || agent.pid === null ? "-" : agent.pid;
+        const runtimeSummary = (() => {
+          const summary = agent.runtimeDiagnostic && typeof agent.runtimeDiagnostic.summary === "string"
+            ? agent.runtimeDiagnostic.summary
+            : "";
+          if (summary) {
+            return summary;
+          }
+          return (agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ");
+        })();
 
         const row = document.createElement("tr");
         row.innerHTML = \`
@@ -1191,7 +1200,7 @@ export function controlCenterHtml(params: {
               <button data-action="restart" data-id="\${escapeHtml(agent.id)}" class="secondary">Restart</button>
             </div>
           </td>
-          <td><div class="mono small">\${escapeHtml((agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | "))}</div></td>
+          <td><div class="mono small">\${escapeHtml(runtimeSummary || "-")}</div></td>
         \`;
         agentTableBody.appendChild(row);
 
@@ -1202,6 +1211,7 @@ export function controlCenterHtml(params: {
           <td class="mono">\${escapeHtml(String(taskName))}</td>
           <td>\${escapeHtml(agent.status)}\${agent.recoveryAttempted ? ' <span class="pill" title="' + escapeHtml(agent.recoveryReasoning || "") + '">!</span>' : ''}</td>
           <td>\${escapeHtml(String(pid))}</td>
+          <td><div class="mono small">\${escapeHtml(runtimeSummary || "-")}</div></td>
           <td>
             <div class="row">
               <button data-action="show-logs" data-id="\${escapeHtml(agent.id)}" class="secondary small">Logs</button>

@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
+  parseAgentRuntimeDiagnostic,
+  summarizeAgentRuntimeDiagnostic,
+} from "../agent-runtime-diagnostics";
+import {
   CLIAdapterIdSchema,
   ExceptionCategorySchema,
   PhaseStatusSchema,
@@ -307,8 +311,13 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
       return event.payload.summary;
     case "terminal.outcome":
       return event.payload.summary;
-    case "adapter.output":
+    case "adapter.output": {
+      const diagnostic = parseAgentRuntimeDiagnostic(event.payload.line);
+      if (diagnostic) {
+        return `Agent runtime: ${summarizeAgentRuntimeDiagnostic(diagnostic)}`;
+      }
       return event.payload.line;
+    }
     default:
       return "unknown";
   }

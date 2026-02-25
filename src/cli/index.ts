@@ -7,6 +7,10 @@ import { resolve, basename } from "node:path";
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import {
+  resolveLatestAgentRuntimeDiagnostic,
+  summarizeAgentRuntimeDiagnostic,
+} from "../agent-runtime-diagnostics";
+import {
   buildAdapterExecutionPlan,
   buildAdapterInitializationDiagnostic,
   createAdapter,
@@ -1392,6 +1396,15 @@ function resolveAssignedTaskLabel(
   return taskId;
 }
 
+function resolveAgentRuntimeSummary(agent: AgentView): string | undefined {
+  const diagnostic = resolveLatestAgentRuntimeDiagnostic(agent.outputTail);
+  if (!diagnostic) {
+    return undefined;
+  }
+
+  return summarizeAgentRuntimeDiagnostic(diagnostic);
+}
+
 async function runStatusCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1428,8 +1441,9 @@ async function runStatusCommand(): Promise<void> {
   }
 
   for (const [index, agent] of runningAgents.entries()) {
+    const runtimeSummary = resolveAgentRuntimeSummary(agent);
     console.info(
-      `${index + 1}. ${agent.name} -> ${resolveAssignedTaskLabel(agent, state)}`,
+      `${index + 1}. ${agent.name} -> ${resolveAssignedTaskLabel(agent, state)}${runtimeSummary ? ` | ${runtimeSummary}` : ""}`,
     );
   }
 }

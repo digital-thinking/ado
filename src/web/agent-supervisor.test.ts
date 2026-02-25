@@ -8,6 +8,10 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { AgentSupervisor } from "./agent-supervisor";
+import {
+  parseAgentRuntimeDiagnostic,
+  type AgentIdleDiagnostic,
+} from "../agent-runtime-diagnostics";
 import { ProcessStdinUnavailableError } from "../process/manager";
 import { RuntimeEventSchema } from "../types/runtime-events";
 
@@ -392,6 +396,80 @@ describe("AgentSupervisor", () => {
       listed?.outputTail.some((line) => line.includes('"command":"claude"')),
     ).toBe(true);
   });
+
+  test("emits heartbeat diagnostics while agent is running", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        setTimeout(() => {
+          child.emit("close", 0, null);
+        }, 40);
+        return child;
+      },
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 5,
+        idleThresholdMs: 1_000,
+      },
+    });
+
+    await supervisor.runToCompletion({
+      name: "Heartbeat worker",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+    });
+
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Heartbeat worker");
+    const heartbeatDiagnostics = (listed?.outputTail ?? [])
+      .map((line) => parseAgentRuntimeDiagnostic(line))
+      .filter((diagnostic) => diagnostic?.event === "heartbeat");
+    expect(heartbeatDiagnostics.length).toBeGreaterThan(0);
+  });
+
+  test("emits idle diagnostics when idle threshold is exceeded", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        setTimeout(() => {
+          child.stdout.write("initial output\n");
+        }, 5);
+        setTimeout(() => {
+          child.emit("close", 0, null);
+        }, 70);
+        return child;
+      },
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 20,
+      },
+    });
+
+    await supervisor.runToCompletion({
+      name: "Idle worker",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+    });
+
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Idle worker");
+    const idleDiagnostics = (listed?.outputTail ?? [])
+      .map((line) => parseAgentRuntimeDiagnostic(line))
+      .filter(
+        (diagnostic): diagnostic is AgentIdleDiagnostic =>
+          diagnostic?.event === "idle-diagnostic",
+      );
+    expect(idleDiagnostics.length).toBeGreaterThan(0);
+    expect(idleDiagnostics.every((item) => item.idleThresholdMs === 20)).toBe(
+      true,
+    );
+  });
+
   test("appends structured execution-timeout diagnostic with adapter hint", async () => {
     const child = createFakeChild();
     child.kill = () => {
