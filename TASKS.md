@@ -36,7 +36,7 @@ Status markers:
 ### Phase 25: Execution Correctness & Runtime Transparency (from BUGS.md)
 
 - [x] `P25-001` Allow deterministic continuation after terminal phase status when actionable tasks are added post-completion: define explicit gate semantics (e.g., terminal + pending TODO/CI_FIX => resumable transition) and preserve fail-fast behavior for truly closed phases. Deps: `P24-005`.
-- [ ] `P25-002` Add task completion verification contracts for side-effect-bound tasks (PR creation, remote push, CI-triggered updates): require explicit verification probes before persisting `DONE`, and persist structured failure context when side effects are missing. **Status: InProgress**. Deps: `P24-005`.
+- [x] `P25-002` Add task completion verification contracts for side-effect-bound tasks (PR creation, remote push, CI-triggered updates): require explicit verification probes before persisting `DONE`, and persist structured failure context when side effects are missing. Deps: `P24-005`.
 - [ ] `P25-003` Add runtime capability preflight for GitHub-bound operations (network/auth/tooling) in worker execution context and fail fast with actionable diagnostics when capability mismatches are detected. Deps: `P25-002`.
 - [ ] `P25-004` Improve long-running task observability with heartbeat/idle diagnostics surfaced consistently in CLI and web agent views to distinguish slow progress from stalls. Deps: `P24-005`.
 - [ ] `P25-005` Add regression/integration tests for Phase 25: terminal-phase continuation semantics, side-effect verification gating, capability preflight failures, and runtime heartbeat telemetry behavior. Deps: `P25-001`, `P25-002`, `P25-003`, `P25-004`.

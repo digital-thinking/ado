@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { StateEngine } from "../state";
-import { ControlCenterService } from "./control-center-service";
+import {
+  ControlCenterService,
+  resolveTaskCompletionSideEffectContracts,
+} from "./control-center-service";
 
 describe("ControlCenterService", () => {
   let sandboxDir: string;
@@ -280,6 +283,107 @@ describe("ControlCenterService", () => {
     expect(task.status).toBe("DONE");
     expect(task.assignee).toBe("CODEX_CLI");
     expect(task.resultContext).toContain("implemented");
+  });
+
+  test("fails completion when PR side effect cannot be verified", async () => {
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => ({
+        command: "codex",
+        args: ["exec", "prompt"],
+        stdout: "created pull request",
+        stderr: "",
+        durationMs: 50,
+      }),
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase PR Gate",
+      branchName: "phase-pr-gate",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Create PR Task",
+      description: "Open pull request for this phase",
+      assignee: "CODEX_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(task.status).toBe("FAILED");
+    expect(task.errorLogs).toContain(
+      "Completion side-effect verification failed",
+    );
+    expect(task.completionVerification?.status).toBe("FAILED");
+    expect(task.completionVerification?.contracts).toEqual(["PR_CREATION"]);
+    expect(task.completionVerification?.missingSideEffects[0]).toContain(
+      "phase.prUrl is missing",
+    );
+  });
+
+  test("persists DONE when PR side effect verification passes", async () => {
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => ({
+        command: "codex",
+        args: ["exec", "prompt"],
+        stdout: "pr opened",
+        stderr: "",
+        durationMs: 50,
+      }),
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase PR Pass",
+      branchName: "phase-pr-pass",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.setPhasePrUrl({
+      phaseId,
+      prUrl: "https://github.com/org/repo/pull/123",
+    });
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Create PR Task",
+      description: "Open pull request for this phase",
+      assignee: "CODEX_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(task.status).toBe("DONE");
+    expect(task.completionVerification?.status).toBe("PASSED");
+    expect(task.completionVerification?.contracts).toEqual(["PR_CREATION"]);
+    expect(task.completionVerification?.missingSideEffects).toEqual([]);
+  });
+
+  test("resolves side-effect verification contracts from task text", () => {
+    const contracts = resolveTaskCompletionSideEffectContracts({
+      title: "Create PR Task and remote push",
+      description: "After merge prep, perform CI-triggered updates",
+    });
+    expect(contracts).toEqual([
+      "PR_CREATION",
+      "REMOTE_PUSH",
+      "CI_TRIGGERED_UPDATE",
+    ]);
   });
 
   test("fails fast if task dependencies are not DONE", async () => {

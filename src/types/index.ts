@@ -422,6 +422,31 @@ export const RecoveryAttemptRecordSchema = z.object({
 });
 export type RecoveryAttemptRecord = z.infer<typeof RecoveryAttemptRecordSchema>;
 
+export const SideEffectContractSchema = z.enum([
+  "PR_CREATION",
+  "REMOTE_PUSH",
+  "CI_TRIGGERED_UPDATE",
+]);
+export type SideEffectContract = z.infer<typeof SideEffectContractSchema>;
+
+export const SideEffectProbeSchema = z.object({
+  name: z.string().min(1),
+  success: z.boolean(),
+  details: z.string().min(1),
+});
+export type SideEffectProbe = z.infer<typeof SideEffectProbeSchema>;
+
+export const TaskCompletionVerificationSchema = z.object({
+  checkedAt: z.string().datetime(),
+  contracts: z.array(SideEffectContractSchema).min(1),
+  status: z.enum(["PASSED", "FAILED"]),
+  probes: z.array(SideEffectProbeSchema).min(1),
+  missingSideEffects: z.array(z.string().min(1)).default([]),
+});
+export type TaskCompletionVerification = z.infer<
+  typeof TaskCompletionVerificationSchema
+>;
+
 // 6. A Single Coding Task
 export const TaskSchema = z.object({
   id: z.string().uuid(),
@@ -434,6 +459,7 @@ export const TaskSchema = z.object({
   errorLogs: z.string().optional(),
   errorCategory: ExceptionCategorySchema.optional(),
   adapterFailureKind: AdapterFailureKindSchema.optional(),
+  completionVerification: TaskCompletionVerificationSchema.optional(),
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
