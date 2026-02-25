@@ -1044,6 +1044,7 @@ export class ControlCenterService {
           combinedResult || "Task finished without textual output.",
           undefined,
           undefined,
+          undefined,
           input.startedFromStatus,
           input.projectName,
         );
@@ -1059,6 +1060,7 @@ export class ControlCenterService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const category = (error as any).category;
+      const adapterFailureKind = (error as any).adapterFailureKind;
       try {
         await this.updateTaskResult(
           input.phaseId,
@@ -1067,6 +1069,7 @@ export class ControlCenterService {
           undefined,
           message,
           category,
+          adapterFailureKind,
           input.startedFromStatus,
           input.projectName,
         );
@@ -1089,6 +1092,7 @@ export class ControlCenterService {
     resultContext: string | undefined,
     errorLogs: string | undefined,
     errorCategory: any, // Use any for now or import ExceptionCategory
+    adapterFailureKind: any,
     startedFromStatus: Task["status"],
     projectName?: string,
   ): Promise<void> {
@@ -1124,7 +1128,8 @@ export class ControlCenterService {
       } else if (
         (!normalizedErrorLogs ||
           currentTask.errorLogs === normalizedErrorLogs) &&
-        currentTask.errorCategory === errorCategory
+        currentTask.errorCategory === errorCategory &&
+        (currentTask as any).adapterFailureKind === adapterFailureKind
       ) {
         return;
       }
@@ -1149,6 +1154,10 @@ export class ControlCenterService {
       errorCategory:
         status === "FAILED"
           ? (errorCategory ?? currentTask.errorCategory)
+          : undefined,
+      adapterFailureKind:
+        status === "FAILED"
+          ? (adapterFailureKind ?? (currentTask as any).adapterFailureKind)
           : undefined,
     });
 
@@ -1204,6 +1213,7 @@ export class ControlCenterService {
         resultContext: undefined,
         errorLogs: undefined,
         errorCategory: undefined,
+        adapterFailureKind: undefined,
       });
     });
 
