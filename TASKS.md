@@ -271,7 +271,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 - [x] `P23-004` Improve CI state handling for retries/reruns and transition reporting without introducing loop instability. **Status: Done**. Deps: `P23-003`.
 - [x] `P23-005` Expand Telegram-only notifications for phase/task/recovery/CI/PR lifecycle events with noise controls. **Status: Done**. Deps: `P23-004`.
 - [x] `P23-006` Add integration tests for PR automation, CI mapping/retry flows, and Telegram notification triggers/payloads. **Status: Done**. Deps: `P23-005`.
-- [ ] `P23-007` Create PR Task: open Phase 23 PR after coding tasks are done. Deps: `P23-006`.
+- [x] `P23-007` Create PR Task: open Phase 23 PR after coding tasks are done. **Status: Done (PR #24 opened: https://github.com/digital-thinking/ado/pull/24)**. Deps: `P23-006`.
 
 ## Phase 24: Extensibility Hooks (Roadmap)
 
