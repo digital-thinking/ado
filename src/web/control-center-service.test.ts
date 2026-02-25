@@ -796,6 +796,87 @@ describe("ControlCenterService", () => {
     expect(recovered.phases[0].ciStatusContext).toBeUndefined();
   });
 
+  // P26-001: failureKind semantics
+  test("setPhaseStatus persists failureKind when transitioning to CI_FAILED", async () => {
+    const created = await service.createPhase({
+      name: "Phase FailureKind",
+      branchName: "phase-failure-kind",
+    });
+    const phaseId = created.phases[0].id;
+
+    const failed = await service.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      failureKind: "LOCAL_TESTER",
+    });
+    expect(failed.phases[0].status).toBe("CI_FAILED");
+    expect(failed.phases[0].failureKind).toBe("LOCAL_TESTER");
+  });
+
+  test("setPhaseStatus clears failureKind when leaving CI_FAILED", async () => {
+    const created = await service.createPhase({
+      name: "Phase ClearKind",
+      branchName: "phase-clear-kind",
+    });
+    const phaseId = created.phases[0].id;
+
+    await service.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      failureKind: "REMOTE_CI",
+    });
+
+    const recovered = await service.setPhaseStatus({
+      phaseId,
+      status: "READY_FOR_REVIEW",
+    });
+    expect(recovered.phases[0].status).toBe("READY_FOR_REVIEW");
+    expect(recovered.phases[0].failureKind).toBeUndefined();
+  });
+
+  test("setPhaseStatus preserves existing failureKind when none is provided", async () => {
+    const created = await service.createPhase({
+      name: "Phase PreserveKind",
+      branchName: "phase-preserve-kind",
+    });
+    const phaseId = created.phases[0].id;
+
+    await service.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      failureKind: "AGENT_FAILURE",
+    });
+
+    // Transition again to CI_FAILED without a new failureKind — must preserve it
+    const updated = await service.setPhaseStatus({
+      phaseId,
+      status: "CI_FAILED",
+      ciStatusContext: "Additional context",
+    });
+    expect(updated.phases[0].failureKind).toBe("AGENT_FAILURE");
+    expect(updated.phases[0].ciStatusContext).toBe("Additional context");
+  });
+
+  test("setPhaseStatus supports all three valid failureKind values", async () => {
+    for (const kind of [
+      "LOCAL_TESTER",
+      "REMOTE_CI",
+      "AGENT_FAILURE",
+    ] as const) {
+      const created = await service.createPhase({
+        name: `Phase ${kind}`,
+        branchName: `phase-${kind.toLowerCase().replace("_", "-")}`,
+      });
+      const phaseId = created.phases[0].id;
+      const result = await service.setPhaseStatus({
+        phaseId,
+        status: "CI_FAILED",
+        failureKind: kind,
+      });
+      expect(result.phases[0].failureKind).toBe(kind);
+    }
+  });
+
   test("records recovery attempt on task and phase", async () => {
     const created = await service.createPhase({
       name: "Phase Recovery Record",
