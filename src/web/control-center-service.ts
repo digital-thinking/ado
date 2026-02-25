@@ -4,6 +4,10 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import {
+  classifyAdapterFailure,
+  type AdapterFailureKind,
+} from "../adapters/failure-taxonomy";
 import { buildWorkerPrompt } from "../engine/worker-prompts";
 import { parseJsonFromModelOutput } from "../engine/json-parser";
 import {
@@ -313,6 +317,12 @@ const SIDE_EFFECT_CONTRACT_PATTERNS: ReadonlyArray<{
   },
 ];
 
+const GITHUB_BOUND_SIDE_EFFECT_CONTRACTS: readonly SideEffectContract[] = [
+  "PR_CREATION",
+  "REMOTE_PUSH",
+  "CI_TRIGGERED_UPDATE",
+];
+
 type SideEffectProbeResult = TaskCompletionVerification["probes"][number];
 
 type SideEffectProbeRunResult = {
@@ -320,6 +330,12 @@ type SideEffectProbeRunResult = {
   stdout: string;
   stderr: string;
   details: string;
+  failureKind?: AdapterFailureKind;
+};
+
+type GitHubCapabilityPreflightFailure = {
+  completionVerification: TaskCompletionVerification;
+  adapterFailureKind: AdapterFailureKind;
 };
 
 export function resolveTaskCompletionSideEffectContracts(
@@ -331,6 +347,14 @@ export function resolveTaskCompletionSideEffectContracts(
     const matches = entry.patterns.some((pattern) => pattern.test(text));
     return matches ? [entry.contract] : [];
   });
+}
+
+function resolveGitHubBoundContracts(
+  contracts: SideEffectContract[],
+): SideEffectContract[] {
+  return contracts.filter((contract) =>
+    GITHUB_BOUND_SIDE_EFFECT_CONTRACTS.includes(contract),
+  );
 }
 
 function hasCiTriggeredUpdateSignal(phase: Phase): boolean {
@@ -357,6 +381,16 @@ function summarizeVerificationFailure(
       ? verification.missingSideEffects.join(" | ")
       : "Missing side effects were detected.";
   return `Completion side-effect verification failed: ${details}`;
+}
+
+function summarizeCapabilityPreflightFailure(
+  verification: TaskCompletionVerification,
+): string {
+  const details =
+    verification.missingSideEffects.length > 0
+      ? verification.missingSideEffects.join(" | ")
+      : "GitHub runtime capability mismatch detected.";
+  return `Runtime capability preflight failed for GitHub-bound task: ${details}`;
 }
 
 export class ControlCenterService {
@@ -1109,9 +1143,17 @@ export class ControlCenterService {
     cwd: string,
     args: string[],
   ): Promise<SideEffectProbeRunResult> {
+    return this.runCommandProbe(cwd, "git", args);
+  }
+
+  private async runCommandProbe(
+    cwd: string,
+    command: string,
+    args: string[],
+  ): Promise<SideEffectProbeRunResult> {
     try {
       const result = await this.sideEffectProbeRunner.run({
-        command: "git",
+        command,
         args,
         cwd,
       });
@@ -1122,16 +1164,18 @@ export class ControlCenterService {
         details: "ok",
       };
     } catch (error) {
+      const failureKind = classifyAdapterFailure(error);
       if (error instanceof ProcessExecutionError) {
         const stderr = error.result.stderr.trim();
         const details = stderr
-          ? `git ${args.join(" ")} failed: ${stderr}`
-          : `git ${args.join(" ")} failed with exit code ${error.result.exitCode}.`;
+          ? `${command} ${args.join(" ")} failed: ${stderr}`
+          : `${command} ${args.join(" ")} failed with exit code ${error.result.exitCode}.`;
         return {
           success: false,
           stdout: error.result.stdout,
           stderr: error.result.stderr,
           details,
+          failureKind,
         };
       }
 
@@ -1140,9 +1184,158 @@ export class ControlCenterService {
         success: false,
         stdout: "",
         stderr: "",
-        details: `git ${args.join(" ")} failed: ${message}`,
+        details: `${command} ${args.join(" ")} failed: ${message}`,
+        failureKind,
       };
     }
+  }
+
+  private async runGitHubRuntimeCapabilityPreflight(input: {
+    phaseId: string;
+    taskId: string;
+    projectName?: string;
+  }): Promise<GitHubCapabilityPreflightFailure | undefined> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find(
+      (candidate) => candidate.id === input.phaseId,
+    );
+    if (!phase) {
+      throw new Error(
+        `Phase not found while running GitHub capability preflight: ${input.phaseId}`,
+      );
+    }
+
+    const task = phase.tasks.find((candidate) => candidate.id === input.taskId);
+    if (!task) {
+      throw new Error(
+        `Task not found while running GitHub capability preflight: ${input.taskId}`,
+      );
+    }
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    const githubContracts = resolveGitHubBoundContracts(contracts);
+    if (githubContracts.length === 0) {
+      return undefined;
+    }
+
+    const probes: SideEffectProbeResult[] = [];
+    const missingSideEffects: string[] = [];
+    let adapterFailureKind: AdapterFailureKind = "unknown";
+    const setFailureKind = (kind?: AdapterFailureKind) => {
+      if (!kind || kind === "unknown" || adapterFailureKind !== "unknown") {
+        return;
+      }
+      adapterFailureKind = kind;
+    };
+
+    const ghToolingProbe = await this.runCommandProbe(state.rootDir, "gh", [
+      "--version",
+    ]);
+    if (ghToolingProbe.success) {
+      const versionLine =
+        ghToolingProbe.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length > 0) ?? "gh is available.";
+      probes.push({
+        name: "gh --version",
+        success: true,
+        details: `Tooling available: ${versionLine}`,
+      });
+    } else {
+      setFailureKind(ghToolingProbe.failureKind);
+      probes.push({
+        name: "gh --version",
+        success: false,
+        details: ghToolingProbe.details,
+      });
+      missingSideEffects.push(
+        `Tooling preflight failed: ${ghToolingProbe.details} Install GitHub CLI and ensure 'gh' is available on PATH.`,
+      );
+    }
+
+    if (!ghToolingProbe.success) {
+      probes.push({
+        name: "gh auth status --hostname github.com",
+        success: false,
+        details:
+          "Skipped because GitHub CLI tooling check failed (gh is unavailable).",
+      });
+      missingSideEffects.push(
+        "Auth preflight was skipped because GitHub CLI is unavailable. Install GitHub CLI, then run 'gh auth login --hostname github.com'.",
+      );
+    } else {
+      const ghAuthProbe = await this.runCommandProbe(state.rootDir, "gh", [
+        "auth",
+        "status",
+        "--hostname",
+        "github.com",
+      ]);
+      if (ghAuthProbe.success) {
+        probes.push({
+          name: "gh auth status --hostname github.com",
+          success: true,
+          details: "GitHub CLI authentication is valid for github.com.",
+        });
+      } else {
+        setFailureKind(ghAuthProbe.failureKind);
+        probes.push({
+          name: "gh auth status --hostname github.com",
+          success: false,
+          details: ghAuthProbe.details,
+        });
+        missingSideEffects.push(
+          `Auth preflight failed: ${ghAuthProbe.details} Run 'gh auth login --hostname github.com' and verify access to this repository.`,
+        );
+      }
+    }
+
+    const networkProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "ls-remote",
+      "--heads",
+      "https://github.com/github/gitignore.git",
+      "HEAD",
+    ]);
+    const hasGitHubResponse = networkProbe.stdout.trim().length > 0;
+    if (networkProbe.success && hasGitHubResponse) {
+      probes.push({
+        name: "git ls-remote github.com",
+        success: true,
+        details: "Network reachability to github.com verified.",
+      });
+    } else {
+      setFailureKind(networkProbe.failureKind);
+      probes.push({
+        name: "git ls-remote github.com",
+        success: false,
+        details: networkProbe.success
+          ? "git ls-remote github.com returned no output."
+          : networkProbe.details,
+      });
+      missingSideEffects.push(
+        `Network preflight failed: ${
+          networkProbe.success
+            ? "git ls-remote github.com returned no output."
+            : networkProbe.details
+        } Verify outbound connectivity to github.com (VPN/proxy/firewall) and retry.`,
+      );
+    }
+
+    if (missingSideEffects.length === 0) {
+      return undefined;
+    }
+
+    return {
+      completionVerification: TaskCompletionVerificationSchema.parse({
+        checkedAt: new Date().toISOString(),
+        contracts: githubContracts,
+        status: "FAILED",
+        probes,
+        missingSideEffects,
+      }),
+      adapterFailureKind,
+    };
   }
 
   private async verifyTaskCompletionSideEffects(input: {
@@ -1323,6 +1516,40 @@ export class ControlCenterService {
     projectName?: string;
   }): Promise<void> {
     try {
+      const capabilityPreflight =
+        await this.runGitHubRuntimeCapabilityPreflight({
+          phaseId: input.phaseId,
+          taskId: input.taskId,
+          projectName: input.projectName,
+        });
+      if (capabilityPreflight) {
+        try {
+          await this.updateTaskResult(
+            input.phaseId,
+            input.taskId,
+            "FAILED",
+            undefined,
+            summarizeCapabilityPreflightFailure(
+              capabilityPreflight.completionVerification,
+            ),
+            "AGENT_FAILURE",
+            capabilityPreflight.adapterFailureKind,
+            input.startedFromStatus,
+            capabilityPreflight.completionVerification,
+            input.projectName,
+          );
+        } catch (updateError) {
+          const message =
+            updateError instanceof Error
+              ? updateError.message
+              : String(updateError);
+          console.error(
+            `Failed to persist FAILED preflight state for task ${input.taskId}: ${message}`,
+          );
+        }
+        return;
+      }
+
       const result = await this.runInternalWork({
         assignee: input.assignee,
         prompt: input.prompt,
