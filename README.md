@@ -28,6 +28,7 @@ IxADO organizes work into **Phases**. Each phase contains tasks with explicit as
 - **Telegram Integration:** Optional remote command/notification channel.
 - **Contract-Driven:** TypeScript + schema validation for predictable handoffs and recovery results.
 - **Unified Runtime Events:** One typed event contract for CLI/Web/Telegram covering lifecycle, adapter output, tester/recovery, and terminal outcomes.
+- **Lifecycle Hook Contracts:** Strict typed extension points for `before_task_start`, `after_task_done`, `on_recovery`, and `on_ci_failed` with validated registration.
 
 ## Planning Artifacts
 

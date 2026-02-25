@@ -12,6 +12,10 @@ import {
 } from "./ci-check-mapping";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
+import {
+  LifecycleHookRegistry,
+  type LifecycleHookRegistration,
+} from "./lifecycle-hooks";
 import { PhaseLoopControl } from "./phase-loop-control";
 import {
   waitForAutoAdvance as waitForAutoAdvanceGate,
@@ -77,12 +81,14 @@ export type PhaseRunnerConfig = {
   projectName: string;
   policy: AuthPolicy;
   role: Role | null;
+  lifecycleHooks?: readonly LifecycleHookRegistration[];
 };
 
 export class PhaseRunner {
   private git: GitManager;
   private github: GitHubManager;
   private privilegedGit: PrivilegedGitActions;
+  private lifecycleHooks: LifecycleHookRegistry;
 
   constructor(
     private control: ControlCenterService,
@@ -99,6 +105,7 @@ export class PhaseRunner {
       role: config.role,
       policy: config.policy,
     });
+    this.lifecycleHooks = new LifecycleHookRegistry(config.lifecycleHooks);
   }
 
   async run(): Promise<void> {
