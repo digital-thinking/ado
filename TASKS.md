@@ -246,7 +246,7 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 ## Phase 21: Configuration and UX Consistency (Roadmap)
 
-- [ ] `P21-001` Audit and normalize CLI help/usage output patterns across command groups (`task`, `phase`, `config`, `web`, root). Deps: `P20-006`.
+- [ ] `P21-001` Audit and normalize CLI help/usage output patterns across command groups (`task`, `phase`, `config`, `web`, root). **Status: InProgress**. Deps: `P20-006`.
 - [ ] `P21-002` Unify argument validation error style with actionable remediation hints and consistent exit behavior. Deps: `P21-001`.
 - [ ] `P21-003` Clarify config precedence messaging (global vs project settings) in CLI outputs and docs. Deps: `P21-001`.
 - [ ] `P21-004` Standardize command outcome summaries (`what changed`, `status result`, `next action`) for state-mutating commands. Deps: `P21-002`, `P21-003`.
