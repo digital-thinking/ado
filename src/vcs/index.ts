@@ -13,9 +13,11 @@ export type {
   CiCheckState,
   CiStatusSummary,
   CreatePullRequestInput,
+  MarkPullRequestReadyInput,
   MergePullRequestInput,
   PollCiStatusInput,
 } from "./github-manager";
+export { parsePullRequestNumberFromUrl } from "./github-manager";
 
 export { PrivilegedGitActions } from "./privileged-git-actions";
 export type { PrivilegedGitActionsOptions } from "./privileged-git-actions";

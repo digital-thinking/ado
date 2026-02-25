@@ -521,6 +521,29 @@ describe("PrivilegedGitActions.mergePullRequest", () => {
   });
 });
 
+describe("PrivilegedGitActions.markPullRequestReady", () => {
+  test("owner: allowed — delegates to gh pr ready", async () => {
+    const { pga, runner } = makeWrapper("owner");
+
+    await pga.markPullRequestReady({ prNumber: 42, cwd: TEST_CWD });
+
+    expect(runner.calls[0]).toEqual({
+      command: "gh",
+      args: ["pr", "ready", "42"],
+      cwd: TEST_CWD,
+    });
+  });
+
+  test("operator: denied — denylist-match, no gh call made", async () => {
+    const { pga, runner } = makeWrapper("operator");
+
+    await expect(
+      pga.markPullRequestReady({ prNumber: 42, cwd: TEST_CWD }),
+    ).rejects.toBeInstanceOf(AuthorizationDeniedError);
+    expect(runner.calls).toHaveLength(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Denylist always wins — custom policy edge case
 // ---------------------------------------------------------------------------

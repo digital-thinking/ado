@@ -20,6 +20,14 @@ describe("PhaseRunner", () => {
     testerTimeoutMs: 1000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    ciPullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
     validationMaxRetries: 1,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -112,6 +120,116 @@ describe("PhaseRunner", () => {
       phaseId: phaseId,
       status: "DONE",
     });
+  });
+
+  test("creates draft PR and marks it ready after validation approval when configured", async () => {
+    const phaseId = "31111111-1111-4111-8111-111111111111";
+    const taskId = "32222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 23",
+          branchName: "phase-23-integrations-expansion",
+          status: "PLANNING",
+          prUrl: undefined as string | undefined,
+          tasks: [
+            {
+              id: taskId,
+              title: "P23-001",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      setPhasePrUrl: mock(async (input: { phaseId: string; prUrl: string }) => {
+        mockState.phases[0].prUrl = input.prUrl;
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: '{"verdict":"APPROVED","comments":[]}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-23-integrations-expansion",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("--cached") &&
+          input.args.includes("--name-only")
+        ) {
+          return { exitCode: 0, stdout: "src/a.ts\n", stderr: "" };
+        }
+        if (input.args.includes("pr") && input.args.includes("create")) {
+          return {
+            exitCode: 0,
+            stdout: "https://github.com/org/repo/pull/2301\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        ciEnabled: true,
+        testerCommand: null,
+        testerArgs: null,
+        ciPullRequest: {
+          defaultTemplatePath: null,
+          templateMappings: [],
+          labels: ["ixado"],
+          assignees: ["octocat"],
+          createAsDraft: true,
+          markReadyOnApproval: true,
+        },
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await runner.run();
+
+    const ghCalls = (mockRunner.run as ReturnType<typeof mock>).mock.calls
+      .map((entry: any[]) => entry[0])
+      .filter((call: any) => call.command === "gh");
+    expect(ghCalls).toHaveLength(2);
+    expect(ghCalls[0].args).toContain("--draft");
+    expect(ghCalls[1].args).toEqual(["pr", "ready", "2301"]);
   });
 
   test("recovery fallback: handles DirtyWorktreeError during branching", async () => {
@@ -794,6 +912,14 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     testerTimeoutMs: 1000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    ciPullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
     validationMaxRetries: 1,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -1060,6 +1186,14 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     testerTimeoutMs: 1000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    ciPullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
     validationMaxRetries: 1,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -1444,6 +1578,14 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     testerTimeoutMs: 1000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    ciPullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
     validationMaxRetries: 1,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -1647,6 +1789,14 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     testerTimeoutMs: 1000,
     ciEnabled: false,
     ciBaseBranch: "main",
+    ciPullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
     validationMaxRetries: 1,
     projectRootDir: "/tmp/project",
     projectName: "test-project",

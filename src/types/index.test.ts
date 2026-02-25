@@ -50,6 +50,12 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.ciEnabled).toBe(false);
     expect(parsed.executionLoop.ciBaseBranch).toBe("main");
     expect(parsed.executionLoop.validationMaxRetries).toBe(3);
+    expect(parsed.executionLoop.pullRequest.defaultTemplatePath).toBeNull();
+    expect(parsed.executionLoop.pullRequest.templateMappings).toEqual([]);
+    expect(parsed.executionLoop.pullRequest.labels).toEqual([]);
+    expect(parsed.executionLoop.pullRequest.assignees).toEqual([]);
+    expect(parsed.executionLoop.pullRequest.createAsDraft).toBe(false);
+    expect(parsed.executionLoop.pullRequest.markReadyOnApproval).toBe(false);
     expect(parsed.exceptionRecovery.maxAttempts).toBe(1);
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
@@ -131,6 +137,36 @@ describe("type contracts", () => {
         },
       }),
     ).toThrow("must be enabled");
+  });
+
+  test("rejects markReadyOnApproval when draft creation is disabled", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: { enabled: false },
+        executionLoop: {
+          pullRequest: {
+            createAsDraft: false,
+            markReadyOnApproval: true,
+          },
+        },
+      }),
+    ).toThrow("markReadyOnApproval requires createAsDraft=true");
+  });
+
+  test("rejects duplicate PR template branch prefixes", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: { enabled: false },
+        executionLoop: {
+          pullRequest: {
+            templateMappings: [
+              { branchPrefix: "phase-", templatePath: ".github/PULL_A.md" },
+              { branchPrefix: "phase-", templatePath: ".github/PULL_B.md" },
+            ],
+          },
+        },
+      }),
+    ).toThrow("templateMappings branchPrefix values must be unique");
   });
 
   test("rejects invalid project state", () => {

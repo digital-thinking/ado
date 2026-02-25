@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { GitHubManager } from "./github-manager";
+import { GitHubManager, parsePullRequestNumberFromUrl } from "./github-manager";
 import { MockProcessRunner } from "./test-utils";
 
 describe("GitHubManager", () => {
@@ -48,8 +48,61 @@ describe("GitHubManager", () => {
         title: "Test PR",
         body: "Body",
         cwd: "C:/repo",
-      })
+      }),
     ).rejects.toThrow("Unable to parse pull request URL");
+  });
+
+  test("passes optional template, labels, assignees and draft flags", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "https://github.com/org/repo/pull/77\n" },
+    ]);
+    const manager = new GitHubManager(runner);
+
+    const url = await manager.createPullRequest({
+      base: "main",
+      head: "phase-23",
+      title: "Phase 23",
+      body: "Body",
+      templatePath: ".github/pull_request_template.md",
+      labels: ["ixado", "automation"],
+      assignees: ["octocat", "hubot"],
+      draft: true,
+      cwd: "C:/repo",
+    });
+
+    expect(url).toBe("https://github.com/org/repo/pull/77");
+    expect(runner.calls[0]?.args).toEqual([
+      "pr",
+      "create",
+      "--base",
+      "main",
+      "--head",
+      "phase-23",
+      "--title",
+      "Phase 23",
+      "--body",
+      "Body",
+      "--template",
+      ".github/pull_request_template.md",
+      "--label",
+      "ixado,automation",
+      "--assignee",
+      "octocat,hubot",
+      "--draft",
+    ]);
+  });
+
+  test("marks a draft pull request as ready", async () => {
+    const runner = new MockProcessRunner([{ stdout: "" }]);
+    const manager = new GitHubManager(runner);
+
+    await manager.markPullRequestReady({ prNumber: 55, cwd: "C:/repo" });
+
+    expect(runner.calls[0]).toEqual({
+      command: "gh",
+      args: ["pr", "ready", "55"],
+      cwd: "C:/repo",
+    });
   });
 
   test("maps CI check status to pending", async () => {
@@ -72,7 +125,9 @@ describe("GitHubManager", () => {
     const runner = new MockProcessRunner([
       {
         stdout: JSON.stringify({
-          statusCheckRollup: [{ name: "test", status: "COMPLETED", conclusion: "FAILURE" }],
+          statusCheckRollup: [
+            { name: "test", status: "COMPLETED", conclusion: "FAILURE" },
+          ],
         }),
       },
     ]);
@@ -93,7 +148,9 @@ describe("GitHubManager", () => {
       },
       {
         stdout: JSON.stringify({
-          statusCheckRollup: [{ name: "build", status: "COMPLETED", conclusion: "SUCCESS" }],
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+          ],
         }),
       },
     ]);
@@ -108,5 +165,22 @@ describe("GitHubManager", () => {
 
     expect(summary.overall).toBe("SUCCESS");
     expect(runner.calls).toHaveLength(2);
+  });
+
+  test("parses pull request number from URL", () => {
+    expect(
+      parsePullRequestNumberFromUrl("https://github.com/org/repo/pull/42"),
+    ).toBe(42);
+    expect(
+      parsePullRequestNumberFromUrl(
+        "https://github.com/org/repo/pull/42/files?foo=bar",
+      ),
+    ).toBe(42);
+  });
+
+  test("fails to parse pull request number from invalid URL", () => {
+    expect(() =>
+      parsePullRequestNumberFromUrl("https://github.com/org/repo/issues/42"),
+    ).toThrow("Invalid pull request URL");
   });
 });

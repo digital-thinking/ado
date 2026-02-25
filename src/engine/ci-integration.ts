@@ -1,6 +1,7 @@
 import type { ProcessRunner } from "../process";
 import { MissingCommitError } from "../errors";
 import type { AuthPolicy, Role } from "../security/policy";
+import type { PullRequestAutomationSettings } from "../types";
 import {
   OrchestrationAuthorizationDeniedError,
   authorizeOrchestratorAction,
@@ -13,6 +14,7 @@ export type RunCiIntegrationInput = {
   phaseName: string;
   cwd: string;
   baseBranch: string;
+  pullRequest: PullRequestAutomationSettings;
   runner: ProcessRunner;
   role: Role | null;
   policy: AuthPolicy;
@@ -25,6 +27,27 @@ export type RunCiIntegrationResult = {
   baseBranch: string;
   prUrl: string;
 };
+
+function resolveTemplatePath(
+  settings: PullRequestAutomationSettings,
+  headBranch: string,
+): string | undefined {
+  const sortedMappings = [...settings.templateMappings].sort((a, b) => {
+    const prefixLengthDelta = b.branchPrefix.length - a.branchPrefix.length;
+    if (prefixLengthDelta !== 0) {
+      return prefixLengthDelta;
+    }
+    return a.branchPrefix.localeCompare(b.branchPrefix);
+  });
+
+  const matched = sortedMappings.find((mapping) =>
+    headBranch.startsWith(mapping.branchPrefix),
+  );
+  if (matched) {
+    return matched.templatePath;
+  }
+  return settings.defaultTemplatePath ?? undefined;
+}
 
 export async function runCiIntegration(
   input: RunCiIntegrationInput,
@@ -87,6 +110,10 @@ export async function runCiIntegration(
     head: headBranch,
     title: input.phaseName,
     body: `Automated PR created by IxADO for ${input.phaseName}.`,
+    templatePath: resolveTemplatePath(input.pullRequest, headBranch),
+    labels: input.pullRequest.labels,
+    assignees: input.pullRequest.assignees,
+    draft: input.pullRequest.createAsDraft,
     cwd: input.cwd,
   });
 

@@ -46,6 +46,14 @@ const DEFAULT_LOOP_SETTINGS = {
   ciEnabled: false,
   ciBaseBranch: "main",
   validationMaxRetries: 3,
+  pullRequest: {
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  },
 };
 const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
   maxAttempts: 1,

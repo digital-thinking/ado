@@ -34,6 +34,14 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     ciEnabled: false,
     ciBaseBranch: "main",
     validationMaxRetries: 3,
+    pullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
   },
   exceptionRecovery: {
     maxAttempts: 1,
@@ -151,6 +159,7 @@ function mergeCliSettings(
   base: CliSettings,
   override: CliSettingsOverride,
 ): CliSettings {
+  const executionLoopOverride = override.executionLoop;
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
     activeProject: override.activeProject ?? base.activeProject,
@@ -164,7 +173,11 @@ function mergeCliSettings(
     },
     executionLoop: {
       ...base.executionLoop,
-      ...override.executionLoop,
+      ...executionLoopOverride,
+      pullRequest: {
+        ...base.executionLoop.pullRequest,
+        ...executionLoopOverride?.pullRequest,
+      },
     },
     exceptionRecovery: {
       ...base.exceptionRecovery,

@@ -15,11 +15,21 @@ import {
 } from "./phase-loop-wait";
 import { runTesterWorkflow } from "./tester-workflow";
 import { ProcessManager, type ProcessRunner } from "../process";
-import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
+import {
+  GitHubManager,
+  GitManager,
+  parsePullRequestNumberFromUrl,
+  PrivilegedGitActions,
+} from "../vcs";
 import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
 import { PhasePreflightError } from "../errors";
-import { type CLIAdapterId, type Phase, type Task } from "../types";
+import {
+  type CLIAdapterId,
+  type Phase,
+  type PullRequestAutomationSettings,
+  type Task,
+} from "../types";
 import { createRuntimeEvent, type RuntimeEvent } from "../types/runtime-events";
 
 /**
@@ -56,6 +66,7 @@ export type PhaseRunnerConfig = {
   testerTimeoutMs: number;
   ciEnabled: boolean;
   ciBaseBranch: string;
+  ciPullRequest: PullRequestAutomationSettings;
   validationMaxRetries: number;
   projectRootDir: string;
   projectName: string;
@@ -712,6 +723,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           phaseName: phase.name,
           cwd: this.config.projectRootDir,
           baseBranch: this.config.ciBaseBranch,
+          pullRequest: this.config.ciPullRequest,
           runner: this.testerRunner,
           role: this.config.role,
           policy: this.config.policy,
@@ -838,6 +850,22 @@ ${testerResult.fixTaskDescription}`.trim(),
       throw new Error(
         "Execution loop stopped after CI validation max retries.",
       );
+    }
+
+    if (this.config.ciPullRequest.markReadyOnApproval) {
+      const prUrl = validationPhase.prUrl?.trim();
+      if (!prUrl) {
+        throw new Error(
+          "PR ready transition is enabled but phase PR URL is missing.",
+        );
+      }
+
+      const prNumber = parsePullRequestNumberFromUrl(prUrl);
+      await this.privilegedGit.markPullRequestReady({
+        prNumber,
+        cwd: this.config.projectRootDir,
+      });
+      console.info(`Marked draft PR #${prNumber} as ready for review.`);
     }
 
     await this.control.setPhaseStatus({

@@ -399,6 +399,10 @@ export async function startWebControlCenter(
         executionLoop: {
           ...current.executionLoop,
           ...(validatedPatch.executionLoop ?? {}),
+          pullRequest: {
+            ...current.executionLoop.pullRequest,
+            ...(validatedPatch.executionLoop?.pullRequest ?? {}),
+          },
         },
         exceptionRecovery: {
           ...current.exceptionRecovery,

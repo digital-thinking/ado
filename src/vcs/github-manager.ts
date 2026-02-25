@@ -6,6 +6,10 @@ export type CreatePullRequestInput = {
   title: string;
   body: string;
   cwd: string;
+  templatePath?: string;
+  labels?: string[];
+  assignees?: string[];
+  draft?: boolean;
 };
 
 export type CiCheckState =
@@ -30,6 +34,11 @@ export type MergePullRequestInput = {
   cwd: string;
   /** Merge strategy forwarded to `gh pr merge`. Defaults to "merge". */
   mergeMethod?: "merge" | "squash" | "rebase";
+};
+
+export type MarkPullRequestReadyInput = {
+  prNumber: number;
+  cwd: string;
 };
 
 export type PollCiStatusInput = {
@@ -114,20 +123,34 @@ export class GitHubManager {
   }
 
   async createPullRequest(input: CreatePullRequestInput): Promise<string> {
+    const args = [
+      "pr",
+      "create",
+      "--base",
+      input.base,
+      "--head",
+      input.head,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
+    if (input.templatePath) {
+      args.push("--template", input.templatePath);
+    }
+    if (input.labels && input.labels.length > 0) {
+      args.push("--label", input.labels.join(","));
+    }
+    if (input.assignees && input.assignees.length > 0) {
+      args.push("--assignee", input.assignees.join(","));
+    }
+    if (input.draft) {
+      args.push("--draft");
+    }
+
     const result = await this.runner.run({
       command: "gh",
-      args: [
-        "pr",
-        "create",
-        "--base",
-        input.base,
-        "--head",
-        input.head,
-        "--title",
-        input.title,
-        "--body",
-        input.body,
-      ],
+      args,
       cwd: input.cwd,
     });
 
@@ -153,6 +176,18 @@ export class GitHubManager {
     await this.runner.run({
       command: "gh",
       args: ["pr", "merge", String(input.prNumber), mergeFlag, "--auto"],
+      cwd: input.cwd,
+    });
+  }
+
+  async markPullRequestReady(input: MarkPullRequestReadyInput): Promise<void> {
+    if (input.prNumber <= 0 || !Number.isInteger(input.prNumber)) {
+      throw new Error("prNumber must be a positive integer.");
+    }
+
+    await this.runner.run({
+      command: "gh",
+      args: ["pr", "ready", String(input.prNumber)],
       cwd: input.cwd,
     });
   }
@@ -213,4 +248,18 @@ export class GitHubManager {
       });
     }
   }
+}
+
+export function parsePullRequestNumberFromUrl(prUrl: string): number {
+  const match = /\/pull\/(\d+)(?:\/|$|[?#])/.exec(prUrl.trim());
+  if (!match) {
+    throw new Error(`Invalid pull request URL: ${prUrl}`);
+  }
+
+  const prNumber = Number(match[1]);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new Error(`Invalid pull request URL: ${prUrl}`);
+  }
+
+  return prNumber;
 }

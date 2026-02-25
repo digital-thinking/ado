@@ -48,6 +48,14 @@ const DEFAULT_LOOP_SETTINGS = {
   ciEnabled: false,
   ciBaseBranch: "main",
   validationMaxRetries: 3,
+  pullRequest: {
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  },
 };
 const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
   maxAttempts: 1,
@@ -259,6 +267,52 @@ describe("cli settings", () => {
 
     const settings = await loadCliSettings(settingsFilePath);
     expect(settings.usage.codexbarEnabled).toBe(true);
+  });
+
+  test("deep-merges executionLoop.pullRequest overrides across global and local config", async () => {
+    await Bun.write(
+      sandbox.globalConfigFile,
+      JSON.stringify({
+        executionLoop: {
+          pullRequest: {
+            createAsDraft: true,
+            labels: ["ixado"],
+            templateMappings: [
+              {
+                branchPrefix: "phase-23-",
+                templatePath: ".github/pr_phase23.md",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          pullRequest: {
+            assignees: ["octocat"],
+            markReadyOnApproval: true,
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.pullRequest).toEqual({
+      defaultTemplatePath: null,
+      templateMappings: [
+        {
+          branchPrefix: "phase-23-",
+          templatePath: ".github/pr_phase23.md",
+        },
+      ],
+      labels: ["ixado"],
+      assignees: ["octocat"],
+      createAsDraft: true,
+      markReadyOnApproval: true,
+    });
   });
 
   test("fails for invalid settings json", async () => {
