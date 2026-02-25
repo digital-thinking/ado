@@ -11,11 +11,18 @@ import { dirname } from "node:path";
 import { resolveCommandForSpawn } from "../process/command-resolver";
 import { ProcessStdinUnavailableError } from "../process/manager";
 import { AgentFailureError } from "../errors";
+import { classifyAdapterFailure } from "../adapters/failure-taxonomy";
 import {
+  buildAdapterExecutionTimeoutDiagnostic,
   buildAdapterStartupSilenceDiagnostic,
-  formatAdapterStartupDiagnostic,
+  formatAdapterRuntimeDiagnostic,
 } from "../adapters/startup";
 import type { CLIAdapterId } from "../types";
+import {
+  createRuntimeEvent,
+  type RuntimeAgentStatus,
+  type RuntimeEvent,
+} from "../types/runtime-events";
 
 type SpawnFn = (
   command: string,
@@ -23,7 +30,7 @@ type SpawnFn = (
   options: SpawnOptions,
 ) => ChildProcess;
 
-export type AgentStatus = "RUNNING" | "STOPPED" | "FAILED";
+export type AgentStatus = RuntimeAgentStatus;
 
 export type StartAgentInput = {
   name: string;
@@ -66,9 +73,7 @@ export type AssignAgentInput = {
   taskId?: string;
 };
 
-export type AgentEvent =
-  | { type: "output"; agentId: string; line: string }
-  | { type: "status"; agentId: string; status: AgentStatus };
+export type AgentEvent = RuntimeEvent;
 
 type AgentRecord = {
   id: string;
@@ -386,6 +391,64 @@ export class AgentSupervisor {
     this.emitter.emit("event", event);
   }
 
+  private emitAdapterOutput(
+    record: AgentRecord,
+    stream: "stdout" | "stderr" | "system",
+    line: string,
+    metadata?: Record<string, unknown>,
+  ): void {
+    this.emit(
+      createRuntimeEvent({
+        family: "adapter-output",
+        type: "adapter.output",
+        payload: {
+          stream,
+          line,
+          metadata,
+          isDiagnostic: stream === "system",
+        },
+        context: {
+          source: "AGENT_SUPERVISOR",
+          agentId: record.id,
+          adapterId: record.adapterId,
+          phaseId: record.phaseId,
+          taskId: record.taskId,
+          projectName: record.projectName,
+        },
+      }),
+    );
+  }
+
+  private emitTerminalOutcome(
+    record: AgentRecord,
+    input: {
+      outcome: "success" | "failure" | "cancelled";
+      summary: string;
+      exitCode?: number;
+    },
+  ): void {
+    this.emit(
+      createRuntimeEvent({
+        family: "terminal-outcome",
+        type: "terminal.outcome",
+        payload: {
+          outcome: input.outcome,
+          summary: input.summary,
+          agentStatus: record.status,
+          exitCode: input.exitCode,
+        },
+        context: {
+          source: "AGENT_SUPERVISOR",
+          agentId: record.id,
+          adapterId: record.adapterId,
+          phaseId: record.phaseId,
+          taskId: record.taskId,
+          projectName: record.projectName,
+        },
+      }),
+    );
+  }
+
   private spawnRecord(
     record: AgentRecord,
     options: {
@@ -436,15 +499,18 @@ export class AgentSupervisor {
           return;
         }
         if (!hasReceivedOutput && record.child !== undefined) {
-          const message = formatAdapterStartupDiagnostic(
+          const message = formatAdapterRuntimeDiagnostic(
             buildAdapterStartupSilenceDiagnostic({
               adapterId: record.adapterId,
               command: record.command,
               startupSilenceTimeoutMs: silenceMs,
             }),
           );
-          tailPush(record.outputTail, message);
+          const lines = tailPush(record.outputTail, message);
           this.persistRecord(record);
+          lines.forEach((line) =>
+            this.emitAdapterOutput(record, "system", line),
+          );
         }
       }, silenceMs);
     }
@@ -460,9 +526,7 @@ export class AgentSupervisor {
       const value = chunk.toString();
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
-      lines.forEach((line) =>
-        this.emit({ type: "output", agentId: record.id, line }),
-      );
+      lines.forEach((line) => this.emitAdapterOutput(record, "stdout", line));
       options.onStdout?.(value);
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -476,9 +540,7 @@ export class AgentSupervisor {
       const value = chunk.toString();
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
-      lines.forEach((line) =>
-        this.emit({ type: "output", agentId: record.id, line }),
-      );
+      lines.forEach((line) => this.emitAdapterOutput(record, "stderr", line));
       options.onStderr?.(value);
     });
     child.on("close", (exitCode, signal) => {
@@ -497,7 +559,21 @@ export class AgentSupervisor {
       record.child = undefined;
       record.stopRequested = false;
       this.persistRecord(record);
-      this.emit({ type: "status", agentId: record.id, status: record.status });
+      this.emitTerminalOutcome(record, {
+        outcome:
+          record.status === "FAILED"
+            ? "failure"
+            : signal
+              ? "cancelled"
+              : "success",
+        summary:
+          record.status === "FAILED"
+            ? `Agent failed with exit code ${exitCode ?? -1}.`
+            : signal
+              ? `Agent stopped by signal ${signal}.`
+              : `Agent completed with exit code ${exitCode ?? 0}.`,
+        exitCode: exitCode ?? undefined,
+      });
       if (record.status === "FAILED") {
         this.onFailure?.(toView(record));
       }
@@ -515,10 +591,11 @@ export class AgentSupervisor {
       record.child = undefined;
       record.stopRequested = false;
       this.persistRecord(record);
-      lines.forEach((line) =>
-        this.emit({ type: "output", agentId: record.id, line }),
-      );
-      this.emit({ type: "status", agentId: record.id, status: record.status });
+      lines.forEach((line) => this.emitAdapterOutput(record, "system", line));
+      this.emitTerminalOutcome(record, {
+        outcome: "failure",
+        summary: `Agent execution error: ${error.message}`,
+      });
       this.onFailure?.(toView(record));
       options.onError?.(error);
     });
@@ -584,9 +661,19 @@ export class AgentSupervisor {
         },
         onTimeout: () => {
           timedOut = true;
-          tailPush(
-            record.outputTail,
-            `Command timed out after ${input.timeoutMs}ms.`,
+          const timeoutMs = input.timeoutMs ?? 0;
+          const message = formatAdapterRuntimeDiagnostic(
+            buildAdapterExecutionTimeoutDiagnostic({
+              adapterId: record.adapterId,
+              command: record.command,
+              timeoutMs,
+              outputReceived: stdout.length > 0 || stderr.length > 0,
+            }),
+          );
+          const lines = tailPush(record.outputTail, message);
+          this.persistRecord(record);
+          lines.forEach((line) =>
+            this.emitAdapterOutput(record, "system", line),
           );
         },
         onError: (error) => {
@@ -594,6 +681,7 @@ export class AgentSupervisor {
             reject(
               new AgentFailureError(
                 `Agent supervisor execution error: ${error.message}`,
+                classifyAdapterFailure(error),
               ),
             ),
           );
@@ -604,6 +692,7 @@ export class AgentSupervisor {
               reject(
                 new AgentFailureError(
                   `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
+                  "timeout",
                 ),
               );
               return;
@@ -613,6 +702,7 @@ export class AgentSupervisor {
               reject(
                 new AgentFailureError(
                   `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
+                  classifyAdapterFailure(stderr || stdout),
                 ),
               );
               return;
@@ -646,10 +736,12 @@ export class AgentSupervisor {
       record.status = "STOPPED";
       record.lastExitCode = -1;
       record.stoppedAt = nowIso();
-      lines.forEach((line) =>
-        this.emit({ type: "output", agentId: record.id, line }),
-      );
-      this.emit({ type: "status", agentId: record.id, status: record.status });
+      lines.forEach((line) => this.emitAdapterOutput(record, "system", line));
+      this.emitTerminalOutcome(record, {
+        outcome: "cancelled",
+        summary: "Agent kill requested.",
+        exitCode: -1,
+      });
       this.onFailure?.(toView(record));
     }
     this.persistRecord(record);
@@ -674,7 +766,23 @@ export class AgentSupervisor {
     record.lastExitCode = undefined;
     this.persistRecord(record);
     this.spawnRecord(record);
-    this.emit({ type: "status", agentId: record.id, status: record.status });
+    this.emit(
+      createRuntimeEvent({
+        family: "task-lifecycle",
+        type: "task.lifecycle.progress",
+        payload: {
+          message: "Agent restarted.",
+        },
+        context: {
+          source: "AGENT_SUPERVISOR",
+          projectName: record.projectName,
+          phaseId: record.phaseId,
+          taskId: record.taskId,
+          agentId: record.id,
+          adapterId: record.adapterId,
+        },
+      }),
+    );
 
     return toView(record);
   }

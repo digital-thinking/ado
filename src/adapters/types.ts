@@ -1,5 +1,6 @@
 import type { ProcessRunResult, ProcessRunner } from "../process";
 import { AgentFailureError } from "../errors";
+import { classifyAdapterFailure } from "./failure-taxonomy";
 import { CLIAdapterSchema, type CLIAdapter, type CLIAdapterId } from "../types";
 
 export type AdapterRunInput = {
@@ -126,7 +127,10 @@ export abstract class BaseCliAdapter implements TaskAdapter {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new AgentFailureError(`Adapter ${this.id} failed: ${message}`);
+      throw new AgentFailureError(
+        "Adapter " + this.id + " failed: " + message,
+        classifyAdapterFailure(error),
+      );
     }
   }
 }

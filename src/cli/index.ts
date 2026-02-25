@@ -18,10 +18,19 @@ import { PhaseRunner } from "../engine/phase-runner";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
+  buildRecoveryTraceLinks,
+  formatPhaseTaskContext,
+  summarizeFailure,
+} from "../log-readability";
+import {
   CLIAdapterIdSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
 } from "../types";
+import {
+  formatRuntimeEventForCli,
+  formatRuntimeEventForTelegram,
+} from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
@@ -1012,10 +1021,37 @@ async function runTaskLogsCommand({
     projectName,
   );
   await control.ensureInitialized(projectName, projectRootDir);
-  const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
+  const { phase, task } = await resolveActivePhaseTaskForNumber(
+    control,
+    taskNumber,
+  );
 
   console.info(`Task #${taskNumber}: ${task.title} [${task.status}]`);
+  const contextLabel = formatPhaseTaskContext({
+    phaseId: phase.id,
+    phaseName: phase.name,
+    taskId: task.id,
+    taskTitle: task.title,
+    taskNumber,
+  });
+  if (contextLabel) {
+    console.info(`Context: ${contextLabel}`);
+  }
+
   if (task.status === "FAILED") {
+    console.info(`Failure summary: ${summarizeFailure(task.errorLogs)}`);
+    const recoveryLinks = buildRecoveryTraceLinks({
+      context: {
+        phaseId: phase.id,
+        taskId: task.id,
+      },
+      attempts: task.recoveryAttempts,
+    });
+    if (recoveryLinks.length > 0) {
+      console.info(
+        `Recovery traces: ${recoveryLinks.map((link) => `${link.label}=${link.href}`).join(" | ")}`,
+      );
+    }
     console.info(task.errorLogs ?? "No failure logs recorded.");
     return;
   }
@@ -1165,9 +1201,10 @@ async function runPhaseRunCommand({
       role: "admin",
     },
     loopControl,
-    async (message) => {
+    async (event) => {
+      console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
       if (telegramRuntime) {
-        await telegramRuntime.notifyOwner(message);
+        await telegramRuntime.notifyOwner(formatRuntimeEventForTelegram(event));
       }
     },
   );

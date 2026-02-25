@@ -2,6 +2,16 @@ import type { AgentView } from "../agent-supervisor";
 import type { ApiDependencies } from "./types";
 import { json, readJson, asString } from "./utils";
 import type { ProjectState } from "../../types";
+import {
+  createRuntimeEvent,
+  toLegacyAgentEvent,
+  type RuntimeEvent,
+} from "../../types/runtime-events";
+import {
+  buildRecoveryTraceLinks,
+  formatPhaseTaskContext,
+  summarizeFailure,
+} from "../../log-readability";
 
 const recoveryCache = new Map<
   string, // taskId
@@ -42,6 +52,68 @@ export function buildAgentFailureReason(
   return lines.join("\n");
 }
 
+type AgentTaskContext = {
+  phaseId?: string;
+  phaseName?: string;
+  taskId?: string;
+  taskTitle?: string;
+  taskNumber?: number;
+  recoveryAttempts?: Array<{
+    id: string;
+    attemptNumber: number;
+    result: {
+      status: string;
+      reasoning: string;
+    };
+  }>;
+};
+
+function resolveAgentTaskContext(
+  state: ProjectState | undefined,
+  agent: AgentView,
+): AgentTaskContext {
+  if (!state || !agent.taskId) {
+    return {
+      phaseId: agent.phaseId,
+      taskId: agent.taskId,
+    };
+  }
+
+  for (const phase of state.phases) {
+    const taskIndex = phase.tasks.findIndex((task) => task.id === agent.taskId);
+    if (taskIndex < 0) {
+      continue;
+    }
+    const task = phase.tasks[taskIndex];
+    return {
+      phaseId: phase.id,
+      phaseName: phase.name,
+      taskId: task.id,
+      taskTitle: task.title,
+      taskNumber: taskIndex + 1,
+      recoveryAttempts: Array.isArray(task.recoveryAttempts)
+        ? task.recoveryAttempts
+        : [],
+    };
+  }
+
+  return {
+    phaseId: agent.phaseId,
+    taskId: agent.taskId,
+  };
+}
+
+async function resolveStateForAgent(
+  deps: ApiDependencies,
+  agent: AgentView,
+): Promise<ProjectState | undefined> {
+  try {
+    return await deps.control.getState(agent.projectName ?? deps.projectName);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function handleAgentsApi(
   request: Request,
   url: URL,
@@ -49,18 +121,40 @@ export async function handleAgentsApi(
 ): Promise<Response | null> {
   if (request.method === "GET" && url.pathname === "/api/agents") {
     const agents = deps.agents.list();
+    const statesByProject = new Map<string, ProjectState | undefined>();
+    for (const agent of agents) {
+      const projectName = agent.projectName ?? deps.projectName;
+      if (statesByProject.has(projectName)) {
+        continue;
+      }
+      try {
+        statesByProject.set(
+          projectName,
+          await deps.control.getState(projectName),
+        );
+      } catch {
+        statesByProject.set(projectName, undefined);
+      }
+    }
 
     return json(
       agents.map((agent) => {
         const recovery = agent.taskId
           ? recoveryCache.get(agent.taskId)
           : undefined;
+        const projectState = statesByProject.get(
+          agent.projectName ?? deps.projectName,
+        );
+        const context = resolveAgentTaskContext(projectState, agent);
 
         return {
           ...agent,
           recoveryAttempted: Boolean(recovery),
           recoveryStatus: recovery?.status,
           recoveryReasoning: recovery?.reasoning,
+          phaseName: context.phaseName,
+          taskTitle: context.taskTitle,
+          taskNumber: context.taskNumber,
         };
       }),
     );
@@ -117,7 +211,13 @@ export async function handleAgentsApi(
     if (!agent) {
       throw new Error(`Agent not found: ${agentId}`);
     }
-
+    const state = await resolveStateForAgent(deps, agent);
+    const context = resolveAgentTaskContext(state, agent);
+    const contextLabel = formatPhaseTaskContext(context);
+    const recoveryLinks = buildRecoveryTraceLinks({
+      context,
+      attempts: context.recoveryAttempts,
+    });
     const stream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
@@ -126,21 +226,165 @@ export async function handleAgentsApi(
             encoder.encode(`data: ${JSON.stringify(data)}\n\n`),
           );
         };
+        const sendRuntimeEvent = (event: RuntimeEvent) => {
+          const legacy = toLegacyAgentEvent(event);
+          if (legacy?.type === "output") {
+            send({
+              ...legacy,
+              runtimeEvent: event,
+              context: contextLabel,
+              formattedLine: contextLabel
+                ? `[${contextLabel}] ${legacy.line}`
+                : legacy.line,
+            });
+            return;
+          }
+          if (legacy?.type === "status") {
+            const nextSummary =
+              legacy.status === "FAILED"
+                ? summarizeFailure(agent.outputTail.slice(-10).join("\n"))
+                : undefined;
+            send({
+              ...legacy,
+              runtimeEvent: event,
+              context: contextLabel,
+              failureSummary: nextSummary,
+              recoveryLinks,
+            });
+          }
+        };
+        const normalizeIncomingEvent = (raw: unknown): RuntimeEvent | null => {
+          if (!raw || typeof raw !== "object") {
+            return null;
+          }
+          const candidate = raw as Record<string, unknown>;
+          if (
+            candidate.type === "output" &&
+            typeof candidate.agentId === "string" &&
+            typeof candidate.line === "string"
+          ) {
+            return createRuntimeEvent({
+              family: "adapter-output",
+              type: "adapter.output",
+              payload: {
+                stream: "system",
+                line: candidate.line,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId: candidate.agentId,
+                adapterId: agent.adapterId,
+              },
+            });
+          }
+          if (
+            candidate.type === "status" &&
+            typeof candidate.agentId === "string" &&
+            (candidate.status === "RUNNING" ||
+              candidate.status === "STOPPED" ||
+              candidate.status === "FAILED")
+          ) {
+            return createRuntimeEvent({
+              family: "terminal-outcome",
+              type: "terminal.outcome",
+              payload: {
+                outcome:
+                  candidate.status === "FAILED"
+                    ? "failure"
+                    : candidate.status === "RUNNING"
+                      ? "cancelled"
+                      : "success",
+                summary: `Agent status: ${candidate.status}`,
+                agentStatus: candidate.status,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId: candidate.agentId,
+                adapterId: agent.adapterId,
+              },
+            });
+          }
+          return candidate as RuntimeEvent;
+        };
 
         // Send initial backlog
         agent.outputTail.forEach((line) => {
-          send({ type: "output", agentId, line });
+          sendRuntimeEvent(
+            createRuntimeEvent({
+              family: "adapter-output",
+              type: "adapter.output",
+              payload: {
+                stream: "system",
+                line,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId,
+                adapterId: agent.adapterId,
+              },
+            }),
+          );
         });
 
         if (agent.status !== "RUNNING") {
-          send({ type: "status", agentId, status: agent.status });
+          sendRuntimeEvent(
+            createRuntimeEvent({
+              family: "terminal-outcome",
+              type: "terminal.outcome",
+              payload: {
+                outcome: agent.status === "FAILED" ? "failure" : "success",
+                summary:
+                  agent.status === "FAILED"
+                    ? "Agent failed."
+                    : "Agent completed.",
+                agentStatus: agent.status,
+                exitCode: agent.lastExitCode,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId,
+                adapterId: agent.adapterId,
+              },
+            }),
+          );
           controller.close();
           return;
         }
 
         const unsubscribe = deps.agents.subscribe(agentId, (event) => {
-          send(event);
-          if (event.type === "status" && event.status !== "RUNNING") {
+          const normalized = normalizeIncomingEvent(event);
+          if (!normalized) {
+            return;
+          }
+          sendRuntimeEvent(normalized);
+          if (
+            normalized.type === "terminal.outcome" &&
+            normalized.payload.agentStatus !== "RUNNING"
+          ) {
             unsubscribe();
             controller.close();
           }

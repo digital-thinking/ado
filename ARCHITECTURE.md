@@ -20,6 +20,7 @@ With shared services:
 - CLI commands for project, phase, task, config, and web control.
 - Web control center API/UI for state visibility and agent operations.
 - Optional Telegram interface for remote commands/notifications.
+- Shared runtime event contract (`src/types/runtime-events.ts`) consumed by all three surfaces for consistent lifecycle/output/outcome rendering.
 
 ### 2) Phase Runner (`src/engine/phase-runner.ts`)
 
@@ -34,6 +35,17 @@ With shared services:
 - Adapter-specific command builders normalize Codex/Claude/Gemini/Mock invocation.
 - Agent supervisor runs tasks to completion, captures output tails, and tracks runtime metadata.
 - Supports adapter safety flags, timeout settings, and startup diagnostics.
+
+## Runtime Event Contract
+
+IxADO uses a typed runtime event union (`RuntimeEvent`) to normalize execution telemetry:
+
+- `task-lifecycle`: task start/progress/phase updates/finish.
+- `adapter-output`: streaming output chunks/diagnostics with stream metadata.
+- `tester-recovery`: tester state and recovery attempt traceability.
+- `terminal-outcome`: concise success/failure/cancelled summaries for final rendering.
+
+Web SSE keeps legacy `output`/`status` fields for compatibility while attaching the canonical `runtimeEvent` payload.
 
 ### 4) Process Manager (`src/process/manager.ts`)
 

@@ -269,6 +269,15 @@ export const ExceptionCategorySchema = z.enum([
 ]);
 export type ExceptionCategory = z.infer<typeof ExceptionCategorySchema>;
 
+export const AdapterFailureKindSchema = z.enum([
+  "auth",
+  "network",
+  "missing-binary",
+  "timeout",
+  "unknown",
+]);
+export type AdapterFailureKind = z.infer<typeof AdapterFailureKindSchema>;
+
 export const ExceptionRecoveryResultSchema = z
   .object({
     status: z.enum(["fixed", "unfixable"]),
@@ -286,6 +295,7 @@ export const ExceptionMetadataSchema = z.object({
   message: z.string().min(1),
   phaseId: z.string().uuid().optional(),
   taskId: z.string().uuid().optional(),
+  adapterFailureKind: AdapterFailureKindSchema.optional(),
 });
 export type ExceptionMetadata = z.infer<typeof ExceptionMetadataSchema>;
 
@@ -309,6 +319,7 @@ export const TaskSchema = z.object({
   resultContext: z.string().optional(),
   errorLogs: z.string().optional(),
   errorCategory: ExceptionCategorySchema.optional(),
+  adapterFailureKind: AdapterFailureKindSchema.optional(),
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;

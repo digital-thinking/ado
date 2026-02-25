@@ -27,6 +27,7 @@ IxADO organizes work into **Phases**. Each phase contains tasks with explicit as
 - **Web Control Center:** Local UI for phases, tasks, running agents, logs, and settings.
 - **Telegram Integration:** Optional remote command/notification channel.
 - **Contract-Driven:** TypeScript + schema validation for predictable handoffs and recovery results.
+- **Unified Runtime Events:** One typed event contract for CLI/Web/Telegram covering lifecycle, adapter output, tester/recovery, and terminal outcomes.
 
 ## Planning Artifacts
 

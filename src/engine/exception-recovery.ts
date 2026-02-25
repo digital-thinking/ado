@@ -22,6 +22,7 @@ export function classifyRecoveryException(input: {
   category?: ExceptionMetadata["category"];
   phaseId?: string;
   taskId?: string;
+  adapterFailureKind?: ExceptionMetadata["adapterFailureKind"];
 }): ExceptionMetadata {
   const message = input.message.trim();
   if (!message) {
@@ -35,11 +36,21 @@ export function classifyRecoveryException(input: {
     message,
     phaseId: input.phaseId,
     taskId: input.taskId,
+    adapterFailureKind: input.adapterFailureKind,
   });
 }
 
 export function isRecoverableException(exception: ExceptionMetadata): boolean {
-  return exception.category !== "UNKNOWN";
+  if (exception.category === "UNKNOWN") {
+    return false;
+  }
+
+  if (exception.category !== "AGENT_FAILURE") {
+    return true;
+  }
+
+  const kind = exception.adapterFailureKind ?? "unknown";
+  return kind === "network" || kind === "timeout" || kind === "unknown";
 }
 
 export function validateRecoveryActions(actionsTaken: string[]): void {
@@ -107,6 +118,7 @@ function buildRecoveryPrompt(input: {
     "- Local cleanup actions such as git add and git commit are allowed when needed.",
     "",
     `Exception category: ${input.exception.category}`,
+    `Adapter failure kind: ${input.exception.adapterFailureKind ?? "unknown"}`,
     `Exception message: ${input.exception.message}`,
     `Phase: ${input.phaseName ?? "unknown"}`,
     `Task: ${input.taskTitle ?? "unknown"}`,

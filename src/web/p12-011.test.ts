@@ -146,7 +146,15 @@ describe("P12-011: API-level tests", () => {
   test("SSE endpoint /api/agents/:id/logs/stream format", async () => {
     let capturedListener: any;
     const app = makeApp({
-      agentsList: [{ id: "agent-1", status: "RUNNING", outputTail: [] }],
+      agentsList: [
+        {
+          id: "agent-1",
+          status: "RUNNING",
+          outputTail: [],
+          phaseId: "phase-1",
+          taskId: "task-1",
+        },
+      ],
       onSubscribe: (id: string, listener: any) => {
         capturedListener = listener;
       },
@@ -178,5 +186,8 @@ describe("P12-011: API-level tests", () => {
     const data = JSON.parse(decoded.replace(/^data: /, "").trim());
     expect(data.type).toBe("output");
     expect(data.line).toBe("hello sse");
+    expect(data.formattedLine).toBe(
+      "[phase: phase-1 | task: task-1] hello sse",
+    );
   });
 });

@@ -1,3 +1,4 @@
+import type { AdapterFailureKind } from "./adapters/failure-taxonomy";
 import type { ExceptionMetadata } from "./types";
 
 export abstract class RecoverableError extends Error {
@@ -27,8 +28,14 @@ export class MissingCommitError extends RecoverableError {
 
 export class AgentFailureError extends RecoverableError {
   readonly category = "AGENT_FAILURE";
-  constructor(message: string) {
+  readonly adapterFailureKind: AdapterFailureKind;
+
+  constructor(
+    message: string,
+    adapterFailureKind: AdapterFailureKind = "unknown",
+  ) {
     super(message);
+    this.adapterFailureKind = adapterFailureKind;
   }
 }
 

@@ -753,6 +753,9 @@ describe("multi-project api", () => {
         list: () => [
           {
             id: "agent-1",
+            projectName: "test",
+            phaseId: "phase-1",
+            taskId: "task-1",
             status: "RUNNING",
             outputTail: ["line 1"],
           } as any,
@@ -782,8 +785,14 @@ describe("multi-project api", () => {
 
     // Initial backlog
     const chunk1 = await reader?.read();
-    expect(decoder.decode(chunk1?.value)).toContain(
-      'data: {"type":"output","agentId":"agent-1","line":"line 1"}',
+    const decodedChunk1 = decoder.decode(chunk1?.value);
+    expect(decodedChunk1).toContain('"type":"output"');
+    expect(decodedChunk1).toContain('"agentId":"agent-1"');
+    expect(decodedChunk1).toContain('"line":"line 1"');
+    expect(decodedChunk1).toContain('"runtimeEvent":{"version":1');
+    expect(decodedChunk1).toContain('"type":"adapter.output"');
+    expect(decodedChunk1).toContain(
+      '"formattedLine":"[phase: phase-1 | task: task-1] line 1"',
     );
 
     // New output
@@ -796,8 +805,13 @@ describe("multi-project api", () => {
     }, 10);
 
     const chunk2 = await reader?.read();
-    expect(decoder.decode(chunk2?.value)).toContain(
-      'data: {"type":"output","agentId":"agent-1","line":"line 2"}',
+    const decodedChunk2 = decoder.decode(chunk2?.value);
+    expect(decodedChunk2).toContain('"type":"output"');
+    expect(decodedChunk2).toContain('"line":"line 2"');
+    expect(decodedChunk2).toContain('"runtimeEvent":{"version":1');
+    expect(decodedChunk2).toContain('"type":"adapter.output"');
+    expect(decodedChunk2).toContain(
+      '"formattedLine":"[phase: phase-1 | task: task-1] line 2"',
     );
 
     // Terminal status
@@ -810,9 +824,12 @@ describe("multi-project api", () => {
     }, 10);
 
     const chunk3 = await reader?.read();
-    expect(decoder.decode(chunk3?.value)).toContain(
-      'data: {"type":"status","agentId":"agent-1","status":"STOPPED"}',
-    );
+    const decodedChunk3 = decoder.decode(chunk3?.value);
+    expect(decodedChunk3).toContain('"type":"status"');
+    expect(decodedChunk3).toContain('"agentId":"agent-1"');
+    expect(decodedChunk3).toContain('"status":"STOPPED"');
+    expect(decodedChunk3).toContain('"type":"terminal.outcome"');
+    expect(decodedChunk3).toContain('"recoveryLinks":[{"label":"Task card"');
 
     const chunk4 = await reader?.read();
     expect(chunk4?.done).toBe(true);
