@@ -12,6 +12,11 @@ import {
 } from "./ci-check-mapping";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
+import {
+  LifecycleHookExecutionError,
+  LifecycleHookRegistry,
+  type LifecycleHookRegistration,
+} from "./lifecycle-hooks";
 import { PhaseLoopControl } from "./phase-loop-control";
 import {
   waitForAutoAdvance as waitForAutoAdvanceGate,
@@ -77,12 +82,14 @@ export type PhaseRunnerConfig = {
   projectName: string;
   policy: AuthPolicy;
   role: Role | null;
+  lifecycleHooks?: readonly LifecycleHookRegistration[];
 };
 
 export class PhaseRunner {
   private git: GitManager;
   private github: GitHubManager;
   private privilegedGit: PrivilegedGitActions;
+  private lifecycleHooks: LifecycleHookRegistry;
 
   constructor(
     private control: ControlCenterService,
@@ -99,6 +106,7 @@ export class PhaseRunner {
       role: config.role,
       policy: config.policy,
     });
+    this.lifecycleHooks = new LifecycleHookRegistry(config.lifecycleHooks);
   }
 
   async run(): Promise<void> {
@@ -292,6 +300,9 @@ export class PhaseRunner {
           );
           continue;
         } catch (recoveryError) {
+          if (recoveryError instanceof LifecycleHookExecutionError) {
+            throw recoveryError;
+          }
           const recoveryMessage =
             recoveryError instanceof Error
               ? recoveryError.message
@@ -452,6 +463,18 @@ Recovery: ${recoveryMessage}`,
 
     while (taskRunCount < maxTaskRunCount) {
       taskRunCount += 1;
+      if (this.lifecycleHooks.getHandlers("before_task_start").length > 0) {
+        await this.lifecycleHooks.run("before_task_start", {
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          taskId: task.id,
+          taskTitle: task.title,
+          taskNumber,
+          assignee: effectiveAssignee,
+          resume: resumeSession,
+        });
+      }
       const updatedState = await this.control.startActiveTaskAndWait({
         taskNumber,
         assignee: effectiveAssignee,
@@ -488,6 +511,18 @@ Recovery: ${recoveryMessage}`,
         }),
       );
       if (resultTask.status !== "FAILED") {
+        if (this.lifecycleHooks.getHandlers("after_task_done").length > 0) {
+          await this.lifecycleHooks.run("after_task_done", {
+            projectName: this.config.projectName,
+            phaseId: updatedPhase.id,
+            phaseName: updatedPhase.name,
+            taskId: resultTask.id,
+            taskTitle: resultTask.title,
+            taskNumber,
+            assignee: effectiveAssignee,
+            status: resultTask.status,
+          });
+        }
         return;
       }
 
@@ -514,10 +549,25 @@ Recovery: ${recoveryMessage}`,
         );
         continue;
       } catch (recoveryError) {
+        if (recoveryError instanceof LifecycleHookExecutionError) {
+          throw recoveryError;
+        }
         const recoveryMessage =
           recoveryError instanceof Error
             ? recoveryError.message
             : String(recoveryError);
+        if (this.lifecycleHooks.getHandlers("after_task_done").length > 0) {
+          await this.lifecycleHooks.run("after_task_done", {
+            projectName: this.config.projectName,
+            phaseId: updatedPhase.id,
+            phaseName: updatedPhase.name,
+            taskId: resultTask.id,
+            taskTitle: resultTask.title,
+            taskNumber,
+            assignee: effectiveAssignee,
+            status: resultTask.status,
+          });
+        }
         await this.control.setPhaseStatus({
           phaseId: updatedPhase.id,
           status: "CI_FAILED",
@@ -934,6 +984,17 @@ ${testerResult.fixTaskDescription}`.trim(),
           },
         }),
       );
+      if (this.lifecycleHooks.getHandlers("on_ci_failed").length > 0) {
+        await this.lifecycleHooks.run("on_ci_failed", {
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          prNumber,
+          prUrl,
+          ciStatusContext: ciFailureContext,
+          createdFixTaskCount: mapping.tasksToCreate.length,
+        });
+      }
       throw new Error(
         "Execution loop stopped after CI checks failed. Targeted CI_FIX tasks are pending.",
       );
@@ -1184,7 +1245,6 @@ ${testerResult.fixTaskDescription}`.trim(),
           exception: recovery.exception,
           result: recovery.result,
         });
-
         if (recovery.result.status === "fixed") {
           await verifyRecoveryPostcondition({
             exception: recovery.exception,
@@ -1193,6 +1253,18 @@ ${testerResult.fixTaskDescription}`.trim(),
                 this.git.ensureCleanWorkingTree(this.config.projectRootDir),
             },
           });
+          if (this.lifecycleHooks.getHandlers("on_recovery").length > 0) {
+            await this.lifecycleHooks.run("on_recovery", {
+              projectName: this.config.projectName,
+              phaseId: input.phaseId,
+              phaseName: input.phaseName,
+              ...(input.taskId ? { taskId: input.taskId } : {}),
+              ...(input.taskTitle ? { taskTitle: input.taskTitle } : {}),
+              attemptNumber,
+              exception: recovery.exception,
+              result: recovery.result,
+            });
+          }
           console.info(`Recovery fixed: ${recovery.result.reasoning}`);
           await this.publishRuntimeEvent(
             createRuntimeEvent({
@@ -1215,6 +1287,18 @@ ${testerResult.fixTaskDescription}`.trim(),
             }),
           );
           return;
+        }
+        if (this.lifecycleHooks.getHandlers("on_recovery").length > 0) {
+          await this.lifecycleHooks.run("on_recovery", {
+            projectName: this.config.projectName,
+            phaseId: input.phaseId,
+            phaseName: input.phaseName,
+            ...(input.taskId ? { taskId: input.taskId } : {}),
+            ...(input.taskTitle ? { taskTitle: input.taskTitle } : {}),
+            attemptNumber,
+            exception: recovery.exception,
+            result: recovery.result,
+          });
         }
 
         await this.publishRuntimeEvent(
@@ -1242,6 +1326,9 @@ ${testerResult.fixTaskDescription}`.trim(),
           `Recovery marked unfixable: ${recovery.result.reasoning}`,
         );
       } catch (error) {
+        if (error instanceof LifecycleHookExecutionError) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         lastError = new Error(message);
         console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
