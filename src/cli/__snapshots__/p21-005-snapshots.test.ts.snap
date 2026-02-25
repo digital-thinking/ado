@@ -26,7 +26,6 @@ Usage:
   ixado config usage <on|off>                           Enable/disable codexbar usage telemetry
   ixado web start [port]                                Start local web control center in background
   ixado web stop                                        Stop local web control center
-  ixado web serve [port]                                Run web control center in foreground
   ixado help                                            Show this help
 
 Run 'ixado <command> help' for subcommand details."

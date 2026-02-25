@@ -66,7 +66,6 @@ describe("P21-005 global help text", () => {
       "config",
       "web start",
       "web stop",
-      "web serve",
       "help",
     ]) {
       expect(out).toContain(entry);
@@ -99,7 +98,6 @@ describe("P21-005 global help text", () => {
       "Run TODO/CI_FIX tasks in active phase sequentially",
       "Start local web control center in background",
       "Stop local web control center",
-      "Run web control center in foreground",
     ]) {
       expect(out).toContain(desc);
     }
@@ -125,7 +123,6 @@ describe("P21-005 global help text", () => {
     expect(out).toContain("phase active <phaseNumber|phaseId>");
     expect(out).toContain("phase run [auto|manual] [countdownSeconds>=0]");
     expect(out).toContain("web start [port]");
-    expect(out).toContain("web serve [port]");
   });
 
   test("ixado --help: same output as ixado help", async () => {
@@ -258,7 +255,6 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("Web commands:");
     expect(out).toContain("ixado web start [port]");
     expect(out).toContain("ixado web stop");
-    expect(out).toContain("ixado web serve [port]");
   });
 
   test("ixado web help: all descriptions are stable", async () => {
@@ -271,7 +267,7 @@ describe("P21-005 per-group help text", () => {
     const out = result.stdout;
     expect(out).toContain("Start local web control center in background");
     expect(out).toContain("Stop local web control center");
-    expect(out).toContain("Run web control center in foreground");
+    expect(out).not.toContain("Run web control center in foreground");
   });
 });
 

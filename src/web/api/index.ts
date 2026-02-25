@@ -1,4 +1,5 @@
 import { handleAgentsApi } from "./agents";
+import { handleExecutionApi } from "./execution";
 import { handleProjectsApi } from "./projects";
 import { handleSettingsApi } from "./settings";
 import { handleTasksApi } from "./tasks";
@@ -22,6 +23,9 @@ export async function handleApi(
 
     const settingsResponse = await handleSettingsApi(request, url, deps);
     if (settingsResponse) return settingsResponse;
+
+    const executionResponse = await handleExecutionApi(request, url, deps);
+    if (executionResponse) return executionResponse;
 
     return null;
   } catch (error) {

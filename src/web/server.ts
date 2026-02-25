@@ -29,6 +29,7 @@ import {
 import { AgentSupervisor, type AgentView } from "./agent-supervisor";
 import { createWebApp } from "./app";
 import { ControlCenterService } from "./control-center-service";
+import { ExecutionControlService } from "./execution-control-service";
 import { UsageService } from "./usage-service";
 
 export type StartWebControlCenterInput = {
@@ -318,6 +319,25 @@ export async function startWebControlCenter(
     },
   );
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
+  const execution = new ExecutionControlService({
+    control,
+    agents: {
+      list: () => agents.list(),
+      kill: (id) => agents.kill(id),
+    },
+    projectRootDir: input.cwd,
+    projectName: input.projectName,
+    resolveDefaultAssignee: async (projectName) => {
+      const currentSettings = await loadCliSettings(input.settingsFilePath);
+      const project = currentSettings.projects.find(
+        (candidate) => candidate.name === projectName,
+      );
+      return (
+        project?.executionSettings?.defaultAssignee ??
+        currentSettings.internalWork.assignee
+      );
+    },
+  });
   const app = createWebApp({
     control: {
       getState: (name) => control.getState(name),
@@ -438,6 +458,11 @@ export async function startWebControlCenter(
       };
 
       return saveCliSettings(input.settingsFilePath, merged);
+    },
+    execution: {
+      getStatus: async (projectName) => execution.getStatus(projectName),
+      startAuto: async (workInput) => execution.startAuto(workInput),
+      stop: async (workInput) => execution.stop(workInput),
     },
     updateRuntimeConfig: async (next) => {
       const currentSettings = await loadCliSettings(input.settingsFilePath);

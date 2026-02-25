@@ -13,6 +13,7 @@ import {
   formatAdapterStartupDiagnostic,
 } from "../adapters";
 import { createTelegramRuntime } from "../bot";
+import { ExecutionRunLock } from "../engine/execution-run-lock";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { PhaseRunner } from "../engine/phase-runner";
 import { ProcessManager } from "../process";
@@ -1273,9 +1274,17 @@ async function runPhaseRunCommand({
     },
   );
 
+  const runLock = new ExecutionRunLock({
+    projectRootDir,
+    projectName,
+    owner: "CLI_PHASE_RUN",
+  });
+  await runLock.acquire();
+
   try {
     await runner.run();
   } finally {
+    await runLock.release();
     telegramRuntime?.stop();
   }
 }
@@ -1687,6 +1696,11 @@ async function runConfigRecoveryCommand({
 }
 
 async function runCli(args: string[]): Promise<void> {
+  if (process.env.IXADO_WEB_DAEMON_MODE?.trim() === "1") {
+    await runWebServeCommand({ args: [], fullArgs: [] });
+    return;
+  }
+
   const registry = new CommandRegistry([
     {
       name: "",
@@ -1835,12 +1849,6 @@ async function runCli(args: string[]): Promise<void> {
           name: "stop",
           description: "Stop local web control center",
           action: runWebStopCommand,
-        },
-        {
-          name: "serve",
-          description: "Run web control center in foreground",
-          usage: "serve [port]",
-          action: runWebServeCommand,
         },
       ],
     },

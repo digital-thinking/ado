@@ -57,6 +57,13 @@ describe("web app api", () => {
       defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
       autoMode: false,
     };
+    const executionStatus = {
+      running: false,
+      stopRequested: false,
+      projectName: "IxADO",
+      message: "Auto mode is idle.",
+      updatedAt: new Date().toISOString(),
+    };
 
     const app = createWebApp({
       defaultAgentCwd: "C:/repo",
@@ -296,6 +303,33 @@ describe("web app api", () => {
       },
       getGlobalSettings: async () => ({}) as never,
       updateGlobalSettings: async (_patch) => ({}) as never,
+      execution: {
+        getStatus: async (projectName?: string) => ({
+          ...executionStatus,
+          projectName: projectName || executionStatus.projectName,
+        }),
+        startAuto: async ({ projectName }: { projectName?: string }) => {
+          executionStatus.running = true;
+          executionStatus.stopRequested = false;
+          executionStatus.projectName =
+            projectName || executionStatus.projectName;
+          executionStatus.message =
+            "Auto mode running for project " +
+            executionStatus.projectName +
+            ".";
+          executionStatus.updatedAt = new Date().toISOString();
+          return { ...executionStatus };
+        },
+        stop: async ({ projectName }: { projectName?: string }) => {
+          executionStatus.running = false;
+          executionStatus.stopRequested = false;
+          executionStatus.projectName =
+            projectName || executionStatus.projectName;
+          executionStatus.message = "Auto mode stopped.";
+          executionStatus.updatedAt = new Date().toISOString();
+          return { ...executionStatus };
+        },
+      },
       webLogFilePath: "C:/repo/.ixado/web.log",
       cliLogFilePath: "C:/repo/.ixado/cli.log",
     });
@@ -382,6 +416,38 @@ describe("web app api", () => {
       "GEMINI_CLI",
     );
     expect(runtimeConfigUpdatePayload.autoMode).toBe(true);
+
+    const executionStatusResponse = await app.fetch(
+      new Request("http://localhost/api/execution?projectName=IxADO"),
+    );
+    expect(executionStatusResponse.status).toBe(200);
+    const executionStatusPayload = await executionStatusResponse.json();
+    expect(executionStatusPayload.running).toBe(false);
+    expect(executionStatusPayload.projectName).toBe("IxADO");
+
+    const executionStartResponse = await app.fetch(
+      new Request("http://localhost/api/execution/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectName: "IxADO" }),
+      }),
+    );
+    expect(executionStartResponse.status).toBe(202);
+    const executionStartPayload = await executionStartResponse.json();
+    expect(executionStartPayload.running).toBe(true);
+    expect(executionStartPayload.projectName).toBe("IxADO");
+
+    const executionStopResponse = await app.fetch(
+      new Request("http://localhost/api/execution/stop", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectName: "IxADO" }),
+      }),
+    );
+    expect(executionStopResponse.status).toBe(200);
+    const executionStopPayload = await executionStopResponse.json();
+    expect(executionStopPayload.running).toBe(false);
+    expect(executionStopPayload.message).toContain("stopped");
 
     const setActiveResponse = await app.fetch(
       new Request("http://localhost/api/phases/active", {
@@ -931,6 +997,24 @@ describe("project tabs frontend (P12-006)", () => {
     const html = await getHtml();
     expect(html).toContain("5000");
     expect(html).toContain("refreshActiveProject");
+  });
+
+  test("HTML contains execution controls to run and stop auto mode", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="startAutoModeButton"');
+    expect(html).toContain('id="stopAutoModeButton"');
+    expect(html).toContain("Run Auto Mode");
+    expect(html).toContain("Stop Auto Mode");
+    expect(html).toContain('"/api/execution/start"');
+    expect(html).toContain('"/api/execution/stop"');
+  });
+
+  test("HTML polls execution status for the active project", async () => {
+    const html = await getHtml();
+    expect(html).toContain(
+      '"/api/execution?projectName=" + encodeURIComponent(activeProjectName)',
+    );
+    expect(html).toContain("refreshExecutionStatus");
   });
 
   test("HTML includes per-tab lazy-load state cache", async () => {
