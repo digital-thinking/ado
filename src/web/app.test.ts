@@ -897,6 +897,31 @@ describe("project tabs frontend (P12-006)", () => {
     expect(html).toContain("switchProject");
   });
 
+  test("HTML injects runtime constants instead of raw template placeholders", async () => {
+    const html = await getHtml();
+    expect(html).toContain('const INITIAL_PROJECT_NAME = "TestProject";');
+    expect(html).not.toContain("${params.");
+    expect(html).not.toContain("${JSON.stringify(params.");
+  });
+
+  test("Import button logic refreshes agents while import is running", async () => {
+    const html = await getHtml();
+    expect(html).toContain("const agentTicker = setInterval(() => {");
+    expect(html).toContain("await globalRefresh().catch(handleRefreshError);");
+    expect(html).toContain("await globalRefresh();");
+  });
+
+  test("globalRefresh keeps rendering agents when usage endpoint fails", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Promise.allSettled");
+    expect(html).toContain('api("/api/agents", {}, 3000)');
+    expect(html).toContain('api("/api/usage", {}, 3000)');
+    expect(html).toContain('if (agentsResult.status === "fulfilled")');
+    expect(html).toContain(
+      'usageStatus.textContent = "Unavailable: failed to load usage snapshot.";',
+    );
+  });
+
   test("HTML includes + affordance with ixado init guidance", async () => {
     const html = await getHtml();
     expect(html).toContain("ixado init");

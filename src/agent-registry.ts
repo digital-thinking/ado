@@ -1,7 +1,10 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
-export const DEFAULT_AGENT_REGISTRY_RELATIVE_PATH = ".ixado/agents.json";
+import { resolveGlobalSettingsFilePath } from "./cli/settings";
 
-export function resolveAgentRegistryFilePath(cwd: string): string {
-  return resolve(cwd, DEFAULT_AGENT_REGISTRY_RELATIVE_PATH);
+export const DEFAULT_AGENT_REGISTRY_FILE = "agents.json";
+
+export function resolveAgentRegistryFilePath(_cwd: string): string {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  return resolve(dirname(globalSettingsFilePath), DEFAULT_AGENT_REGISTRY_FILE);
 }

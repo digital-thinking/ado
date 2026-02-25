@@ -104,7 +104,7 @@ describe("web-control helpers", () => {
     await writeFile(runtimeFilePath, "{invalid", "utf8");
 
     await expect(readWebRuntimeRecord(runtimeFilePath)).rejects.toThrow(
-      "Web runtime file contains invalid JSON"
+      "Web runtime file contains invalid JSON",
     );
   });
 
@@ -128,9 +128,14 @@ describe("web-control helpers", () => {
     });
 
     const originalKill = process.kill;
-    (process as unknown as { kill: typeof process.kill }).kill = ((pid: number, signal?: number | NodeJS.Signals) => {
+    (process as unknown as { kill: typeof process.kill }).kill = ((
+      pid: number,
+      signal?: number | NodeJS.Signals,
+    ) => {
       if (pid === 999999) {
-        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        const error = new Error(
+          "operation not permitted",
+        ) as NodeJS.ErrnoException;
         error.code = "EPERM";
         throw error;
       }
@@ -182,23 +187,26 @@ describe("web-control helpers", () => {
 
   test("startWebDaemon includes startup error details when child exits", async () => {
     const holder = createServer();
-    const occupiedPort = await new Promise<number>((resolvePort, rejectPort) => {
-      holder.once("error", rejectPort);
-      holder.listen(0, "127.0.0.1", () => {
-        const address = holder.address();
-        if (!address || typeof address === "string") {
-          rejectPort(new Error("Failed to resolve occupied test port."));
-          return;
-        }
-        resolvePort(address.port);
-      });
-    });
+    const occupiedPort = await new Promise<number>(
+      (resolvePort, rejectPort) => {
+        holder.once("error", rejectPort);
+        holder.listen(0, "127.0.0.1", () => {
+          const address = holder.address();
+          if (!address || typeof address === "string") {
+            rejectPort(new Error("Failed to resolve occupied test port."));
+            return;
+          }
+          resolvePort(address.port);
+        });
+      },
+    );
 
     try {
       await expect(
         startWebDaemon({
           cwd: sandboxDir,
           stateFilePath: join(sandboxDir, "state.json"),
+          settingsFilePath: join(sandboxDir, "settings.json"),
           projectName: "IxADO",
           entryScriptPath: resolve("src/cli/index.ts"),
           port: occupiedPort,

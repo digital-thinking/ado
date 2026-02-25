@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 
 import { TestSandbox, runIxado } from "./test-helpers";
 
@@ -18,7 +17,7 @@ describe("P21-003 config precedence messaging", () => {
     sandboxes.length = 0;
   });
 
-  test("config show explains project-overrides-global precedence", async () => {
+  test("config show defaults to global-default scope", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-003-local-");
     sandboxes.push(sandbox);
 
@@ -27,13 +26,13 @@ describe("P21-003 config precedence messaging", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(
-      `Settings file: ${join(sandbox.projectDir, ".ixado", "settings.json")}`,
+      `Settings file: ${sandbox.globalConfigFile}`,
     );
     expect(result.stdout).toContain(
-      `Scope: project overrides (${join(sandbox.projectDir, ".ixado", "settings.json")}).`,
+      `Scope: global defaults (${sandbox.globalConfigFile}).`,
     );
-    expect(result.stdout).toContain(
-      `Precedence: project settings override global defaults (${sandbox.globalConfigFile}).`,
+    expect(result.stdout).not.toContain(
+      "Precedence: project settings override",
     );
   });
 
@@ -58,7 +57,7 @@ describe("P21-003 config precedence messaging", () => {
     );
   });
 
-  test("config mutation commands include precedence message after save", async () => {
+  test("config mutation commands save global defaults scope after save", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-003-save-");
     sandboxes.push(sandbox);
 
@@ -68,9 +67,11 @@ describe("P21-003 config precedence messaging", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Execution loop mode set to AUTO.");
     expect(result.stdout).toContain("Settings saved to");
-    expect(result.stdout).toContain("Scope: project overrides");
     expect(result.stdout).toContain(
-      `Precedence: project settings override global defaults (${sandbox.globalConfigFile}).`,
+      `Scope: global defaults (${sandbox.globalConfigFile}).`,
+    );
+    expect(result.stdout).not.toContain(
+      "Precedence: project settings override",
     );
   });
 });

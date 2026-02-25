@@ -107,7 +107,7 @@ describe("P21-005 Snapshot Tests", () => {
       subcommands: [
         {
           name: "show",
-          description: "Show effective config (project overrides global)",
+          description: "Show current global config",
         },
         {
           name: "mode",

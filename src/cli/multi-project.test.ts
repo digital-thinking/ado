@@ -193,7 +193,7 @@ describe("multi-project management", () => {
     expect(final.activeProject).toBe("beta");
   });
 
-  test("global config activeProject is preserved through merge with local settings", async () => {
+  test("settings file loading does not merge from global config", async () => {
     await saveCliSettings(
       sandbox.globalConfigFile,
       makeSettings({
@@ -212,17 +212,8 @@ describe("multi-project management", () => {
     );
 
     const loaded = await loadCliSettings(localSettingsFilePath);
-    expect(loaded.activeProject).toBe("alpha");
-    expect(loaded.projects).toEqual([
-      {
-        name: "alpha",
-        rootDir: "/tmp/alpha",
-        executionSettings: {
-          autoMode: false,
-          defaultAssignee: "CODEX_CLI",
-        },
-      },
-    ]);
+    expect(loaded.activeProject).toBeUndefined();
+    expect(loaded.projects).toEqual([]);
     expect(loaded.executionLoop.countdownSeconds).toBe(5);
   });
 
@@ -237,44 +228,7 @@ describe("multi-project management", () => {
     expect(stateFileB).toContain("project-b");
   });
 
-  test("migrates runtime config into active project executionSettings once", async () => {
-    await saveCliSettings(
-      sandbox.globalConfigFile,
-      makeSettings({
-        projects: [
-          { name: "alpha", rootDir: "/tmp/alpha" },
-          { name: "beta", rootDir: "/tmp/beta" },
-        ],
-        activeProject: "beta",
-        internalWork: { assignee: "CLAUDE_CLI" },
-        executionLoop: {
-          ...DEFAULT_LOOP_SETTINGS,
-          autoMode: true,
-        },
-      }),
-    );
-
-    const loaded = await loadCliSettings(sandbox.globalConfigFile);
-    expect(loaded.projects).toEqual([
-      { name: "alpha", rootDir: "/tmp/alpha" },
-      {
-        name: "beta",
-        rootDir: "/tmp/beta",
-        executionSettings: {
-          autoMode: true,
-          defaultAssignee: "CLAUDE_CLI",
-        },
-      },
-    ]);
-
-    const persisted = await loadCliSettings(sandbox.globalConfigFile);
-    expect(persisted.projects[1]?.executionSettings).toEqual({
-      autoMode: true,
-      defaultAssignee: "CLAUDE_CLI",
-    });
-  });
-
-  test("does not overwrite existing project executionSettings during migration", async () => {
+  test("keeps explicit project executionSettings when persisted", async () => {
     await saveCliSettings(
       sandbox.globalConfigFile,
       makeSettings({
@@ -289,11 +243,6 @@ describe("multi-project management", () => {
           },
         ],
         activeProject: "alpha",
-        internalWork: { assignee: "CODEX_CLI" },
-        executionLoop: {
-          ...DEFAULT_LOOP_SETTINGS,
-          autoMode: true,
-        },
       }),
     );
 

@@ -87,7 +87,7 @@ export function resolveSettingsFilePath(): string {
     return resolve(configuredSettingsPath);
   }
 
-  return resolve(process.cwd(), DEFAULT_SETTINGS_FILE);
+  return resolveGlobalSettingsFilePath();
 }
 
 export function resolveGlobalSettingsFilePath(): string {
@@ -164,9 +164,10 @@ function mergeCliSettings(
   override: CliSettingsOverride,
 ): CliSettings {
   const executionLoopOverride = override.executionLoop;
+  const activeProject = override.activeProject ?? base.activeProject;
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
-    activeProject: override.activeProject ?? base.activeProject,
+    ...(activeProject ? { activeProject } : {}),
     telegram: {
       ...base.telegram,
       ...override.telegram,
@@ -216,77 +217,15 @@ function mergeCliSettings(
   });
 }
 
-export function migrateRuntimeConfigToActiveProject(settings: CliSettings): {
-  settings: CliSettings;
-  migrated: boolean;
-} {
-  const activeProjectName = settings.activeProject;
-  if (!activeProjectName) {
-    return { settings, migrated: false };
-  }
-
-  let migrated = false;
-  const projects = settings.projects.map((project) => {
-    if (project.name !== activeProjectName || project.executionSettings) {
-      return project;
-    }
-
-    migrated = true;
-    return {
-      ...project,
-      executionSettings: {
-        autoMode: settings.executionLoop.autoMode,
-        defaultAssignee: settings.internalWork.assignee,
-      },
-    };
-  });
-
-  if (!migrated) {
-    return { settings, migrated: false };
-  }
-
-  return {
-    settings: {
-      ...settings,
-      projects,
-    },
-    migrated: true,
-  };
-}
-
 export async function loadCliSettings(
   settingsFilePath: string,
 ): Promise<CliSettings> {
-  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
-  const globalOverride =
-    settingsFilePath === globalSettingsFilePath
-      ? null
-      : await readSettingsOverrideFile(globalSettingsFilePath);
-  const localOverride = await readSettingsOverrideFile(settingsFilePath);
-
-  // When settingsFilePath IS the global file, localOverride holds the global content (globalOverride is null).
-  // When settingsFilePath is a local file, globalOverride holds the global content.
-  // Build global-only settings so migration operates on and saves only global data.
-  const globalFileContent = globalOverride ?? localOverride;
-  let globalSettings = DEFAULT_CLI_SETTINGS;
-  if (globalFileContent) {
-    globalSettings = mergeCliSettings(globalSettings, globalFileContent);
+  const override = await readSettingsOverrideFile(settingsFilePath);
+  if (!override) {
+    return DEFAULT_CLI_SETTINGS;
   }
 
-  const migration = migrateRuntimeConfigToActiveProject(globalSettings);
-  if (migration.migrated) {
-    globalSettings = migration.settings;
-    await saveCliSettings(globalSettingsFilePath, globalSettings);
-  }
-
-  // For a local path, apply the local file's overrides on top of global settings.
-  // For the global path itself, globalSettings already contains the full content.
-  let settings = globalSettings;
-  if (globalOverride !== null && localOverride) {
-    settings = mergeCliSettings(settings, localOverride);
-  }
-
-  return settings;
+  return mergeCliSettings(DEFAULT_CLI_SETTINGS, override);
 }
 
 export async function saveCliSettings(

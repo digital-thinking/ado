@@ -7,6 +7,7 @@ import {
   loadCliSettings,
   resolveOnboardSettingsFilePath,
   resolveOnboardSoulFilePath,
+  resolveSettingsFilePath,
   saveSoulFile,
   runOnboard,
   saveCliSettings,
@@ -115,6 +116,10 @@ describe("cli settings", () => {
     expect(resolveOnboardSettingsFilePath()).toBe(sandbox.globalConfigFile);
   });
 
+  test("default settings path resolves to global config path", () => {
+    expect(resolveSettingsFilePath()).toBe(sandbox.globalConfigFile);
+  });
+
   test("onboard defaults SOUL path next to settings file", () => {
     expect(resolveOnboardSoulFilePath()).toBe(
       join(sandbox.projectDir, ".ixado", "SOUL.md"),
@@ -181,7 +186,7 @@ describe("cli settings", () => {
     });
   });
 
-  test("loads settings from global config when local file is missing", async () => {
+  test("loads defaults when requested settings file is missing", async () => {
     await Bun.write(
       sandbox.globalConfigFile,
       JSON.stringify({
@@ -196,20 +201,10 @@ describe("cli settings", () => {
     );
 
     const settings = await loadCliSettings(settingsFilePath);
-    expect(settings).toEqual({
-      ...DEFAULT_CLI_SETTINGS,
-      internalWork: {
-        assignee: "CLAUDE_CLI",
-      },
-      executionLoop: {
-        ...DEFAULT_CLI_SETTINGS.executionLoop,
-        autoMode: true,
-        countdownSeconds: 42,
-      },
-    });
+    expect(settings).toEqual(DEFAULT_CLI_SETTINGS);
   });
 
-  test("local settings override global config values", async () => {
+  test("loads settings from the provided file only", async () => {
     await Bun.write(
       sandbox.globalConfigFile,
       JSON.stringify({
@@ -246,14 +241,14 @@ describe("cli settings", () => {
     );
 
     const settings = await loadCliSettings(settingsFilePath);
-    expect(settings.executionLoop.testerCommand).toBe("bun");
-    expect(settings.executionLoop.testerArgs).toEqual(["test"]);
+    expect(settings.executionLoop.testerCommand).toBeNull();
+    expect(settings.executionLoop.testerArgs).toBeNull();
     expect(settings.executionLoop.countdownSeconds).toBe(3);
     expect(settings.exceptionRecovery.maxAttempts).toBe(4);
     expect(settings.agents.CODEX_CLI.timeoutMs).toBe(7000);
   });
 
-  test("supports overriding codexbar usage telemetry from global and local config", async () => {
+  test("reads codexbar usage telemetry from the provided file only", async () => {
     await Bun.write(
       sandbox.globalConfigFile,
       JSON.stringify({
@@ -275,9 +270,9 @@ describe("cli settings", () => {
     expect(settings.usage.codexbarEnabled).toBe(true);
   });
 
-  test("deep-merges executionLoop.pullRequest overrides across global and local config", async () => {
+  test("deep-merges executionLoop.pullRequest overrides in a single config file", async () => {
     await Bun.write(
-      sandbox.globalConfigFile,
+      settingsFilePath,
       JSON.stringify({
         executionLoop: {
           pullRequest: {
@@ -289,15 +284,6 @@ describe("cli settings", () => {
                 templatePath: ".github/pr_phase23.md",
               },
             ],
-          },
-        },
-      }),
-    );
-    await Bun.write(
-      settingsFilePath,
-      JSON.stringify({
-        executionLoop: {
-          pullRequest: {
             assignees: ["octocat"],
             markReadyOnApproval: true,
           },

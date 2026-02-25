@@ -2,6 +2,8 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { inspect } from "node:util";
 
+import { resolveGlobalSettingsFilePath } from "./settings";
+
 const DEFAULT_CLI_LOG_FILE = "cli.log";
 
 let initialized = false;
@@ -54,13 +56,14 @@ function ensureWritableLogPath(logFilePath: string, override: boolean): void {
   }
 }
 
-export function resolveCliLogFilePath(cwd: string): string {
+export function resolveCliLogFilePath(_cwd: string): string {
   const configuredPath = process.env.IXADO_CLI_LOG_FILE?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
 
-  return resolve(cwd, ".ixado", DEFAULT_CLI_LOG_FILE);
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  return resolve(dirname(globalSettingsFilePath), DEFAULT_CLI_LOG_FILE);
 }
 
 export function initializeCliLogging(cwd: string): string {

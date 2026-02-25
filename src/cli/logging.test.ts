@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { initializeCliLogging, resolveCliLogFilePath } from "./logging";
 import { TestSandbox } from "./test-helpers";
 
@@ -11,7 +11,7 @@ describe("cli logging", () => {
 
   beforeEach(async () => {
     sandbox = await TestSandbox.create("ixado-cli-logging-");
-    delete process.env.IXADO_GLOBAL_CONFIG_FILE;
+    process.env.IXADO_GLOBAL_CONFIG_FILE = sandbox.globalConfigFile;
     delete process.env.IXADO_CLI_LOG_FILE;
   });
 
@@ -29,9 +29,9 @@ describe("cli logging", () => {
     await sandbox.cleanup();
   });
 
-  test("defaults CLI log path to project-owned .ixado folder", () => {
+  test("defaults CLI log path to global .ixado folder", () => {
     expect(resolveCliLogFilePath(join(sandbox.projectDir, "project"))).toBe(
-      join(sandbox.projectDir, "project", ".ixado", "cli.log"),
+      join(dirname(sandbox.globalConfigFile), "cli.log"),
     );
   });
 
@@ -44,11 +44,13 @@ describe("cli logging", () => {
     );
   });
 
-  test("initializes logging with default project-owned path", () => {
+  test("initializes logging with default global path", () => {
     const cwd = join(sandbox.projectDir, "project-default");
     const logFilePath = initializeCliLogging(cwd);
 
-    expect(logFilePath).toBe(join(cwd, ".ixado", "cli.log"));
+    expect(logFilePath).toBe(
+      join(dirname(sandbox.globalConfigFile), "cli.log"),
+    );
     expect(existsSync(logFilePath)).toBe(true);
   });
 

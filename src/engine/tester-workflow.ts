@@ -1,39 +1,6 @@
-import { access } from "node:fs/promises";
-import { join } from "node:path";
-
 import { ProcessExecutionError, type ProcessRunner } from "../process";
 
 const DEFAULT_MAX_TESTER_OUTPUT_LENGTH = 4_000;
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Probes the repository layout to auto-detect a suitable test runner.
- * Returns the command and args to use, or null if no known runner is found.
- *
- * Detection order:
- *  1. package.json present → npm test
- *  2. Makefile present     → make test
- *  3. Otherwise            → null (caller should skip the tester step)
- */
-export async function detectTesterCommand(
-  cwd: string,
-): Promise<{ command: string; args: string[] } | null> {
-  if (await fileExists(join(cwd, "package.json"))) {
-    return { command: "npm", args: ["test"] };
-  }
-  if (await fileExists(join(cwd, "Makefile"))) {
-    return { command: "make", args: ["test"] };
-  }
-  return null;
-}
 
 export type TesterWorkflowInput = {
   phaseId: string;
@@ -121,17 +88,11 @@ export async function runTesterWorkflow(
     input.maxOutputLength ?? DEFAULT_MAX_TESTER_OUTPUT_LENGTH;
 
   if (!command && args.length === 0) {
-    // Neither command nor args configured — probe the repo for a known test runner.
-    const detected = await detectTesterCommand(input.cwd);
-    if (!detected) {
-      return {
-        status: "SKIPPED",
-        reason:
-          "No tester configured and no known test runner detected (no package.json or Makefile). Skipping tester step.",
-      };
-    }
-    command = detected.command;
-    args = detected.args;
+    return {
+      status: "SKIPPED",
+      reason:
+        "No tester configured (executionLoop.testerCommand/testerArgs are null). Skipping tester step.",
+    };
   }
 
   if (!command || args.length === 0) {

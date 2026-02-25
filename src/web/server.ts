@@ -50,6 +50,7 @@ export type WebControlCenterRuntime = {
 };
 
 const WEB_SERVER_HOST = "127.0.0.1";
+const WEB_SERVER_IDLE_TIMEOUT_SECONDS = 255;
 
 async function resolveWebPort(
   requestedPort: number | undefined,
@@ -479,6 +480,7 @@ export async function startWebControlCenter(
   const server = Bun.serve({
     port: requestedPort,
     hostname: WEB_SERVER_HOST,
+    idleTimeout: WEB_SERVER_IDLE_TIMEOUT_SECONDS,
     fetch: app.fetch,
   });
   const resolvedPort = server.port ?? requestedPort;

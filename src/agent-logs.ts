@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 import type { CLIAdapterId } from "./types";
+import { resolveGlobalSettingsFilePath } from "./cli/settings";
 
 export type AgentPromptLogArtifacts = {
   inputFilePath: string;
@@ -31,9 +32,16 @@ function toTimestamp(now: Date): string {
 }
 
 export async function createPromptLogArtifacts(
-  input: CreatePromptLogArtifactsInput
+  input: CreatePromptLogArtifactsInput,
 ): Promise<AgentPromptLogArtifacts> {
-  const logDir = resolve(input.cwd, ".ixado", "agent_logs", input.assignee);
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  const projectLabel = basename(input.cwd.trim()) || "project";
+  const logDir = resolve(
+    dirname(globalSettingsFilePath),
+    "agent_logs",
+    projectLabel,
+    input.assignee,
+  );
   const timestamp = toTimestamp(input.now ?? new Date());
   const stem = `${timestamp}_${randomUUID().slice(0, 8)}`;
   const inputFilePath = resolve(logDir, `${stem}_in.txt`);
@@ -48,7 +56,9 @@ export async function createPromptLogArtifacts(
   };
 }
 
-export async function writeOutputLog(input: WriteOutputLogInput): Promise<void> {
+export async function writeOutputLog(
+  input: WriteOutputLogInput,
+): Promise<void> {
   const lines: string[] = [
     `Command: ${input.command}`,
     `Args: ${input.args.join(" ")}`.trimEnd(),
