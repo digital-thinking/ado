@@ -28,6 +28,7 @@ import {
   type CLIAdapterId,
 } from "../types";
 import {
+  createTelegramNotificationEvaluator,
   formatRuntimeEventForCli,
   formatRuntimeEventForTelegram,
 } from "../types/runtime-events";
@@ -1152,6 +1153,10 @@ async function runPhaseRunCommand({
   const telegram = resolveTelegramConfig(settings.telegram);
 
   let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
+  const notifyTelegramEvent = createTelegramNotificationEvaluator({
+    level: settings.telegram.notifications.level,
+    suppressDuplicates: settings.telegram.notifications.suppressDuplicates,
+  });
   if (telegram.enabled) {
     telegramRuntime = createTelegramRuntime({
       token: telegram.token,
@@ -1194,6 +1199,7 @@ async function runPhaseRunCommand({
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
       ciEnabled: settings.executionLoop.ciEnabled,
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
+      ciPullRequest: settings.executionLoop.pullRequest,
       validationMaxRetries: settings.executionLoop.validationMaxRetries,
       projectRootDir,
       projectName,
@@ -1203,7 +1209,7 @@ async function runPhaseRunCommand({
     loopControl,
     async (event) => {
       console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
-      if (telegramRuntime) {
+      if (telegramRuntime && notifyTelegramEvent(event)) {
         await telegramRuntime.notifyOwner(formatRuntimeEventForTelegram(event));
       }
     },

@@ -24,6 +24,15 @@ const PHASE = {
   name: "Phase 11 Integration Security",
 };
 
+const DEFAULT_PULL_REQUEST_SETTINGS = {
+  defaultTemplatePath: null,
+  templateMappings: [],
+  labels: [],
+  assignees: [],
+  createAsDraft: false,
+  markReadyOnApproval: false,
+};
+
 function clonePolicy(policy: AuthPolicy): AuthPolicy {
   return structuredClone(policy);
 }
@@ -51,8 +60,10 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner,
         role: "admin",
         policy,
@@ -64,8 +75,10 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner: new MockProcessRunner([{ stdout: "feature/p11-008\n" }]),
         role: "admin",
         policy,
@@ -90,8 +103,10 @@ describe("P11-008 integration coverage", () => {
     const result = await runCiIntegration({
       phaseId: PHASE.id,
       phaseName: PHASE.name,
+      tasks: [],
       cwd: TEST_CWD,
       baseBranch: "main",
+      pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
       runner,
       role: "admin",
       policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -139,8 +154,10 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: projectDir,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner,
         role: "admin",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -189,8 +206,10 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner,
         role: null,
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -245,8 +264,10 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
+          tasks: [],
           cwd: TEST_CWD,
           baseBranch: "main",
+          pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
           runner,
           role: "operator",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -264,8 +285,10 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
+          tasks: [],
           cwd: TEST_CWD,
           baseBranch: "main",
+          pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
           runner,
           role: "viewer",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -280,8 +303,10 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner: new MockProcessRunner(),
         role: "operator",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -300,8 +325,10 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner: new MockProcessRunner(),
         role: "viewer",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -333,8 +360,10 @@ describe("P11-008 integration coverage", () => {
       const result = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -363,8 +392,10 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),

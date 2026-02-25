@@ -115,6 +115,30 @@ IxADO resolves runtime config using this precedence order:
 
 So project settings win over global defaults for overlapping keys. Use `ixado config show` to view the effective values and scope message.
 
+### PR automation settings
+
+`executionLoop.pullRequest` controls GH PR creation metadata and draft/ready behavior:
+
+```json
+{
+  "executionLoop": {
+    "pullRequest": {
+      "defaultTemplatePath": null,
+      "templateMappings": [
+        { "branchPrefix": "phase-23-", "templatePath": ".github/pr_phase23.md" }
+      ],
+      "labels": ["ixado", "automation"],
+      "assignees": ["octocat"],
+      "createAsDraft": true,
+      "markReadyOnApproval": true
+    }
+  }
+}
+```
+
+- `templateMappings` are matched deterministically by longest `branchPrefix`.
+- `markReadyOnApproval` requires `createAsDraft: true`.
+
 ### Windows
 
 IxADO is packaged as a single compiled executable at `dist/ixado.exe`.

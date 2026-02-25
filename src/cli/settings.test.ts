@@ -48,12 +48,24 @@ const DEFAULT_LOOP_SETTINGS = {
   ciEnabled: false,
   ciBaseBranch: "main",
   validationMaxRetries: 3,
+  pullRequest: {
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  },
 };
 const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
   maxAttempts: 1,
 };
 const DEFAULT_USAGE_SETTINGS = {
   codexbarEnabled: true,
+};
+const DEFAULT_TELEGRAM_NOTIFICATIONS = {
+  level: "all" as const,
+  suppressDuplicates: true,
 };
 
 describe("cli settings", () => {
@@ -139,6 +151,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "abc",
         ownerId: 123,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CLAUDE_CLI",
@@ -156,6 +169,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "abc",
         ownerId: 123,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CLAUDE_CLI",
@@ -261,6 +275,52 @@ describe("cli settings", () => {
     expect(settings.usage.codexbarEnabled).toBe(true);
   });
 
+  test("deep-merges executionLoop.pullRequest overrides across global and local config", async () => {
+    await Bun.write(
+      sandbox.globalConfigFile,
+      JSON.stringify({
+        executionLoop: {
+          pullRequest: {
+            createAsDraft: true,
+            labels: ["ixado"],
+            templateMappings: [
+              {
+                branchPrefix: "phase-23-",
+                templatePath: ".github/pr_phase23.md",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          pullRequest: {
+            assignees: ["octocat"],
+            markReadyOnApproval: true,
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.pullRequest).toEqual({
+      defaultTemplatePath: null,
+      templateMappings: [
+        {
+          branchPrefix: "phase-23-",
+          templatePath: ".github/pr_phase23.md",
+        },
+      ],
+      labels: ["ixado"],
+      assignees: ["octocat"],
+      createAsDraft: true,
+      markReadyOnApproval: true,
+    });
+  });
+
   test("fails for invalid settings json", async () => {
     await Bun.write(settingsFilePath, "{invalid");
     await expect(loadCliSettings(settingsFilePath)).rejects.toThrow(
@@ -310,6 +370,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "my-token",
         ownerId: 123456,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CLAUDE_CLI",
@@ -387,7 +448,10 @@ describe("cli settings", () => {
 
     expect(settings).toEqual({
       projects: [],
-      telegram: { enabled: false },
+      telegram: {
+        enabled: false,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
+      },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
@@ -455,6 +519,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "token",
         ownerId: 42,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "MOCK_CLI",
@@ -498,6 +563,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "existing-token",
         ownerId: 999,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "GEMINI_CLI",
@@ -525,6 +591,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "existing-token",
         ownerId: 999,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "GEMINI_CLI",
@@ -576,6 +643,7 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "token",
         ownerId: 123,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CODEX_CLI",

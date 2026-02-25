@@ -7,6 +7,15 @@ import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
 import { runTesterWorkflow } from "./tester-workflow";
 
+const DEFAULT_PULL_REQUEST_SETTINGS = {
+  defaultTemplatePath: null,
+  templateMappings: [],
+  labels: [],
+  assignees: [],
+  createAsDraft: false,
+  markReadyOnApproval: false,
+};
+
 const TEST_PHASE: Phase = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Phase 5: CI Execution Loop",
@@ -51,8 +60,10 @@ describe("execution loop integration", () => {
     const ciResult = await runCiIntegration({
       phaseId: TEST_PHASE.id,
       phaseName: TEST_PHASE.name,
+      tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
+      pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
       runner,
       role: "admin",
       policy: {
@@ -103,8 +114,10 @@ describe("execution loop integration", () => {
       runCiIntegration({
         phaseId: TEST_PHASE.id,
         phaseName: TEST_PHASE.name,
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         runner,
         role: null,
         policy: {

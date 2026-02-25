@@ -46,6 +46,14 @@ const DEFAULT_LOOP_SETTINGS = {
   ciEnabled: false,
   ciBaseBranch: "main",
   validationMaxRetries: 3,
+  pullRequest: {
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  },
 };
 const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
   maxAttempts: 1,
@@ -57,7 +65,13 @@ const DEFAULT_USAGE_SETTINGS = {
 function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
   return {
     projects: [],
-    telegram: { enabled: false },
+    telegram: {
+      enabled: false,
+      notifications: {
+        level: "all",
+        suppressDuplicates: true,
+      },
+    },
     internalWork: { assignee: "CODEX_CLI" },
     executionLoop: DEFAULT_LOOP_SETTINGS,
     exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,

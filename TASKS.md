@@ -265,13 +265,13 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 ## Phase 23: Integrations Expansion (Approved Scope)
 
-- [ ] `P23-001` Extend GitHub PR automation with configurable template mapping, labels, assignees, and draft/ready transitions. Deps: `P22-007`.
-- [ ] `P23-002` Derive PR metadata from phase/task context with deterministic formatting and validation safeguards. Deps: `P23-001`.
-- [ ] `P23-003` Deepen CI integration by mapping failed checks to targeted fix tasks and richer CI diagnostics in loop output. Deps: `P23-002`.
-- [ ] `P23-004` Improve CI state handling for retries/reruns and transition reporting without introducing loop instability. Deps: `P23-003`.
-- [ ] `P23-005` Expand Telegram-only notifications for phase/task/recovery/CI/PR lifecycle events with noise controls. Deps: `P23-004`.
-- [ ] `P23-006` Add integration tests for PR automation, CI mapping/retry flows, and Telegram notification triggers/payloads. Deps: `P23-005`.
-- [ ] `P23-007` Create PR Task: open Phase 23 PR after coding tasks are done. Deps: `P23-006`.
+- [x] `P23-001` Extend GitHub PR automation with configurable template mapping, labels, assignees, and draft/ready transitions. **Status: Done**. Deps: `P22-007`.
+- [x] `P23-002` Derive PR metadata from phase/task context with deterministic formatting and validation safeguards. **Status: Done**. Deps: `P23-001`.
+- [x] `P23-003` Deepen CI integration by mapping failed checks to targeted fix tasks and richer CI diagnostics in loop output. **Status: Done**. Deps: `P23-002`.
+- [x] `P23-004` Improve CI state handling for retries/reruns and transition reporting without introducing loop instability. **Status: Done**. Deps: `P23-003`.
+- [x] `P23-005` Expand Telegram-only notifications for phase/task/recovery/CI/PR lifecycle events with noise controls. **Status: Done**. Deps: `P23-004`.
+- [x] `P23-006` Add integration tests for PR automation, CI mapping/retry flows, and Telegram notification triggers/payloads. **Status: Done**. Deps: `P23-005`.
+- [x] `P23-007` Create PR Task: open Phase 23 PR after coding tasks are done. **Status: Done (PR #24 opened: https://github.com/digital-thinking/ado/pull/24)**. Deps: `P23-006`.
 
 ## Phase 24: Extensibility Hooks (Roadmap)
 

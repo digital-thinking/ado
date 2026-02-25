@@ -6,6 +6,7 @@ import {
   ExceptionCategorySchema,
   PhaseStatusSchema,
   TaskStatusSchema,
+  type TelegramNotificationLevel,
 } from "./index";
 
 export const RuntimeEventSourceSchema = z.enum([
@@ -128,6 +129,52 @@ export const RecoveryActivityEventSchema = RuntimeEventBaseSchema.extend({
   }),
 });
 
+export const CiOverallStatusSchema = z.enum([
+  "PENDING",
+  "SUCCESS",
+  "FAILURE",
+  "CANCELLED",
+  "UNKNOWN",
+]);
+export type CiOverallStatus = z.infer<typeof CiOverallStatusSchema>;
+
+export const PrActivityEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("ci-pr-lifecycle"),
+  type: z.literal("pr.activity"),
+  payload: z.object({
+    stage: z.enum(["created", "ready-for-review"]),
+    summary: z.string().min(1),
+    prUrl: z.string().url().optional(),
+    prNumber: z.number().int().positive().optional(),
+    baseBranch: z.string().min(1).optional(),
+    headBranch: z.string().min(1).optional(),
+    draft: z.boolean().optional(),
+  }),
+});
+
+export const CiActivityEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("ci-pr-lifecycle"),
+  type: z.literal("ci.activity"),
+  payload: z.object({
+    stage: z.enum([
+      "poll-transition",
+      "failed",
+      "succeeded",
+      "validation-max-retries",
+    ]),
+    summary: z.string().min(1),
+    prNumber: z.number().int().positive(),
+    previousOverall: CiOverallStatusSchema.optional(),
+    overall: CiOverallStatusSchema.optional(),
+    pollCount: z.number().int().positive().optional(),
+    rerun: z.boolean().optional(),
+    terminal: z.boolean().optional(),
+    terminalObservationCount: z.number().int().min(0).optional(),
+    requiredTerminalObservations: z.number().int().positive().optional(),
+    createdFixTaskCount: z.number().int().min(0).optional(),
+  }),
+});
+
 export const TerminalOutcomeEventSchema = RuntimeEventBaseSchema.extend({
   family: z.literal("terminal-outcome"),
   type: z.literal("terminal.outcome"),
@@ -147,6 +194,8 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   AdapterOutputEventSchema,
   TesterActivityEventSchema,
   RecoveryActivityEventSchema,
+  PrActivityEventSchema,
+  CiActivityEventSchema,
   TerminalOutcomeEventSchema,
 ]);
 export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
@@ -220,14 +269,24 @@ export function toLegacyAgentEvent(
 
 export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
   switch (event.type) {
+    case "task.lifecycle.start":
+      return `Task started: #${event.taskNumber ?? "?"} ${event.taskTitle ?? event.taskId ?? "unknown"} (${event.payload.assignee}).`;
+    case "task.lifecycle.phase-update":
+      return `Phase update: ${event.phaseName ?? event.phaseId ?? "unknown"} -> ${event.payload.status}.`;
     case "task.lifecycle.finish":
-      return `Task update: ${event.taskTitle ?? event.taskId ?? "unknown"} -> ${event.payload.status}.`;
+      return `Task update: #${event.taskNumber ?? "?"} ${event.taskTitle ?? event.taskId ?? "unknown"} -> ${event.payload.status}.`;
     case "tester.activity":
       return `Tester: ${event.payload.summary}`;
     case "recovery.activity":
       return `Recovery: ${event.payload.summary}`;
+    case "pr.activity":
+      return `PR: ${event.payload.summary}`;
+    case "ci.activity":
+      return `CI: ${event.payload.summary}`;
     case "terminal.outcome":
       return `Outcome: ${event.payload.summary}`;
+    case "adapter.output":
+      return event.payload.line;
     default:
       return event.type;
   }
@@ -240,6 +299,9 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
     case "task.lifecycle.phase-update":
     case "task.lifecycle.finish":
       return event.payload.message ?? event.type;
+    case "pr.activity":
+    case "ci.activity":
+      return event.payload.summary;
     case "tester.activity":
     case "recovery.activity":
       return event.payload.summary;
@@ -250,4 +312,185 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
     default:
       return "unknown";
   }
+}
+
+export function shouldNotifyRuntimeEventForTelegram(
+  event: RuntimeEvent,
+  level: TelegramNotificationLevel,
+): boolean {
+  if (level === "all") {
+    return true;
+  }
+
+  if (level === "important") {
+    if (event.type === "task.lifecycle.start") {
+      return false;
+    }
+    if (event.type === "task.lifecycle.progress") {
+      return false;
+    }
+    if (event.type === "tester.activity" && event.payload.stage === "started") {
+      return false;
+    }
+    if (
+      event.type === "recovery.activity" &&
+      event.payload.stage === "attempt-started"
+    ) {
+      return false;
+    }
+    if (
+      event.type === "ci.activity" &&
+      event.payload.stage === "poll-transition"
+    ) {
+      return false;
+    }
+    if (event.type === "adapter.output") {
+      return false;
+    }
+    return true;
+  }
+
+  switch (event.type) {
+    case "terminal.outcome":
+      return true;
+    case "task.lifecycle.phase-update":
+      return (
+        event.payload.status === "CREATING_PR" ||
+        event.payload.status === "READY_FOR_REVIEW" ||
+        event.payload.status === "CI_FAILED"
+      );
+    case "task.lifecycle.finish":
+      return event.payload.status === "FAILED";
+    case "tester.activity":
+      return event.payload.stage === "failed";
+    case "recovery.activity":
+      return (
+        event.payload.stage === "attempt-failed" ||
+        event.payload.stage === "attempt-unfixable"
+      );
+    case "pr.activity":
+      return true;
+    case "ci.activity":
+      return (
+        event.payload.stage === "failed" ||
+        event.payload.stage === "succeeded" ||
+        event.payload.stage === "validation-max-retries"
+      );
+    default:
+      return false;
+  }
+}
+
+export function createRuntimeEventNotificationKey(event: RuntimeEvent): string {
+  switch (event.type) {
+    case "task.lifecycle.start":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.assignee,
+        event.payload.resume ? "resume" : "fresh",
+      ].join("|");
+    case "task.lifecycle.progress":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.payload.message,
+      ].join("|");
+    case "task.lifecycle.phase-update":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.payload.status,
+        event.payload.message ?? "",
+      ].join("|");
+    case "task.lifecycle.finish":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.status,
+      ].join("|");
+    case "tester.activity":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.payload.stage,
+        event.payload.attemptNumber ?? "",
+        event.payload.summary,
+      ].join("|");
+    case "recovery.activity":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.payload.stage,
+        event.payload.attemptNumber ?? "",
+        event.payload.category ?? "",
+        event.payload.summary,
+      ].join("|");
+    case "pr.activity":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.payload.stage,
+        event.payload.prNumber ?? "",
+        event.payload.prUrl ?? "",
+      ].join("|");
+    case "ci.activity":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.payload.stage,
+        event.payload.prNumber,
+        event.payload.pollCount ?? "",
+        event.payload.overall ?? "",
+        event.payload.summary,
+      ].join("|");
+    case "terminal.outcome":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.payload.outcome,
+        event.payload.summary,
+      ].join("|");
+    case "adapter.output":
+      return [
+        event.type,
+        event.agentId ?? "",
+        event.payload.stream,
+        event.payload.line,
+      ].join("|");
+    default:
+      return "runtime-event";
+  }
+}
+
+export function createTelegramNotificationEvaluator(input: {
+  level: TelegramNotificationLevel;
+  suppressDuplicates: boolean;
+}): (event: RuntimeEvent) => boolean {
+  const deliveredKeys = new Set<string>();
+
+  return (event) => {
+    if (!shouldNotifyRuntimeEventForTelegram(event, input.level)) {
+      return false;
+    }
+
+    if (!input.suppressDuplicates) {
+      return true;
+    }
+
+    const key = createRuntimeEventNotificationKey(event);
+    if (deliveredKeys.has(key)) {
+      return false;
+    }
+    deliveredKeys.add(key);
+    return true;
+  };
 }

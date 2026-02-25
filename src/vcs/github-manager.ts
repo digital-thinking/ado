@@ -6,6 +6,10 @@ export type CreatePullRequestInput = {
   title: string;
   body: string;
   cwd: string;
+  templatePath?: string;
+  labels?: string[];
+  assignees?: string[];
+  draft?: boolean;
 };
 
 export type CiCheckState =
@@ -18,6 +22,7 @@ export type CiCheckState =
 export type CiCheck = {
   name: string;
   state: CiCheckState;
+  detailsUrl?: string;
 };
 
 export type CiStatusSummary = {
@@ -32,11 +37,30 @@ export type MergePullRequestInput = {
   mergeMethod?: "merge" | "squash" | "rebase";
 };
 
+export type MarkPullRequestReadyInput = {
+  prNumber: number;
+  cwd: string;
+};
+
 export type PollCiStatusInput = {
   prNumber: number;
   cwd: string;
   intervalMs?: number;
   timeoutMs?: number;
+  terminalConfirmations?: number;
+  onTransition?: (transition: CiPollTransition) => void | Promise<void>;
+};
+
+export type CiPollTransition = {
+  pollCount: number;
+  previousOverall: CiCheckState | null;
+  overall: CiCheckState;
+  previousChecksFingerprint: string | null;
+  checksFingerprint: string;
+  isRerun: boolean;
+  isTerminal: boolean;
+  terminalObservationCount: number;
+  requiredTerminalObservations: number;
 };
 
 type StatusCheckRollupResponse = {
@@ -106,6 +130,21 @@ function computeOverallState(checks: CiCheck[]): CiCheckState {
   return "PENDING";
 }
 
+function checkFingerprint(check: CiCheck): string {
+  return `${check.name.trim().toLowerCase()}::${check.state}::${check.detailsUrl ?? ""}`;
+}
+
+function summaryFingerprint(summary: CiStatusSummary): string {
+  const checks = [...summary.checks].sort((a, b) =>
+    checkFingerprint(a).localeCompare(checkFingerprint(b)),
+  );
+  return `${summary.overall}|${checks.map(checkFingerprint).join("|")}`;
+}
+
+function isTerminalState(state: CiCheckState): boolean {
+  return state === "SUCCESS" || state === "FAILURE" || state === "CANCELLED";
+}
+
 export class GitHubManager {
   private readonly runner: ProcessRunner;
 
@@ -114,20 +153,34 @@ export class GitHubManager {
   }
 
   async createPullRequest(input: CreatePullRequestInput): Promise<string> {
+    const args = [
+      "pr",
+      "create",
+      "--base",
+      input.base,
+      "--head",
+      input.head,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
+    if (input.templatePath) {
+      args.push("--template", input.templatePath);
+    }
+    if (input.labels && input.labels.length > 0) {
+      args.push("--label", input.labels.join(","));
+    }
+    if (input.assignees && input.assignees.length > 0) {
+      args.push("--assignee", input.assignees.join(","));
+    }
+    if (input.draft) {
+      args.push("--draft");
+    }
+
     const result = await this.runner.run({
       command: "gh",
-      args: [
-        "pr",
-        "create",
-        "--base",
-        input.base,
-        "--head",
-        input.head,
-        "--title",
-        input.title,
-        "--body",
-        input.body,
-      ],
+      args,
       cwd: input.cwd,
     });
 
@@ -157,6 +210,18 @@ export class GitHubManager {
     });
   }
 
+  async markPullRequestReady(input: MarkPullRequestReadyInput): Promise<void> {
+    if (input.prNumber <= 0 || !Number.isInteger(input.prNumber)) {
+      throw new Error("prNumber must be a positive integer.");
+    }
+
+    await this.runner.run({
+      command: "gh",
+      args: ["pr", "ready", String(input.prNumber)],
+      cwd: input.cwd,
+    });
+  }
+
   async getCiStatus(prNumber: number, cwd: string): Promise<CiStatusSummary> {
     const result = await this.runner.run({
       command: "gh",
@@ -178,6 +243,11 @@ export class GitHubManager {
         (typeof rawCheck.context === "string" && rawCheck.context) ||
         "unknown-check",
       state: normalizeCheckState(rawCheck),
+      detailsUrl:
+        (typeof rawCheck.detailsUrl === "string" && rawCheck.detailsUrl) ||
+        (typeof rawCheck.url === "string" && rawCheck.url) ||
+        (typeof rawCheck.targetUrl === "string" && rawCheck.targetUrl) ||
+        undefined,
     }));
 
     return {
@@ -189,15 +259,64 @@ export class GitHubManager {
   async pollCiStatus(input: PollCiStatusInput): Promise<CiStatusSummary> {
     const intervalMs = input.intervalMs ?? 15_000;
     const timeoutMs = input.timeoutMs ?? 15 * 60 * 1000;
+    const requiredTerminalObservations = Math.max(
+      1,
+      input.terminalConfirmations ?? 1,
+    );
     const startedAt = Date.now();
+    let pollCount = 0;
+    let previousOverall: CiCheckState | null = null;
+    let previousChecksFingerprint: string | null = null;
+    let terminalState: CiCheckState | null = null;
+    let terminalObservationCount = 0;
 
     while (true) {
+      pollCount += 1;
       const summary = await this.getCiStatus(input.prNumber, input.cwd);
+      const checksFingerprint = summaryFingerprint(summary);
+      const transitioned =
+        previousOverall !== summary.overall ||
+        previousChecksFingerprint !== checksFingerprint;
+
+      const isTerminal = isTerminalState(summary.overall);
+      if (isTerminal) {
+        if (
+          terminalState === summary.overall &&
+          previousChecksFingerprint === checksFingerprint
+        ) {
+          terminalObservationCount += 1;
+        } else {
+          terminalState = summary.overall;
+          terminalObservationCount = 1;
+        }
+      } else {
+        terminalState = null;
+        terminalObservationCount = 0;
+      }
+
+      if (transitioned && input.onTransition) {
+        const isRerun =
+          previousOverall !== null &&
+          isTerminalState(previousOverall) &&
+          summary.overall === "PENDING";
+        await input.onTransition({
+          pollCount,
+          previousOverall,
+          overall: summary.overall,
+          previousChecksFingerprint,
+          checksFingerprint,
+          isRerun,
+          isTerminal,
+          terminalObservationCount,
+          requiredTerminalObservations,
+        });
+      }
+      previousOverall = summary.overall;
+      previousChecksFingerprint = checksFingerprint;
 
       if (
-        summary.overall === "SUCCESS" ||
-        summary.overall === "FAILURE" ||
-        summary.overall === "CANCELLED"
+        isTerminal &&
+        terminalObservationCount >= requiredTerminalObservations
       ) {
         return summary;
       }
@@ -208,9 +327,30 @@ export class GitHubManager {
         );
       }
 
+      if (
+        isTerminal &&
+        terminalObservationCount < requiredTerminalObservations
+      ) {
+        continue;
+      }
+
       await new Promise<void>((resolve) => {
         setTimeout(resolve, intervalMs);
       });
     }
   }
+}
+
+export function parsePullRequestNumberFromUrl(prUrl: string): number {
+  const match = /\/pull\/(\d+)(?:\/|$|[?#])/.exec(prUrl.trim());
+  if (!match) {
+    throw new Error(`Invalid pull request URL: ${prUrl}`);
+  }
+
+  const prNumber = Number(match[1]);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new Error(`Invalid pull request URL: ${prUrl}`);
+  }
+
+  return prNumber;
 }

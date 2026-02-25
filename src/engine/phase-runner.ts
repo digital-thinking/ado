@@ -6,6 +6,10 @@ import {
   runExceptionRecovery,
   verifyRecoveryPostcondition,
 } from "./exception-recovery";
+import {
+  deriveTargetedCiFixTasks,
+  formatCiDiagnostics,
+} from "./ci-check-mapping";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
 import { PhaseLoopControl } from "./phase-loop-control";
@@ -15,11 +19,22 @@ import {
 } from "./phase-loop-wait";
 import { runTesterWorkflow } from "./tester-workflow";
 import { ProcessManager, type ProcessRunner } from "../process";
-import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
+import {
+  GitHubManager,
+  GitManager,
+  type CiPollTransition,
+  parsePullRequestNumberFromUrl,
+  PrivilegedGitActions,
+} from "../vcs";
 import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
 import { PhasePreflightError } from "../errors";
-import { type CLIAdapterId, type Phase, type Task } from "../types";
+import {
+  type CLIAdapterId,
+  type Phase,
+  type PullRequestAutomationSettings,
+  type Task,
+} from "../types";
 import { createRuntimeEvent, type RuntimeEvent } from "../types/runtime-events";
 
 /**
@@ -56,6 +71,7 @@ export type PhaseRunnerConfig = {
   testerTimeoutMs: number;
   ciEnabled: boolean;
   ciBaseBranch: string;
+  ciPullRequest: PullRequestAutomationSettings;
   validationMaxRetries: number;
   projectRootDir: string;
   projectName: string;
@@ -710,8 +726,10 @@ ${testerResult.fixTaskDescription}`.trim(),
         ciResult = await runCiIntegration({
           phaseId: phase.id,
           phaseName: phase.name,
+          tasks: phase.tasks,
           cwd: this.config.projectRootDir,
           baseBranch: this.config.ciBaseBranch,
+          pullRequest: this.config.ciPullRequest,
           runner: this.testerRunner,
           role: this.config.role,
           policy: this.config.policy,
@@ -751,10 +769,16 @@ ${testerResult.fixTaskDescription}`.trim(),
     );
     await this.publishRuntimeEvent(
       createRuntimeEvent({
-        family: "task-lifecycle",
-        type: "task.lifecycle.progress",
+        family: "ci-pr-lifecycle",
+        type: "pr.activity",
         payload: {
-          message: `PR Created: ${phase.name} -> ${ciResult.prUrl}`,
+          stage: "created",
+          summary: `Created PR #${parsePullRequestNumberFromUrl(ciResult.prUrl)}: ${ciResult.prUrl}`,
+          prUrl: ciResult.prUrl,
+          prNumber: parsePullRequestNumberFromUrl(ciResult.prUrl),
+          baseBranch: ciResult.baseBranch,
+          headBranch: ciResult.headBranch,
+          draft: this.config.ciPullRequest.createAsDraft,
         },
         context: {
           source: "PHASE_RUNNER",
@@ -776,6 +800,142 @@ ${testerResult.fixTaskDescription}`.trim(),
     if (!validationPhase) {
       throw new Error(
         `Completed phase not found for CI validation: ${phase.id}`,
+      );
+    }
+
+    const prUrl = validationPhase.prUrl?.trim();
+    if (!prUrl) {
+      throw new Error("CI validation requires a phase PR URL.");
+    }
+    const prNumber = parsePullRequestNumberFromUrl(prUrl);
+    console.info(`Polling GitHub CI checks for PR #${prNumber}.`);
+    const ciSummary = await this.github.pollCiStatus({
+      prNumber,
+      cwd: this.config.projectRootDir,
+      intervalMs: 1_000,
+      terminalConfirmations: 2,
+      onTransition: async (transition) => {
+        const transitionMessage = this.formatCiTransitionMessage({
+          prNumber,
+          transition,
+        });
+        console.info(transitionMessage);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "ci-pr-lifecycle",
+            type: "ci.activity",
+            payload: {
+              stage: "poll-transition",
+              summary: transitionMessage,
+              prNumber,
+              previousOverall: transition.previousOverall ?? undefined,
+              overall: transition.overall,
+              pollCount: transition.pollCount,
+              rerun: transition.isRerun,
+              terminal: transition.isTerminal,
+              terminalObservationCount: transition.terminalObservationCount,
+              requiredTerminalObservations:
+                transition.requiredTerminalObservations,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+      },
+    });
+    const ciDiagnostics = formatCiDiagnostics({
+      prNumber,
+      prUrl,
+      summary: ciSummary,
+    });
+    console.info(ciDiagnostics);
+
+    if (ciSummary.overall !== "SUCCESS") {
+      const currentState = await this.control.getState();
+      const currentPhase = currentState.phases.find(
+        (p: any) => p.id === phase.id,
+      );
+      if (!currentPhase) {
+        throw new Error(
+          `Active phase not found during CI failure mapping: ${phase.id}`,
+        );
+      }
+
+      const mapping = deriveTargetedCiFixTasks({
+        summary: ciSummary,
+        prUrl,
+        existingTasks: currentPhase.tasks,
+      });
+
+      for (const taskInput of mapping.tasksToCreate) {
+        await this.control.createTask({
+          phaseId: phase.id,
+          title: taskInput.title,
+          description: taskInput.description,
+          assignee: this.config.activeAssignee,
+          dependencies: taskInput.dependencies,
+          status: taskInput.status,
+        });
+      }
+
+      const nextAction =
+        mapping.tasksToCreate.length > 0
+          ? "Next action: complete the new CI_FIX task(s) and rerun phase execution."
+          : "Next action: complete the existing CI_FIX task(s) and rerun phase execution.";
+      const ciFailureContext = [
+        ciDiagnostics,
+        `CI_FIX mapping: created=${mapping.tasksToCreate.length}, skipped_existing=${mapping.skippedTaskTitles.length}`,
+        nextAction,
+      ].join("\n");
+
+      await this.control.setPhaseStatus({
+        phaseId: phase.id,
+        status: "CI_FAILED",
+        ciStatusContext: ciFailureContext,
+      });
+
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "ci-pr-lifecycle",
+          type: "ci.activity",
+          payload: {
+            stage: "failed",
+            summary: `CI checks failed for PR #${prNumber}; created ${mapping.tasksToCreate.length} CI_FIX task(s).`,
+            prNumber,
+            overall: "FAILURE",
+            createdFixTaskCount: mapping.tasksToCreate.length,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "terminal-outcome",
+          type: "terminal.outcome",
+          payload: {
+            outcome: "failure",
+            summary: `CI checks failed for PR #${prNumber}; created ${mapping.tasksToCreate.length} CI_FIX task(s).`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+      throw new Error(
+        "Execution loop stopped after CI checks failed. Targeted CI_FIX tasks are pending.",
       );
     }
 
@@ -821,6 +981,24 @@ ${testerResult.fixTaskDescription}`.trim(),
       );
       await this.publishRuntimeEvent(
         createRuntimeEvent({
+          family: "ci-pr-lifecycle",
+          type: "ci.activity",
+          payload: {
+            stage: "validation-max-retries",
+            summary: `Review requires fixes after ${validationResult.fixAttempts} attempts.`,
+            prNumber,
+            overall: "FAILURE",
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
           family: "terminal-outcome",
           type: "terminal.outcome",
           payload: {
@@ -840,6 +1018,40 @@ ${testerResult.fixTaskDescription}`.trim(),
       );
     }
 
+    if (this.config.ciPullRequest.markReadyOnApproval) {
+      const prUrl = validationPhase.prUrl?.trim();
+      if (!prUrl) {
+        throw new Error(
+          "PR ready transition is enabled but phase PR URL is missing.",
+        );
+      }
+
+      const prNumber = parsePullRequestNumberFromUrl(prUrl);
+      await this.privilegedGit.markPullRequestReady({
+        prNumber,
+        cwd: this.config.projectRootDir,
+      });
+      console.info(`Marked draft PR #${prNumber} as ready for review.`);
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "ci-pr-lifecycle",
+          type: "pr.activity",
+          payload: {
+            stage: "ready-for-review",
+            summary: `Marked PR #${prNumber} as ready for review.`,
+            prNumber,
+            prUrl,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+    }
+
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "READY_FOR_REVIEW",
@@ -847,6 +1059,24 @@ ${testerResult.fixTaskDescription}`.trim(),
 
     console.info(
       `CI validation loop approved after ${validationResult.reviews.length} review round(s) and ${validationResult.fixAttempts} fix attempt(s).`,
+    );
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "ci-pr-lifecycle",
+        type: "ci.activity",
+        payload: {
+          stage: "succeeded",
+          summary: `CI checks and review approved for PR #${prNumber}.`,
+          prNumber,
+          overall: "SUCCESS",
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
     );
     await this.publishRuntimeEvent(
       createRuntimeEvent({
@@ -987,6 +1217,27 @@ ${testerResult.fixTaskDescription}`.trim(),
           return;
         }
 
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "tester-recovery",
+            type: "recovery.activity",
+            payload: {
+              stage: "attempt-unfixable",
+              summary: recovery.result.reasoning,
+              attemptNumber,
+              category: exception.category,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: input.phaseId,
+              phaseName: input.phaseName,
+              taskId: input.taskId,
+              taskTitle: input.taskTitle,
+            },
+          }),
+        );
+
         throw new Error(
           `Recovery marked unfixable: ${recovery.result.reasoning}`,
         );
@@ -1020,6 +1271,18 @@ ${testerResult.fixTaskDescription}`.trim(),
     throw new Error(
       `Recovery attempts exhausted (${this.config.maxRecoveryAttempts}): ${lastError?.message ?? input.errorMessage}`,
     );
+  }
+
+  private formatCiTransitionMessage(input: {
+    prNumber: number;
+    transition: CiPollTransition;
+  }): string {
+    const previousOverall = input.transition.previousOverall ?? "INIT";
+    const rerunSuffix = input.transition.isRerun ? " | rerun-detected" : "";
+    const terminalSuffix = input.transition.isTerminal
+      ? ` | terminal-confirmation=${input.transition.terminalObservationCount}/${input.transition.requiredTerminalObservations}`
+      : "";
+    return `CI transition PR #${input.prNumber}: ${previousOverall} -> ${input.transition.overall} (poll=${input.transition.pollCount})${rerunSuffix}${terminalSuffix}`;
   }
 
   private async publishRuntimeEvent(event: RuntimeEvent): Promise<void> {

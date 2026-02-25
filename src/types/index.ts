@@ -51,6 +51,74 @@ export const CliAgentSettingsSchema = z.object({
 });
 export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
 
+const PullRequestTemplateMappingSchema = z.object({
+  branchPrefix: z.string().min(1),
+  templatePath: z.string().min(1),
+});
+export type PullRequestTemplateMapping = z.infer<
+  typeof PullRequestTemplateMappingSchema
+>;
+
+export const PullRequestAutomationSettingsSchema = z
+  .object({
+    defaultTemplatePath: z.string().min(1).nullable().default(null),
+    templateMappings: z.array(PullRequestTemplateMappingSchema).default([]),
+    labels: z.array(z.string().min(1)).default([]),
+    assignees: z.array(z.string().min(1)).default([]),
+    createAsDraft: z.boolean().default(false),
+    markReadyOnApproval: z.boolean().default(false),
+  })
+  .superRefine((value, context) => {
+    if (value.markReadyOnApproval && !value.createAsDraft) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "executionLoop.pullRequest.markReadyOnApproval requires createAsDraft=true.",
+        path: ["markReadyOnApproval"],
+      });
+    }
+
+    const seenBranchPrefixes = new Set<string>();
+    value.templateMappings.forEach((mapping, index) => {
+      if (seenBranchPrefixes.has(mapping.branchPrefix)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "executionLoop.pullRequest.templateMappings branchPrefix values must be unique.",
+          path: ["templateMappings", index, "branchPrefix"],
+        });
+      }
+      seenBranchPrefixes.add(mapping.branchPrefix);
+    });
+  });
+export type PullRequestAutomationSettings = z.infer<
+  typeof PullRequestAutomationSettingsSchema
+>;
+
+const PullRequestAutomationSettingsOverrideSchema = z
+  .object({
+    defaultTemplatePath: z.string().min(1).nullable().optional(),
+    templateMappings: z.array(PullRequestTemplateMappingSchema).optional(),
+    labels: z.array(z.string().min(1)).optional(),
+    assignees: z.array(z.string().min(1)).optional(),
+    createAsDraft: z.boolean().optional(),
+    markReadyOnApproval: z.boolean().optional(),
+  })
+  .superRefine((value, context) => {
+    const seenBranchPrefixes = new Set<string>();
+    (value.templateMappings ?? []).forEach((mapping, index) => {
+      if (seenBranchPrefixes.has(mapping.branchPrefix)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "executionLoop.pullRequest.templateMappings branchPrefix values must be unique.",
+          path: ["templateMappings", index, "branchPrefix"],
+        });
+      }
+      seenBranchPrefixes.add(mapping.branchPrefix);
+    });
+  });
+
 export const ExecutionLoopSettingsSchema = z.object({
   autoMode: z.boolean().default(false),
   countdownSeconds: z.number().int().min(0).max(3_600).default(10),
@@ -60,6 +128,14 @@ export const ExecutionLoopSettingsSchema = z.object({
   ciEnabled: z.boolean().default(false),
   ciBaseBranch: z.string().min(1).default("main"),
   validationMaxRetries: z.number().int().min(0).max(20).default(3),
+  pullRequest: PullRequestAutomationSettingsSchema.default({
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  }),
 });
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
@@ -78,6 +154,28 @@ export type ProjectExecutionSettings = z.infer<
   typeof ProjectExecutionSettingsSchema
 >;
 
+export const TelegramNotificationLevelSchema = z.enum([
+  "all",
+  "important",
+  "critical",
+]);
+export type TelegramNotificationLevel = z.infer<
+  typeof TelegramNotificationLevelSchema
+>;
+
+export const TelegramNotificationSettingsSchema = z
+  .object({
+    level: TelegramNotificationLevelSchema.default("all"),
+    suppressDuplicates: z.boolean().default(true),
+  })
+  .default({
+    level: "all",
+    suppressDuplicates: true,
+  });
+export type TelegramNotificationSettings = z.infer<
+  typeof TelegramNotificationSettingsSchema
+>;
+
 // 2. CLI Settings
 export const ProjectRecordSchema = z.object({
   name: z.string().min(1),
@@ -94,6 +192,7 @@ export const CliSettingsSchema = z
       enabled: z.boolean().default(false),
       botToken: z.string().min(1).optional(),
       ownerId: z.number().int().positive().optional(),
+      notifications: TelegramNotificationSettingsSchema,
     }),
     internalWork: z
       .object({
@@ -111,6 +210,14 @@ export const CliSettingsSchema = z
       ciEnabled: false,
       ciBaseBranch: "main",
       validationMaxRetries: 3,
+      pullRequest: {
+        defaultTemplatePath: null,
+        templateMappings: [],
+        labels: [],
+        assignees: [],
+        createAsDraft: false,
+        markReadyOnApproval: false,
+      },
     }),
     exceptionRecovery: ExceptionRecoverySettingsSchema.default({
       maxAttempts: 1,
@@ -193,6 +300,7 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   ciEnabled: z.boolean().optional(),
   ciBaseBranch: z.string().min(1).optional(),
   validationMaxRetries: z.number().int().min(0).max(20).optional(),
+  pullRequest: PullRequestAutomationSettingsOverrideSchema.optional(),
 });
 
 const ExceptionRecoverySettingsOverrideSchema = z.object({
@@ -207,6 +315,12 @@ export const CliSettingsOverrideSchema = z.object({
       enabled: z.boolean().optional(),
       botToken: z.string().min(1).optional(),
       ownerId: z.number().int().positive().optional(),
+      notifications: z
+        .object({
+          level: TelegramNotificationLevelSchema.optional(),
+          suppressDuplicates: z.boolean().optional(),
+        })
+        .optional(),
     })
     .optional(),
   internalWork: z

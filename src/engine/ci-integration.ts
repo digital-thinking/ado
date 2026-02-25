@@ -1,6 +1,7 @@
 import type { ProcessRunner } from "../process";
 import { MissingCommitError } from "../errors";
 import type { AuthPolicy, Role } from "../security/policy";
+import type { PullRequestAutomationSettings, Task } from "../types";
 import {
   OrchestrationAuthorizationDeniedError,
   authorizeOrchestratorAction,
@@ -11,8 +12,10 @@ import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
 export type RunCiIntegrationInput = {
   phaseId: string;
   phaseName: string;
+  tasks: Task[];
   cwd: string;
   baseBranch: string;
+  pullRequest: PullRequestAutomationSettings;
   runner: ProcessRunner;
   role: Role | null;
   policy: AuthPolicy;
@@ -25,6 +28,73 @@ export type RunCiIntegrationResult = {
   baseBranch: string;
   prUrl: string;
 };
+
+/**
+ * Derives PR metadata from phase/task context with deterministic formatting.
+ * Includes validation safeguards to ensure metadata meets platform requirements.
+ */
+export function derivePullRequestMetadata(
+  phaseName: string,
+  tasks: Task[],
+): { title: string; body: string } {
+  const MAX_TITLE_LENGTH = 250;
+  const MAX_BODY_LENGTH = 60000;
+
+  const trimmedPhaseName = phaseName.trim() || "Untitled Phase";
+  let title = trimmedPhaseName.replace(/\r?\n/g, " ");
+  if (title.length > MAX_TITLE_LENGTH) {
+    title = title.substring(0, MAX_TITLE_LENGTH - 3) + "...";
+  }
+
+  const completedTasks = tasks
+    .filter((t) => t.status === "DONE")
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const taskList = completedTasks
+    .map(
+      (t) =>
+        `- **${(t.title || "Untitled Task").trim()}**: ${(t.description || "No description.").trim()}`,
+    )
+    .join("\n");
+
+  const bodyParts = [
+    `## Phase: ${trimmedPhaseName}`,
+    "",
+    "### Completed Tasks",
+    taskList || "_No tasks recorded._",
+    "",
+    "---",
+    "*Automated PR created by [IxADO](https://github.com/digital-thinking/ado).*",
+  ];
+
+  let body = bodyParts.join("\n").trim();
+  if (body.length > MAX_BODY_LENGTH) {
+    body = body.substring(0, MAX_BODY_LENGTH - 50) + "\n\n... (body truncated)";
+  }
+
+  return { title, body };
+}
+
+function resolveTemplatePath(
+  settings: PullRequestAutomationSettings,
+  headBranch: string,
+): string | undefined {
+  const sortedMappings = [...settings.templateMappings].sort((a, b) => {
+    const prefixLengthDelta = b.branchPrefix.length - a.branchPrefix.length;
+    if (prefixLengthDelta !== 0) {
+      return prefixLengthDelta;
+    }
+    return a.branchPrefix.localeCompare(b.branchPrefix);
+  });
+
+  const matched = sortedMappings.find((mapping) =>
+    headBranch.startsWith(mapping.branchPrefix),
+  );
+  if (matched) {
+    return matched.templatePath;
+  }
+  return settings.defaultTemplatePath ?? undefined;
+}
 
 export async function runCiIntegration(
   input: RunCiIntegrationInput,
@@ -82,11 +152,17 @@ export async function runCiIntegration(
     setUpstream: true,
   });
 
+  const metadata = derivePullRequestMetadata(input.phaseName, input.tasks);
+
   const prUrl = await privileged.createPullRequest({
     base: baseBranch,
     head: headBranch,
-    title: input.phaseName,
-    body: `Automated PR created by IxADO for ${input.phaseName}.`,
+    title: metadata.title,
+    body: metadata.body,
+    templatePath: resolveTemplatePath(input.pullRequest, headBranch),
+    labels: input.pullRequest.labels,
+    assignees: input.pullRequest.assignees,
+    draft: input.pullRequest.createAsDraft,
     cwd: input.cwd,
   });
 
