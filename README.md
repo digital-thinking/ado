@@ -104,6 +104,16 @@ Useful commands:
 - `ixado config show|mode|assignee|recovery`
 - `ixado web start|stop`
 
+### Configuration precedence
+
+IxADO resolves runtime config using this precedence order:
+
+1. **Project settings** (`.ixado/settings.json` in your current repo, or `IXADO_SETTINGS_FILE` if set)
+2. **Global defaults** (`~/.ixado/config.json`, or `IXADO_GLOBAL_CONFIG_FILE` if set)
+3. **Built-in defaults**
+
+So project settings win over global defaults for overlapping keys. Use `ixado config show` to view the effective values and scope message.
+
 ### Windows
 
 IxADO is packaged as a single compiled executable at `dist/ixado.exe`.

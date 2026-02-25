@@ -1307,10 +1307,23 @@ function parseConfigRecoveryMaxAttempts(rawValue: string): number {
   return maxAttempts;
 }
 
+function getSettingsPrecedenceMessage(settingsFilePath: string): string {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  if (settingsFilePath === globalSettingsFilePath) {
+    return `Scope: global defaults (${globalSettingsFilePath}).`;
+  }
+
+  return [
+    `Scope: project overrides (${settingsFilePath}).`,
+    `Precedence: project settings override global defaults (${globalSettingsFilePath}).`,
+  ].join(" ");
+}
+
 async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  console.info(`Settings: ${settingsFilePath}`);
+  console.info(`Settings file: ${settingsFilePath}`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
   console.info(
     `Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`,
   );
@@ -1348,6 +1361,7 @@ async function runConfigModeCommand({
     `Execution loop mode set to ${saved.executionLoop.autoMode ? "AUTO" : "MANUAL"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
 }
 
 async function runConfigAssigneeCommand({
@@ -1390,6 +1404,7 @@ async function runConfigAssigneeCommand({
   });
   console.info(`Default coding CLI set to ${saved.internalWork.assignee}.`);
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
 }
 
 async function runConfigUsageCommand({
@@ -1422,6 +1437,7 @@ async function runConfigUsageCommand({
     `Codexbar usage telemetry set to ${saved.usage.codexbarEnabled ? "ON" : "OFF"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
 }
 
 async function runConfigRecoveryCommand({
@@ -1453,6 +1469,7 @@ async function runConfigRecoveryCommand({
     `Exception recovery max attempts set to ${saved.exceptionRecovery.maxAttempts}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
 }
 
 async function runCli(args: string[]): Promise<void> {
@@ -1561,7 +1578,7 @@ async function runCli(args: string[]): Promise<void> {
       subcommands: [
         {
           name: "show",
-          description: "Show global defaults",
+          description: "Show effective config (project overrides global)",
           action: runConfigShowCommand,
         },
         {
