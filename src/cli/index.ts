@@ -27,6 +27,10 @@ import {
   WorkerAssigneeSchema,
   type CLIAdapterId,
 } from "../types";
+import {
+  formatRuntimeEventForCli,
+  formatRuntimeEventForTelegram,
+} from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
@@ -1197,9 +1201,10 @@ async function runPhaseRunCommand({
       role: "admin",
     },
     loopControl,
-    async (message) => {
+    async (event) => {
+      console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
       if (telegramRuntime) {
-        await telegramRuntime.notifyOwner(message);
+        await telegramRuntime.notifyOwner(formatRuntimeEventForTelegram(event));
       }
     },
   );

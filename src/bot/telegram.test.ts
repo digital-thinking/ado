@@ -9,6 +9,10 @@ import {
   handleTasksCommand,
 } from "./telegram";
 import type { ProjectState } from "../types";
+import {
+  createRuntimeEvent,
+  formatRuntimeEventForTelegram,
+} from "../types/runtime-events";
 
 type FakeCtx = {
   from?: { id?: number };
@@ -57,14 +61,38 @@ function buildState(): ProjectState {
 }
 
 describe("telegram command handlers", () => {
+  test("formats structured runtime outcomes for Telegram notifications", () => {
+    const event = createRuntimeEvent({
+      family: "terminal-outcome",
+      type: "terminal.outcome",
+      payload: {
+        outcome: "success",
+        summary: "Phase review approved.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+      },
+    });
+
+    expect(formatRuntimeEventForTelegram(event)).toBe(
+      "Outcome: Phase review approved.",
+    );
+  });
+
   test("rejects unauthorized status call", async () => {
     const ctx = createCtx(999);
     let called = false;
 
-    await handleStatusCommand(ctx, 123, async () => {
-      called = true;
-      return buildState();
-    }, () => [], ["CODEX_CLI"]);
+    await handleStatusCommand(
+      ctx,
+      123,
+      async () => {
+        called = true;
+        return buildState();
+      },
+      () => [],
+      ["CODEX_CLI"],
+    );
 
     expect(called).toBe(false);
     expect(ctx.replies).toEqual(["Unauthorized user."]);
@@ -84,7 +112,7 @@ describe("telegram command handlers", () => {
           taskId: "22222222-2222-2222-2222-222222222222",
         },
       ],
-      ["CODEX_CLI", "CLAUDE_CLI"]
+      ["CODEX_CLI", "CLAUDE_CLI"],
     );
 
     expect(ctx.replies).toHaveLength(1);
@@ -102,7 +130,9 @@ describe("telegram command handlers", () => {
 
     expect(ctx.replies).toHaveLength(1);
     expect(ctx.replies[0]).toContain("Tasks for Phase 3:");
-    expect(ctx.replies[0]).toContain("1. [IN_PROGRESS] Implement Telegram adapter (CODEX_CLI)");
+    expect(ctx.replies[0]).toContain(
+      "1. [IN_PROGRESS] Implement Telegram adapter (CODEX_CLI)",
+    );
   });
 
   test("returns no active phase when there is no active phase", async () => {
@@ -132,12 +162,12 @@ describe("telegram command handlers", () => {
       ["CODEX_CLI", "MOCK_CLI"],
       "MOCK_CLI",
       async (input) => {
-      expect(input.taskNumber).toBe(1);
-      expect(input.assignee).toBe("CODEX_CLI");
-      const state = buildState();
-      state.phases[0].tasks[0].status = "DONE";
-      return state;
-      }
+        expect(input.taskNumber).toBe(1);
+        expect(input.assignee).toBe("CODEX_CLI");
+        const state = buildState();
+        state.phases[0].tasks[0].status = "DONE";
+        return state;
+      },
     );
 
     expect(ctx.replies[0]).toContain("Starting task");
@@ -152,14 +182,17 @@ describe("telegram command handlers", () => {
       123,
       ["CODEX_CLI"],
       "CODEX_CLI",
-      async () => buildState()
+      async () => buildState(),
     );
 
     expect(ctx.replies).toEqual(["Usage: /starttask <taskNumber> [assignee]"]);
   });
 
   test("sets active phase through shared setter", async () => {
-    const ctx = createCtx(123, "/setactivephase 11111111-1111-1111-1111-111111111111");
+    const ctx = createCtx(
+      123,
+      "/setactivephase 11111111-1111-1111-1111-111111111111",
+    );
 
     await handleSetActivePhaseCommand(ctx, 123, async (input) => {
       expect(input.phaseId).toBe("11111111-1111-1111-1111-111111111111");
@@ -176,7 +209,9 @@ describe("telegram command handlers", () => {
 
     await handleSetActivePhaseCommand(ctx, 123, async () => buildState());
 
-    expect(ctx.replies).toEqual(["Usage: /setactivephase <phaseNumber|phaseId>"]);
+    expect(ctx.replies).toEqual([
+      "Usage: /setactivephase <phaseNumber|phaseId>",
+    ]);
   });
 
   test("next command triggers loop advancement callback", async () => {

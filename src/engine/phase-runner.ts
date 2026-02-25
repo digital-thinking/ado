@@ -20,6 +20,7 @@ import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
 import { PhasePreflightError } from "../errors";
 import { type CLIAdapterId, type Phase, type Task } from "../types";
+import { createRuntimeEvent, type RuntimeEvent } from "../types/runtime-events";
 
 /**
  * Picks the index of the next task to execute, applying explicit priority rules
@@ -71,7 +72,7 @@ export class PhaseRunner {
     private control: ControlCenterService,
     private config: PhaseRunnerConfig,
     private loopControl: PhaseLoopControl = new PhaseLoopControl(),
-    private notifyLoopEvent?: (message: string) => Promise<void>,
+    private notifyLoopEvent?: (event: RuntimeEvent) => Promise<void>,
     private testerRunner: ProcessRunner = new ProcessManager(),
   ) {
     this.git = new GitManager(this.testerRunner);
@@ -123,6 +124,22 @@ export class PhaseRunner {
           phaseId: completedPhase.id,
           status: "DONE",
         });
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "terminal-outcome",
+            type: "terminal.outcome",
+            payload: {
+              outcome: "success",
+              summary: `Phase ${completedPhase.name} completed successfully.`,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: completedPhase.id,
+              phaseName: completedPhase.name,
+            },
+          }),
+        );
       }
     } finally {
       rl.close();
@@ -192,6 +209,22 @@ export class PhaseRunner {
       phaseId: phase.id,
       status: "BRANCHING",
     });
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "task-lifecycle",
+        type: "task.lifecycle.phase-update",
+        payload: {
+          status: "BRANCHING",
+          message: "Preparing phase branch.",
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
+    );
     console.info(`Execution loop: preparing branch ${phase.branchName}.`);
 
     while (true) {
@@ -262,6 +295,22 @@ Recovery: ${recoveryMessage}`,
       phaseId: phase.id,
       status: "CODING",
     });
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "task-lifecycle",
+        type: "task.lifecycle.phase-update",
+        payload: {
+          status: "CODING",
+          message: "Phase entered coding status.",
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
+    );
   }
 
   private async executionLoop(
@@ -360,6 +409,27 @@ Recovery: ${recoveryMessage}`,
     console.info(
       `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
     );
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "task-lifecycle",
+        type: "task.lifecycle.start",
+        payload: {
+          assignee: effectiveAssignee,
+          resume: resumeSession,
+          message: `Starting ${nextTaskLabel} with ${effectiveAssignee}.`,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          taskId: task.id,
+          taskTitle: task.title,
+          taskNumber,
+          adapterId: effectiveAssignee,
+        },
+      }),
+    );
 
     let taskRunCount = 0;
     const maxTaskRunCount = Math.max(1, this.config.maxRecoveryAttempts + 1);
@@ -381,6 +451,26 @@ Recovery: ${recoveryMessage}`,
       console.info(
         `Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`,
       );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "task-lifecycle",
+          type: "task.lifecycle.finish",
+          payload: {
+            status: resultTask.status,
+            message: `${nextTaskLabel} finished with status ${resultTask.status}.`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: updatedPhase.id,
+            phaseName: updatedPhase.name,
+            taskId: resultTask.id,
+            taskTitle: resultTask.title,
+            taskNumber,
+            adapterId: effectiveAssignee,
+          },
+        }),
+      );
       if (resultTask.status !== "FAILED") {
         return;
       }
@@ -401,6 +491,7 @@ Recovery: ${recoveryMessage}`,
           taskTitle: resultTask.title,
           errorMessage: failureMessage,
           category: resultTask.errorCategory,
+          adapterFailureKind: (resultTask as any).adapterFailureKind,
         });
         console.info(
           `Execution loop: recovery fixed ${nextTaskLabel}, retrying task.`,
@@ -436,8 +527,24 @@ Recovery: ${recoveryMessage}`,
     task: Task,
     taskNumber: number,
   ): Promise<void> {
-    await this.notifyLoopEvent?.(
-      `Task Done: ${phase.name} #${taskNumber} ${task.title} (${task.status}).`,
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "tester-recovery",
+        type: "tester.activity",
+        payload: {
+          stage: "started",
+          summary: `Tester started after task #${taskNumber} ${task.title}.`,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          taskId: task.id,
+          taskTitle: task.title,
+          taskNumber,
+        },
+      }),
     );
 
     const testerResult = await runTesterWorkflow({
@@ -489,7 +596,25 @@ Recovery: ${recoveryMessage}`,
 
     if (testerResult.status === "SKIPPED") {
       console.warn(testerResult.reason);
-      await this.notifyLoopEvent?.(`Tester skipped: ${testerResult.reason}`);
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "tester-recovery",
+          type: "tester.activity",
+          payload: {
+            stage: "skipped",
+            summary: testerResult.reason,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            taskNumber,
+          },
+        }),
+      );
       return;
     }
 
@@ -497,8 +622,24 @@ Recovery: ${recoveryMessage}`,
       console.info(
         `Tester workflow failed after task #${taskNumber}. Created fix task: ${testerResult.fixTaskTitle}.`,
       );
-      await this.notifyLoopEvent?.(
-        `Test Fail: ${phase.name} after ${task.title}. Created fix task: ${testerResult.fixTaskTitle}.`,
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "tester-recovery",
+          type: "tester.activity",
+          payload: {
+            stage: "failed",
+            summary: `Tester failed after ${task.title}. Created fix task: ${testerResult.fixTaskTitle}.`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            taskNumber,
+          },
+        }),
       );
       await this.control.setPhaseStatus({
         phaseId: phase.id,
@@ -513,6 +654,25 @@ ${testerResult.fixTaskDescription}`.trim(),
     }
 
     console.info(`Tester workflow passed after task #${taskNumber}.`);
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "tester-recovery",
+        type: "tester.activity",
+        payload: {
+          stage: "passed",
+          summary: `Tester passed after task #${taskNumber}.`,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+          taskId: task.id,
+          taskTitle: task.title,
+          taskNumber,
+        },
+      }),
+    );
   }
 
   private async handleCiIntegration(phase: Phase): Promise<void> {
@@ -520,6 +680,22 @@ ${testerResult.fixTaskDescription}`.trim(),
       phaseId: phase.id,
       status: "CREATING_PR",
     });
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "task-lifecycle",
+        type: "task.lifecycle.phase-update",
+        payload: {
+          status: "CREATING_PR",
+          message: "Creating PR and running CI integration.",
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
+    );
     console.info(
       "Optional CI integration enabled. Pushing branch and creating PR via gh.",
     );
@@ -573,8 +749,20 @@ ${testerResult.fixTaskDescription}`.trim(),
     console.info(
       `Optional CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`,
     );
-    await this.notifyLoopEvent?.(
-      `PR Created: ${phase.name} -> ${ciResult.prUrl}`,
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "task-lifecycle",
+        type: "task.lifecycle.progress",
+        payload: {
+          message: `PR Created: ${phase.name} -> ${ciResult.prUrl}`,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
     );
 
     await this.runCiValidationStep(phase);
@@ -631,8 +819,21 @@ ${testerResult.fixTaskDescription}`.trim(),
       console.info(
         `CI validation loop reached max retries (${validationResult.maxRetries}). Pending comments: ${validationResult.pendingComments.join(" | ")}`,
       );
-      await this.notifyLoopEvent?.(
-        `Review: ${phase.name} needs fixes after ${validationResult.fixAttempts} attempts. Pending: ${validationResult.pendingComments.join(" | ")}`,
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "terminal-outcome",
+          type: "terminal.outcome",
+          payload: {
+            outcome: "failure",
+            summary: `Review requires fixes after ${validationResult.fixAttempts} attempts.`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
       );
       throw new Error(
         "Execution loop stopped after CI validation max retries.",
@@ -647,8 +848,21 @@ ${testerResult.fixTaskDescription}`.trim(),
     console.info(
       `CI validation loop approved after ${validationResult.reviews.length} review round(s) and ${validationResult.fixAttempts} fix attempt(s).`,
     );
-    await this.notifyLoopEvent?.(
-      `Review: ${phase.name} approved after ${validationResult.reviews.length} round(s).`,
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "terminal-outcome",
+        type: "terminal.outcome",
+        payload: {
+          outcome: "success",
+          summary: `Review approved after ${validationResult.reviews.length} round(s).`,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: phase.id,
+          phaseName: phase.name,
+        },
+      }),
     );
   }
 
@@ -659,11 +873,13 @@ ${testerResult.fixTaskDescription}`.trim(),
     taskTitle?: string;
     errorMessage: string;
     category?: any;
+    adapterFailureKind?: any;
   }): Promise<void> {
     const exception = classifyRecoveryException({
       message: input.errorMessage,
       category: input.category,
       phaseId: input.phaseId,
+      adapterFailureKind: input.adapterFailureKind,
       taskId: input.taskId,
     });
     if (!isRecoverableException(exception)) {
@@ -685,6 +901,26 @@ ${testerResult.fixTaskDescription}`.trim(),
     ) {
       console.info(
         `Recovery attempt ${attemptNumber}/${this.config.maxRecoveryAttempts} for ${input.taskTitle ?? input.phaseName}: ${exception.category}.`,
+      );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "tester-recovery",
+          type: "recovery.activity",
+          payload: {
+            stage: "attempt-started",
+            summary: `Recovery attempt ${attemptNumber}/${this.config.maxRecoveryAttempts} for ${input.taskTitle ?? input.phaseName}.`,
+            attemptNumber,
+            category: exception.category,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: input.phaseId,
+            phaseName: input.phaseName,
+            taskId: input.taskId,
+            taskTitle: input.taskTitle,
+          },
+        }),
       );
       try {
         const recovery = await runExceptionRecovery({
@@ -728,6 +964,26 @@ ${testerResult.fixTaskDescription}`.trim(),
             },
           });
           console.info(`Recovery fixed: ${recovery.result.reasoning}`);
+          await this.publishRuntimeEvent(
+            createRuntimeEvent({
+              family: "tester-recovery",
+              type: "recovery.activity",
+              payload: {
+                stage: "attempt-fixed",
+                summary: recovery.result.reasoning,
+                attemptNumber,
+                category: exception.category,
+              },
+              context: {
+                source: "PHASE_RUNNER",
+                projectName: this.config.projectName,
+                phaseId: input.phaseId,
+                phaseName: input.phaseName,
+                taskId: input.taskId,
+                taskTitle: input.taskTitle,
+              },
+            }),
+          );
           return;
         }
 
@@ -738,11 +994,38 @@ ${testerResult.fixTaskDescription}`.trim(),
         const message = error instanceof Error ? error.message : String(error);
         lastError = new Error(message);
         console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "tester-recovery",
+            type: "recovery.activity",
+            payload: {
+              stage: "attempt-failed",
+              summary: message,
+              attemptNumber,
+              category: exception.category,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: input.phaseId,
+              phaseName: input.phaseName,
+              taskId: input.taskId,
+              taskTitle: input.taskTitle,
+            },
+          }),
+        );
       }
     }
 
     throw new Error(
       `Recovery attempts exhausted (${this.config.maxRecoveryAttempts}): ${lastError?.message ?? input.errorMessage}`,
     );
+  }
+
+  private async publishRuntimeEvent(event: RuntimeEvent): Promise<void> {
+    if (!this.notifyLoopEvent) {
+      return;
+    }
+    await this.notifyLoopEvent(event);
   }
 }

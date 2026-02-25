@@ -1490,6 +1490,38 @@ export function controlCenterHtml(params: {
 
         source.onmessage = (event) => {
           const data = JSON.parse(event.data);
+          const runtimeEvent = data.runtimeEvent;
+          if (runtimeEvent && runtimeEvent.type === "adapter.output") {
+            const span = document.createElement("span");
+            const line =
+              data.formattedLine ||
+              runtimeEvent.payload?.line ||
+              data.line ||
+              "";
+            span.textContent = line + "\\n";
+            logModalBody.appendChild(span);
+            logModalBody.scrollTop = logModalBody.scrollHeight;
+            return;
+          }
+          if (runtimeEvent && runtimeEvent.type === "terminal.outcome") {
+            const status =
+              runtimeEvent.payload?.agentStatus ||
+              data.status ||
+              runtimeEvent.payload?.outcome ||
+              "unknown";
+            const summary = data.failureSummary ? " Failure: " + data.failureSummary : "";
+            logModalStatus.textContent = "Agent status: " + status + "." + summary + " Stream ended.";
+            const linksHtml = renderRecoveryLinks(data.recoveryLinks);
+            if (linksHtml) {
+              const linksLine = document.createElement("div");
+              linksLine.innerHTML = "Recovery traces: " + linksHtml;
+              logModalStatus.appendChild(document.createElement("br"));
+              logModalStatus.appendChild(linksLine);
+            }
+            source.close();
+            currentEventSource = null;
+            return;
+          }
           if (data.type === "output") {
             const span = document.createElement("span");
             span.textContent = (data.formattedLine || data.line) + "\\n";

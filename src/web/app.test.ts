@@ -789,6 +789,8 @@ describe("multi-project api", () => {
     expect(decodedChunk1).toContain('"type":"output"');
     expect(decodedChunk1).toContain('"agentId":"agent-1"');
     expect(decodedChunk1).toContain('"line":"line 1"');
+    expect(decodedChunk1).toContain('"runtimeEvent":{"version":1');
+    expect(decodedChunk1).toContain('"type":"adapter.output"');
     expect(decodedChunk1).toContain(
       '"formattedLine":"[phase: phase-1 | task: task-1] line 1"',
     );
@@ -806,6 +808,8 @@ describe("multi-project api", () => {
     const decodedChunk2 = decoder.decode(chunk2?.value);
     expect(decodedChunk2).toContain('"type":"output"');
     expect(decodedChunk2).toContain('"line":"line 2"');
+    expect(decodedChunk2).toContain('"runtimeEvent":{"version":1');
+    expect(decodedChunk2).toContain('"type":"adapter.output"');
     expect(decodedChunk2).toContain(
       '"formattedLine":"[phase: phase-1 | task: task-1] line 2"',
     );
@@ -824,6 +828,7 @@ describe("multi-project api", () => {
     expect(decodedChunk3).toContain('"type":"status"');
     expect(decodedChunk3).toContain('"agentId":"agent-1"');
     expect(decodedChunk3).toContain('"status":"STOPPED"');
+    expect(decodedChunk3).toContain('"type":"terminal.outcome"');
     expect(decodedChunk3).toContain('"recoveryLinks":[{"label":"Task card"');
 
     const chunk4 = await reader?.read();

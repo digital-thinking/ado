@@ -3,6 +3,11 @@ import type { ApiDependencies } from "./types";
 import { json, readJson, asString } from "./utils";
 import type { ProjectState } from "../../types";
 import {
+  createRuntimeEvent,
+  toLegacyAgentEvent,
+  type RuntimeEvent,
+} from "../../types/runtime-events";
+import {
   buildRecoveryTraceLinks,
   formatPhaseTaskContext,
   summarizeFailure,
@@ -213,11 +218,6 @@ export async function handleAgentsApi(
       context,
       attempts: context.recoveryAttempts,
     });
-    const failureSummary =
-      agent.status === "FAILED"
-        ? summarizeFailure(agent.outputTail.slice(-10).join("\n"))
-        : undefined;
-
     const stream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
@@ -226,53 +226,165 @@ export async function handleAgentsApi(
             encoder.encode(`data: ${JSON.stringify(data)}\n\n`),
           );
         };
-
-        // Send initial backlog
-        agent.outputTail.forEach((line) => {
-          send({
-            type: "output",
-            agentId,
-            line,
-            context: contextLabel,
-            formattedLine: contextLabel ? `[${contextLabel}] ${line}` : line,
-          });
-        });
-
-        if (agent.status !== "RUNNING") {
-          send({
-            type: "status",
-            agentId,
-            status: agent.status,
-            context: contextLabel,
-            failureSummary,
-            recoveryLinks,
-          });
-          controller.close();
-          return;
-        }
-
-        const unsubscribe = deps.agents.subscribe(agentId, (event) => {
-          if (event.type === "output") {
+        const sendRuntimeEvent = (event: RuntimeEvent) => {
+          const legacy = toLegacyAgentEvent(event);
+          if (legacy?.type === "output") {
             send({
-              ...event,
+              ...legacy,
+              runtimeEvent: event,
               context: contextLabel,
               formattedLine: contextLabel
-                ? `[${contextLabel}] ${event.line}`
-                : event.line,
+                ? `[${contextLabel}] ${legacy.line}`
+                : legacy.line,
             });
-          } else {
+            return;
+          }
+          if (legacy?.type === "status") {
             const nextSummary =
-              event.status === "FAILED"
+              legacy.status === "FAILED"
                 ? summarizeFailure(agent.outputTail.slice(-10).join("\n"))
                 : undefined;
             send({
-              ...event,
+              ...legacy,
+              runtimeEvent: event,
               context: contextLabel,
               failureSummary: nextSummary,
               recoveryLinks,
             });
           }
-          if (event.type === "status" && event.status !== "RUNNING") {
+        };
+        const normalizeIncomingEvent = (raw: unknown): RuntimeEvent | null => {
+          if (!raw || typeof raw !== "object") {
+            return null;
+          }
+          const candidate = raw as Record<string, unknown>;
+          if (
+            candidate.type === "output" &&
+            typeof candidate.agentId === "string" &&
+            typeof candidate.line === "string"
+          ) {
+            return createRuntimeEvent({
+              family: "adapter-output",
+              type: "adapter.output",
+              payload: {
+                stream: "system",
+                line: candidate.line,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId: candidate.agentId,
+                adapterId: agent.adapterId,
+              },
+            });
+          }
+          if (
+            candidate.type === "status" &&
+            typeof candidate.agentId === "string" &&
+            (candidate.status === "RUNNING" ||
+              candidate.status === "STOPPED" ||
+              candidate.status === "FAILED")
+          ) {
+            return createRuntimeEvent({
+              family: "terminal-outcome",
+              type: "terminal.outcome",
+              payload: {
+                outcome:
+                  candidate.status === "FAILED"
+                    ? "failure"
+                    : candidate.status === "RUNNING"
+                      ? "cancelled"
+                      : "success",
+                summary: `Agent status: ${candidate.status}`,
+                agentStatus: candidate.status,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId: candidate.agentId,
+                adapterId: agent.adapterId,
+              },
+            });
+          }
+          return candidate as RuntimeEvent;
+        };
+
+        // Send initial backlog
+        agent.outputTail.forEach((line) => {
+          sendRuntimeEvent(
+            createRuntimeEvent({
+              family: "adapter-output",
+              type: "adapter.output",
+              payload: {
+                stream: "system",
+                line,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId,
+                adapterId: agent.adapterId,
+              },
+            }),
+          );
+        });
+
+        if (agent.status !== "RUNNING") {
+          sendRuntimeEvent(
+            createRuntimeEvent({
+              family: "terminal-outcome",
+              type: "terminal.outcome",
+              payload: {
+                outcome: agent.status === "FAILED" ? "failure" : "success",
+                summary:
+                  agent.status === "FAILED"
+                    ? "Agent failed."
+                    : "Agent completed.",
+                agentStatus: agent.status,
+                exitCode: agent.lastExitCode,
+              },
+              context: {
+                source: "WEB_API",
+                projectName: agent.projectName ?? deps.projectName,
+                phaseId: context.phaseId,
+                phaseName: context.phaseName,
+                taskId: context.taskId,
+                taskTitle: context.taskTitle,
+                taskNumber: context.taskNumber,
+                agentId,
+                adapterId: agent.adapterId,
+              },
+            }),
+          );
+          controller.close();
+          return;
+        }
+
+        const unsubscribe = deps.agents.subscribe(agentId, (event) => {
+          const normalized = normalizeIncomingEvent(event);
+          if (!normalized) {
+            return;
+          }
+          sendRuntimeEvent(normalized);
+          if (
+            normalized.type === "terminal.outcome" &&
+            normalized.payload.agentStatus !== "RUNNING"
+          ) {
             unsubscribe();
             controller.close();
           }
