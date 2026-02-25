@@ -65,6 +65,7 @@ const TERMINAL_PHASE_STATUSES = [
   "DONE",
   "AWAITING_CI",
   "READY_FOR_REVIEW",
+  "CI_FAILED",
 ] as const;
 
 const ACTIONABLE_TASK_STATUSES = ["TODO", "CI_FIX"] as const;

@@ -1293,7 +1293,6 @@ export class ControlCenterService {
 
     const networkProbe = await this.runCommandProbe(state.rootDir, "git", [
       "ls-remote",
-      "--heads",
       "https://github.com/github/gitignore.git",
       "HEAD",
     ]);
@@ -1909,6 +1908,8 @@ export class ControlCenterService {
       assignee: "UNASSIGNED",
       resultContext: undefined,
       errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
       completionVerification: undefined,
     });
 

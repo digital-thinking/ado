@@ -101,7 +101,7 @@ describe("P20-005 CLI reliability regression tests", () => {
     const result = runIxado(["phase", "run", "auto", "0"], sandbox);
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('already in terminal status "DONE"');
+    expect(result.stderr).toContain('in terminal status "DONE"');
   });
 
   test("P20-003: preflight checks fail for missing branchName in CLI", async () => {
