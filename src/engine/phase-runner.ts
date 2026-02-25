@@ -721,6 +721,7 @@ ${testerResult.fixTaskDescription}`.trim(),
         ciResult = await runCiIntegration({
           phaseId: phase.id,
           phaseName: phase.name,
+          tasks: phase.tasks,
           cwd: this.config.projectRootDir,
           baseBranch: this.config.ciBaseBranch,
           pullRequest: this.config.ciPullRequest,

@@ -60,6 +60,7 @@ describe("execution loop integration", () => {
     const ciResult = await runCiIntegration({
       phaseId: TEST_PHASE.id,
       phaseName: TEST_PHASE.name,
+      tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -113,6 +114,7 @@ describe("execution loop integration", () => {
       runCiIntegration({
         phaseId: TEST_PHASE.id,
         phaseName: TEST_PHASE.name,
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,

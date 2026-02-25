@@ -140,6 +140,7 @@ describe("PhaseRunner", () => {
             {
               id: taskId,
               title: "P23-001",
+              description: "P23-001 description",
               status: "TODO",
               assignee: "UNASSIGNED",
               dependencies: [],
@@ -228,6 +229,15 @@ describe("PhaseRunner", () => {
       .map((entry: any[]) => entry[0])
       .filter((call: any) => call.command === "gh");
     expect(ghCalls).toHaveLength(2);
+    expect(ghCalls[0].args).toContain("--title");
+    expect(ghCalls[0].args).toContain("Phase 23");
+    expect(ghCalls[0].args).toContain("--body");
+    expect(ghCalls[0].args[ghCalls[0].args.indexOf("--body") + 1]).toContain(
+      "## Phase: Phase 23",
+    );
+    expect(ghCalls[0].args[ghCalls[0].args.indexOf("--body") + 1]).toContain(
+      "- **P23-001**: ",
+    );
     expect(ghCalls[0].args).toContain("--draft");
     expect(ghCalls[1].args).toEqual(["pr", "ready", "2301"]);
   });

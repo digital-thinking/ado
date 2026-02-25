@@ -60,6 +60,7 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -74,6 +75,7 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -101,6 +103,7 @@ describe("P11-008 integration coverage", () => {
     const result = await runCiIntegration({
       phaseId: PHASE.id,
       phaseName: PHASE.name,
+      tasks: [],
       cwd: TEST_CWD,
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -151,6 +154,7 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: projectDir,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -202,6 +206,7 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -259,6 +264,7 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
+          tasks: [],
           cwd: TEST_CWD,
           baseBranch: "main",
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -279,6 +285,7 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
+          tasks: [],
           cwd: TEST_CWD,
           baseBranch: "main",
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -296,6 +303,7 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -317,6 +325,7 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -351,6 +360,7 @@ describe("P11-008 integration coverage", () => {
       const result = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -382,6 +392,7 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { OrchestrationAuthorizationDeniedError } from "../security/orchestration-authorizer";
 import { MockProcessRunner } from "../vcs/test-utils";
-import { runCiIntegration } from "./ci-integration";
+import { derivePullRequestMetadata, runCiIntegration } from "./ci-integration";
+import { type Task } from "../types";
 
 const DEFAULT_PULL_REQUEST_SETTINGS = {
   defaultTemplatePath: null,
@@ -12,6 +13,96 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
   createAsDraft: false,
   markReadyOnApproval: false,
 };
+
+describe("derivePullRequestMetadata", () => {
+  test("formats title and body with tasks sorted by ID", () => {
+    const tasks: Task[] = [
+      {
+        id: "t2",
+        title: "Task 2",
+        description: "Desc 2",
+        status: "CI_FIX",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+      {
+        id: "t1",
+        title: "Task 1",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+      {
+        id: "t3",
+        title: "Task 3",
+        description: "Desc 3",
+        status: "TODO",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+    ];
+
+    const { title, body } = derivePullRequestMetadata("Phase 1", tasks);
+
+    expect(title).toBe("Phase 1");
+    expect(body).toContain("## Phase: Phase 1");
+    expect(body).toContain("### Completed Tasks");
+    // t1 should come before t2 due to sorting
+    const t1Index = body.indexOf("- **Task 1**");
+    const t2Index = body.indexOf("- **Task 2**");
+    expect(t1Index).toBeLessThan(t2Index);
+    expect(body).not.toContain("Task 3");
+    expect(body).toContain(
+      "*Automated PR created by [IxADO](https://github.com/digital-thinking/ado).*",
+    );
+  });
+
+  test("handles empty tasks", () => {
+    const { body } = derivePullRequestMetadata("Phase 1", []);
+    expect(body).toContain("_No tasks recorded._");
+  });
+
+  test("truncates long title but keeps full name in body", () => {
+    const longName = "A".repeat(300);
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        title: "Task 1",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+    ];
+
+    const { title, body } = derivePullRequestMetadata(longName, tasks);
+    expect(title.length).toBeLessThanOrEqual(250);
+    expect(title).toMatch(/\.\.\.$/);
+    expect(body).toContain(`## Phase: ${longName}`);
+  });
+
+  test("replaces newlines with spaces in title", () => {
+    const nameWithNewlines = "Phase 1\nSubtitle\r\nMore";
+    const { title } = derivePullRequestMetadata(nameWithNewlines, []);
+    expect(title).toBe("Phase 1 Subtitle More");
+  });
+
+  test("truncates long body", () => {
+    const tasks: Task[] = Array.from({ length: 1000 }).map((_, i) => ({
+      id: `t${i.toString().padStart(4, "0")}`,
+      title: `Task ${i}`,
+      description: "D".repeat(100),
+      status: "DONE",
+      assignee: "UNASSIGNED",
+      dependencies: [],
+    }));
+
+    const { body } = derivePullRequestMetadata("Phase 1", tasks);
+    expect(body.length).toBeLessThanOrEqual(60000);
+    expect(body).toMatch(/\.\.\. \(body truncated\)$/);
+  });
+});
 
 describe("runCiIntegration", () => {
   test("pushes branch and creates PR", async () => {
@@ -25,9 +116,21 @@ describe("runCiIntegration", () => {
     ]);
     const setPrCalls: Array<{ phaseId: string; prUrl: string }> = [];
 
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        title: "Task 1",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+    ];
+
     const result = await runCiIntegration({
       phaseId: "11111111-1111-4111-8111-111111111111",
       phaseName: "Phase 5: CI Execution Loop",
+      tasks,
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -86,18 +189,13 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
     });
     expect(runner.calls[5]?.command).toBe("gh");
-    expect(runner.calls[5]?.args).toEqual([
-      "pr",
-      "create",
-      "--base",
-      "main",
-      "--head",
-      "phase-5-ci-execution-loop",
-      "--title",
-      "Phase 5: CI Execution Loop",
-      "--body",
-      "Automated PR created by IxADO for Phase 5: CI Execution Loop.",
-    ]);
+    const ghArgs = runner.calls[5]?.args as string[];
+    expect(ghArgs[0]).toBe("pr");
+    expect(ghArgs[1]).toBe("create");
+    expect(ghArgs[7]).toBe("Phase 5: CI Execution Loop");
+    expect(ghArgs[9]).toContain("## Phase: Phase 5: CI Execution Loop");
+    expect(ghArgs[9]).toContain("- **Task 1**: Desc 1");
+
     expect(setPrCalls).toEqual([
       {
         phaseId: "11111111-1111-4111-8111-111111111111",
@@ -113,6 +211,7 @@ describe("runCiIntegration", () => {
       runCiIntegration({
         phaseId: "11111111-1111-4111-8111-111111111111",
         phaseName: "Phase 5",
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "   ",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -150,6 +249,7 @@ describe("runCiIntegration", () => {
     const err = await runCiIntegration({
       phaseId: "11111111-1111-4111-8111-111111111111",
       phaseName: "Phase 5",
+      tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -187,6 +287,7 @@ describe("runCiIntegration", () => {
       runCiIntegration({
         phaseId: "11111111-1111-4111-8111-111111111111",
         phaseName: "Phase 5",
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -226,6 +327,7 @@ describe("runCiIntegration", () => {
       runCiIntegration({
         phaseId: "11111111-1111-4111-8111-111111111111",
         phaseName: "Phase 5",
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
@@ -267,6 +369,7 @@ describe("runCiIntegration", () => {
     await runCiIntegration({
       phaseId: "11111111-1111-4111-8111-111111111111",
       phaseName: "Phase 23",
+      tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: {
@@ -302,24 +405,17 @@ describe("runCiIntegration", () => {
       setPhasePrUrl: async () => {},
     });
 
-    expect(runner.calls[5]?.args).toEqual([
-      "pr",
-      "create",
-      "--base",
-      "main",
-      "--head",
-      "phase-23-feature",
-      "--title",
-      "Phase 23",
-      "--body",
-      "Automated PR created by IxADO for Phase 23.",
-      "--template",
-      ".github/pull_request_template_phase23.md",
-      "--label",
-      "ixado,phase-23",
-      "--assignee",
-      "octocat",
-      "--draft",
-    ]);
+    const ghArgs = runner.calls[5]?.args as string[];
+    expect(ghArgs[0]).toBe("pr");
+    expect(ghArgs[1]).toBe("create");
+    expect(ghArgs[7]).toBe("Phase 23");
+    expect(ghArgs[9]).toContain("## Phase: Phase 23");
+    expect(ghArgs).toContain("--template");
+    expect(ghArgs).toContain(".github/pull_request_template_phase23.md");
+    expect(ghArgs).toContain("--label");
+    expect(ghArgs).toContain("ixado,phase-23");
+    expect(ghArgs).toContain("--assignee");
+    expect(ghArgs).toContain("octocat");
+    expect(ghArgs).toContain("--draft");
   });
 });
