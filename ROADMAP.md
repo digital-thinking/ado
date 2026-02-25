@@ -32,6 +32,7 @@ Goal: Make CLI behavior predictable and self-explanatory for operators.
 Goal: Improve diagnosis and recovery speed for adapter/runtime issues.
 
 - Strengthen startup health diagnostics and early-failure surfacing.
+- Introduce a structured runtime event contract shared across CLI, Web, and Telegram surfaces.
 - Improve timeout and no-output handling with actionable telemetry.
 - Standardize adapter failure taxonomy for clearer recovery decisions.
 - Improve per-agent logs for fast root-cause identification.
@@ -57,3 +58,10 @@ Goal: Improve diagnosis and recovery speed for adapter/runtime issues.
   - CI failed/green transitions,
   - PR created/ready status.
 - Keep notification noise controlled with concise, high-signal messages.
+
+## Major Item 5: Extensibility Hooks
+
+Goal: Enable safe customization without forking core orchestration logic.
+
+- Add lifecycle extension hooks (`before_task_start`, `after_task_done`, `on_recovery`, `on_ci_failed`) with strict contracts.
+- Keep hook execution fail-fast and isolated so core phase-run determinism is preserved.
