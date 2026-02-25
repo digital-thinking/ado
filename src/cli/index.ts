@@ -411,6 +411,9 @@ async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(
       `Project '${existingProject.name}' is already registered at ${currentDir}.`,
     );
+    console.info(
+      `Next:    Run 'ixado switch ${existingProject.name}' to activate it, or 'ixado list' to see all projects.`,
+    );
     return;
   }
 
@@ -422,6 +425,9 @@ async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
   await saveCliSettings(globalSettingsFilePath, settings);
   console.info(
     `Registered project '${projectName}' at ${currentDir} in global config.`,
+  );
+  console.info(
+    `Next:    Run 'ixado switch ${projectName}' to set it active, then 'ixado phase create <name> <branch>'.`,
   );
 }
 
@@ -474,6 +480,7 @@ async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
   console.info(
     `Switched active project to '${project.name}' at ${project.rootDir}.`,
   );
+  console.info(`Next:    Run 'ixado status' to see phase and task state.`);
 }
 
 async function runOnboardCommand(): Promise<void> {
@@ -508,6 +515,9 @@ async function runOnboardCommand(): Promise<void> {
     if (settings.telegram.enabled) {
       console.info("Telegram bot credentials stored in settings file.");
     }
+    console.info(
+      `Next:    Run 'ixado init' to register this directory as a project, then 'ixado phase create <name> <branch>'.`,
+    );
   } finally {
     rl.close();
   }
@@ -560,12 +570,16 @@ async function runWebStopCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(`Web control center stopped (pid: ${result.record.pid}).`);
     console.info(`Web logs: ${result.record.logFilePath}`);
     console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
+    console.info(`Next:    Run 'ixado web start' to restart it.`);
     return;
   }
 
   if (result.status === "permission_denied") {
     console.info(
       `Web control center is running at ${result.record.url} (pid: ${result.record.pid}), but this user cannot stop it (permission denied).`,
+    );
+    console.info(
+      `Next:    Run as the user who started the process to stop it.`,
     );
     return;
   }
@@ -574,10 +588,12 @@ async function runWebStopCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(
       "Web control center was not running. Removed stale runtime metadata.",
     );
+    console.info(`Next:    Run 'ixado web start [port]' to start it.`);
     return;
   }
 
   console.info("Web control center is not running.");
+  console.info(`Next:    Run 'ixado web start [port]' to start it.`);
 }
 
 async function runWebServeCommand({
@@ -768,8 +784,17 @@ async function runTaskStartCommand({
   console.info(
     `Task #${taskNumber} ${task.title} finished with status ${task.status}.`,
   );
-  if (task.status === "FAILED" && task.errorLogs) {
-    console.info(`Failure details: ${task.errorLogs}`);
+  if (task.status === "FAILED") {
+    if (task.errorLogs) {
+      console.info(`Failure details: ${task.errorLogs}`);
+    }
+    console.info(
+      `Next:    Retry with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else {
+    console.info(
+      `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
+    );
   }
 }
 
@@ -821,8 +846,13 @@ async function runTaskCreateCommand({
   });
   const refreshedPhase =
     updated.phases.find((phase) => phase.id === activePhase.id) ?? activePhase;
+  const taskNumber = refreshedPhase.tasks.length;
   console.info(
-    `Created task #${refreshedPhase.tasks.length} in ${refreshedPhase.name}: ${title}.`,
+    `Created task #${taskNumber} in ${refreshedPhase.name}: ${title}.`,
+  );
+  console.info(`Status:  TODO — assignee: ${assignee}`);
+  console.info(
+    `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
   );
 }
 
@@ -924,8 +954,17 @@ async function runTaskRetryCommand({
   console.info(
     `Task #${taskNumber} ${retriedTask.title} finished with status ${retriedTask.status}.`,
   );
-  if (retriedTask.status === "FAILED" && retriedTask.errorLogs) {
-    console.info(`Failure details: ${retriedTask.errorLogs}`);
+  if (retriedTask.status === "FAILED") {
+    if (retriedTask.errorLogs) {
+      console.info(`Failure details: ${retriedTask.errorLogs}`);
+    }
+    console.info(
+      `Next:    Retry again with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else {
+    console.info(
+      `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
+    );
   }
 }
 
@@ -1018,6 +1057,9 @@ async function runTaskResetCommand({
   });
   console.info(
     `Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`,
+  );
+  console.info(
+    `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
   );
 }
 
@@ -1153,6 +1195,10 @@ async function runPhaseActiveCommand({
   }
 
   console.info(`Active phase set to ${active.name} (${active.id}).`);
+  console.info(`Status:  ${active.status} — ${active.tasks.length} task(s)`);
+  console.info(
+    `Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.`,
+  );
 }
 
 async function runPhaseCreateCommand({
@@ -1192,6 +1238,12 @@ async function runPhaseCreateCommand({
   }
 
   console.info(`Created phase ${createdPhase.name} (${createdPhase.id}).`);
+  console.info(
+    `Status:  ${createdPhase.status} — branch: ${branchName}, ${createdPhase.tasks.length} task(s)`,
+  );
+  console.info(
+    `Next:    Add tasks with 'ixado task create <title> <description>', then run 'ixado phase run'.`,
+  );
 }
 
 function resolveAssignedTaskLabel(
@@ -1362,6 +1414,7 @@ async function runConfigModeCommand({
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(`Next:    Run 'ixado phase run' to apply the new mode.`);
 }
 
 async function runConfigAssigneeCommand({
@@ -1405,6 +1458,9 @@ async function runConfigAssigneeCommand({
   console.info(`Default coding CLI set to ${saved.internalWork.assignee}.`);
   console.info(`Settings saved to ${settingsFilePath}.`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' or 'ixado task start <n>' to use the new default.`,
+  );
 }
 
 async function runConfigUsageCommand({
@@ -1438,6 +1494,9 @@ async function runConfigUsageCommand({
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Usage data will ${saved.usage.codexbarEnabled ? "be collected" : "not be collected"} on next run.`,
+  );
 }
 
 async function runConfigRecoveryCommand({
@@ -1470,6 +1529,9 @@ async function runConfigRecoveryCommand({
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated recovery limit.`,
+  );
 }
 
 async function runCli(args: string[]): Promise<void> {
