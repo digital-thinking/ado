@@ -24,6 +24,12 @@ export type LifecycleHookRegistration = {
   handlers: LifecycleHookHandlers;
 };
 
+export type LifecycleHookRunOptions = {
+  timeoutMs?: number;
+};
+
+const DEFAULT_HOOK_TIMEOUT_MS = 10_000;
+
 const LifecycleHookRegistrationSchema = z
   .object({
     id: z.string().trim().min(1),
@@ -38,6 +44,84 @@ const LifecycleHookRegistrationSchema = z
       .strict(),
   })
   .strict();
+
+const LifecycleHookRunOptionsSchema = z
+  .object({
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export class LifecycleHookExecutionError extends Error {
+  readonly hookName: LifecycleHookName;
+  readonly registrationId: string;
+  readonly timeoutMs: number;
+  readonly durationMs: number;
+  readonly causeError: Error;
+
+  constructor(input: {
+    hookName: LifecycleHookName;
+    registrationId: string;
+    timeoutMs: number;
+    durationMs: number;
+    cause: unknown;
+  }) {
+    const causeError =
+      input.cause instanceof Error
+        ? input.cause
+        : new Error(String(input.cause ?? "Unknown hook error"));
+
+    super(
+      `Lifecycle hook \"${input.hookName}\" failed for registration \"${input.registrationId}\" after ${input.durationMs}ms (timeout ${input.timeoutMs}ms): ${causeError.message}`,
+    );
+    this.name = "LifecycleHookExecutionError";
+    this.hookName = input.hookName;
+    this.registrationId = input.registrationId;
+    this.timeoutMs = input.timeoutMs;
+    this.durationMs = input.durationMs;
+    this.causeError = causeError;
+  }
+
+  toLogObject(): {
+    name: string;
+    hookName: LifecycleHookName;
+    registrationId: string;
+    timeoutMs: number;
+    durationMs: number;
+    message: string;
+    cause: {
+      name: string;
+      message: string;
+      stack?: string;
+    };
+  } {
+    return {
+      name: this.name,
+      hookName: this.hookName,
+      registrationId: this.registrationId,
+      timeoutMs: this.timeoutMs,
+      durationMs: this.durationMs,
+      message: this.message,
+      cause: {
+        name: this.causeError.name,
+        message: this.causeError.message,
+        stack: this.causeError.stack,
+      },
+    };
+  }
+}
+
+class LifecycleHookTimeoutError extends Error {
+  constructor(input: {
+    hookName: LifecycleHookName;
+    registrationId: string;
+    timeoutMs: number;
+  }) {
+    super(
+      `Lifecycle hook \"${input.hookName}\" timed out for registration \"${input.registrationId}\" after ${input.timeoutMs}ms.`,
+    );
+    this.name = "LifecycleHookTimeoutError";
+  }
+}
 
 export function validateLifecycleHookRegistration(
   registration: LifecycleHookRegistration,
@@ -83,6 +167,28 @@ function createEmptyHookStore(): HookStore {
     on_recovery: [],
     on_ci_failed: [],
   };
+}
+
+async function runWithTimeout<T>(
+  action: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      action,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(onTimeout());
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 export class LifecycleHookRegistry {
@@ -133,11 +239,35 @@ export class LifecycleHookRegistry {
   async run<T extends LifecycleHookName>(
     hookName: T,
     payload: unknown,
+    options?: LifecycleHookRunOptions,
   ): Promise<void> {
     const validatedPayload = parseLifecycleHookPayload(hookName, payload);
     const handlers = this.getHandlers(hookName);
+    const validatedOptions = LifecycleHookRunOptionsSchema.parse(options ?? {});
+    const timeoutMs = validatedOptions.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS;
+
     for (const registered of handlers) {
-      await registered.handler(validatedPayload);
+      const startedAt = Date.now();
+      try {
+        await runWithTimeout(
+          Promise.resolve(registered.handler(validatedPayload)),
+          timeoutMs,
+          () =>
+            new LifecycleHookTimeoutError({
+              hookName,
+              registrationId: registered.registrationId,
+              timeoutMs,
+            }),
+        );
+      } catch (error) {
+        throw new LifecycleHookExecutionError({
+          hookName,
+          registrationId: registered.registrationId,
+          timeoutMs,
+          durationMs: Math.max(1, Date.now() - startedAt),
+          cause: error,
+        });
+      }
     }
   }
 }
