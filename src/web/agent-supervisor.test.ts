@@ -316,6 +316,7 @@ describe("AgentSupervisor", () => {
       command: "claude",
       args: ["--print"],
       cwd: "/tmp",
+      adapterId: "CLAUDE_CLI",
       approvedAdapterSpawn: true,
       startupSilenceTimeoutMs: 10,
     });
@@ -323,11 +324,16 @@ describe("AgentSupervisor", () => {
     const listed = supervisor.list().find((a) => a.name === "Silent worker");
     expect(
       listed?.outputTail.some((line) =>
-        line.includes("[ixado] No output from 'claude'"),
+        line.includes('"event":"startup-silence-timeout"'),
       ),
     ).toBe(true);
     expect(
-      listed?.outputTail.some((line) => line.includes("verify the adapter")),
+      listed?.outputTail.some((line) =>
+        line.includes('"adapterId":"CLAUDE_CLI"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) => line.includes('"command":"claude"')),
     ).toBe(true);
   });
 

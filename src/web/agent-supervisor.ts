@@ -11,6 +11,11 @@ import { dirname } from "node:path";
 import { resolveCommandForSpawn } from "../process/command-resolver";
 import { ProcessStdinUnavailableError } from "../process/manager";
 import { AgentFailureError } from "../errors";
+import {
+  buildAdapterStartupSilenceDiagnostic,
+  formatAdapterStartupDiagnostic,
+} from "../adapters/startup";
+import type { CLIAdapterId } from "../types";
 
 type SpawnFn = (
   command: string,
@@ -25,6 +30,7 @@ export type StartAgentInput = {
   command: string;
   args?: string[];
   cwd: string;
+  adapterId?: CLIAdapterId;
   phaseId?: string;
   taskId?: string;
   projectName?: string;
@@ -70,6 +76,7 @@ type AgentRecord = {
   command: string;
   args: string[];
   cwd: string;
+  adapterId?: CLIAdapterId;
   phaseId?: string;
   taskId?: string;
   projectName?: string;
@@ -164,6 +171,13 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     phaseId:
       typeof candidate.phaseId === "string" ? candidate.phaseId : undefined,
     taskId: typeof candidate.taskId === "string" ? candidate.taskId : undefined,
+    adapterId:
+      candidate.adapterId === "MOCK_CLI" ||
+      candidate.adapterId === "CLAUDE_CLI" ||
+      candidate.adapterId === "GEMINI_CLI" ||
+      candidate.adapterId === "CODEX_CLI"
+        ? candidate.adapterId
+        : undefined,
     projectName:
       typeof candidate.projectName === "string"
         ? candidate.projectName
@@ -356,6 +370,7 @@ export class AgentSupervisor {
       command: input.command,
       args: input.args ?? [],
       cwd: input.cwd,
+      adapterId: input.adapterId,
       phaseId: input.phaseId,
       taskId: input.taskId,
       projectName: input.projectName,
@@ -421,8 +436,13 @@ export class AgentSupervisor {
           return;
         }
         if (!hasReceivedOutput && record.child !== undefined) {
-          const seconds = Math.round(silenceMs / 1000);
-          const message = `[ixado] No output from '${record.command}' after ${seconds}s — verify the adapter CLI is installed, on PATH, and authenticated.`;
+          const message = formatAdapterStartupDiagnostic(
+            buildAdapterStartupSilenceDiagnostic({
+              adapterId: record.adapterId,
+              command: record.command,
+              startupSilenceTimeoutMs: silenceMs,
+            }),
+          );
           tailPush(record.outputTail, message);
           this.persistRecord(record);
         }

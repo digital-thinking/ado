@@ -166,6 +166,17 @@ Restructure the web UI around multi-project navigation: a persistent **Control C
 - [x] `P15-008` Add targeted non-regression tests for refactors: phase-run happy path + recovery fallback, typed error classification coverage, JSON-parser utility coverage, command help/usage snapshots, and `/api/agents` enrichment behavior under multi-project polling. **Status: Done**. Deps: `P15-002`, `P15-003`, `P15-004`, `P15-006`, `P15-007`.
 - [x] `P15-009` Create PR Task: open Phase 15 PR after coding tasks are done. **Status: Done**. Deps: `P15-008`.
 
+## Phase 16: Runtime Stability Refactor (BUGS.md)
+
+- [x] `P16-001` Refactor CLI logging initialization to guarantee writable default log paths under project-owned `.ixado/` (create parent dirs if missing) and fail fast with actionable error if explicit env override paths are invalid/unwritable. Remove startup `EACCES` on `ixado status` with default env. Deps: `P15-009`. **Status: Done**.
+- [x] `P16-002` Add regression tests for CLI startup logging behavior: default env path boot success, explicit unwritable override failure, and explicit writable override success. Deps: `P16-001`. **Status: Done**.
+- [x] `P16-003` Refactor clean-worktree gate to ignore IxADO-owned runtime artifacts (`.ixado/` transient files) while still failing on real source changes. Keep a single-path dirty check contract in `GitManager`. Deps: `P15-009`. **Status: Done**.
+- [x] `P16-004` Add regression tests for clean-tree detection: untracked `.ixado/` must not block `phase run`; untracked/modified tracked source files must still block with `DIRTY_WORKTREE`. Deps: `P16-003`. **Status: Done**.
+- [x] `P16-005` Refactor `CodexAdapter` command construction to remove hardcoded `--dangerously-bypass-approvals-and-sandbox` from recovery execution path; gate bypass flags behind explicit config and default to policy-compliant safe mode. **Status: Done**. Deps: `P15-009`.
+- [x] `P16-006` Add adapter/recovery tests proving safe-mode defaults work in restricted environments and bypass mode is only used when explicitly enabled. **Status: Done**. Deps: `P16-005`.
+- [x] `P16-007` Add integration tests for end-to-end exception recovery flow (`DIRTY_WORKTREE` trigger) verifying recovery invocation command is policy-compliant and retries do not exhaust due to forced bypass args. Deps: `P16-004`, `P16-006`. **Status: Done**.
+- [x] `P16-008` Create PR Task: open Phase 16 PR after coding tasks are done. **Status: Done**. Deps: `P16-002`, `P16-007`.
+
 ## Phase 17: Bug Fixes – Recovery Loop, State Verification, Tester Defaults (BUGS.md)
 
 ### Bug #1 – DIRTY_WORKTREE recovery can loop indefinitely
@@ -212,17 +223,6 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 - [x] `P18-003` Add regression tests: (1) `ProcessManager` throws `ProcessStdinUnavailableError` when stdin content is provided but `child.stdin` is null; (2) when stdin is provided and the pipe is available the content is delivered via the atomic `end(data)` call; (3) `AgentSupervisor.runToCompletion` appends the startup-silence diagnostic to `outputTail` when a process emits no output within `startupSilenceTimeoutMs`; (4) the diagnostic is NOT appended when the process emits output before the silence window expires. **Status: Done**. Deps: `P18-001`, `P18-002`.
 - [x] `P18-004` Create PR Task: open Phase 18 PR after coding tasks are done. **Status: Done (Phase 18 PR opened via gh CLI with summary of P18-001..P18-003 and validation tests)**. Deps: `P18-003`.
 
-## Phase 16: Runtime Stability Refactor (BUGS.md)
-
-- [x] `P16-001` Refactor CLI logging initialization to guarantee writable default log paths under project-owned `.ixado/` (create parent dirs if missing) and fail fast with actionable error if explicit env override paths are invalid/unwritable. Remove startup `EACCES` on `ixado status` with default env. Deps: `P15-009`. **Status: Done**.
-- [x] `P16-002` Add regression tests for CLI startup logging behavior: default env path boot success, explicit unwritable override failure, and explicit writable override success. Deps: `P16-001`. **Status: Done**.
-- [x] `P16-003` Refactor clean-worktree gate to ignore IxADO-owned runtime artifacts (`.ixado/` transient files) while still failing on real source changes. Keep a single-path dirty check contract in `GitManager`. Deps: `P15-009`. **Status: Done**.
-- [x] `P16-004` Add regression tests for clean-tree detection: untracked `.ixado/` must not block `phase run`; untracked/modified tracked source files must still block with `DIRTY_WORKTREE`. Deps: `P16-003`. **Status: Done**.
-- [x] `P16-005` Refactor `CodexAdapter` command construction to remove hardcoded `--dangerously-bypass-approvals-and-sandbox` from recovery execution path; gate bypass flags behind explicit config and default to policy-compliant safe mode. **Status: Done**. Deps: `P15-009`.
-- [x] `P16-006` Add adapter/recovery tests proving safe-mode defaults work in restricted environments and bypass mode is only used when explicitly enabled. **Status: Done**. Deps: `P16-005`.
-- [x] `P16-007` Add integration tests for end-to-end exception recovery flow (`DIRTY_WORKTREE` trigger) verifying recovery invocation command is policy-compliant and retries do not exhaust due to forced bypass args. Deps: `P16-004`, `P16-006`. **Status: Done**.
-- [x] `P16-008` Create PR Task: open Phase 16 PR after coding tasks are done. **Status: Done**. Deps: `P16-002`, `P16-007`.
-
 ## Phase 19: Open Bug Backlog (from BUGS.md)
 
 - [x] `P19-001` Fix tester auto-detection/default behavior so non-Node repositories do not deterministically fail tester workflow on first run. Ensure default tester behavior is repo-aware and does not create avoidable CI_FIX churn. Deps: `P18-004`. **Status: Done**.
@@ -246,28 +246,37 @@ Same failure mode as Bug #3. A direct probe confirmed that `gemini --help` exits
 
 ## Phase 21: Configuration and UX Consistency (Roadmap)
 
-- [ ] `P21-001` Audit and normalize CLI help/usage output patterns across command groups (`task`, `phase`, `config`, `web`, root). Deps: `P20-006`.
-- [ ] `P21-002` Unify argument validation error style with actionable remediation hints and consistent exit behavior. Deps: `P21-001`.
-- [ ] `P21-003` Clarify config precedence messaging (global vs project settings) in CLI outputs and docs. Deps: `P21-001`.
-- [ ] `P21-004` Standardize command outcome summaries (`what changed`, `status result`, `next action`) for state-mutating commands. Deps: `P21-002`, `P21-003`.
-- [ ] `P21-005` Add regression/snapshot tests for help text, validation messages, and config precedence outputs. Deps: `P21-004`.
-- [ ] `P21-006` Create PR Task: open Phase 21 PR after coding tasks are done. Deps: `P21-005`.
+- [x] `P21-001` Audit and normalize CLI help/usage output patterns across command groups (`task`, `phase`, `config`, `web`, root). **Status: Done**. Deps: `P20-006`.
+- [x] `P21-002` Unify argument validation error style with actionable remediation hints and consistent exit behavior. **Status: Done**. Deps: `P21-001`.
+- [x] `P21-003` Clarify config precedence messaging (global vs project settings) in CLI outputs and docs. **Status: Done**. Deps: `P21-001`.
+- [x] `P21-004` Standardize command outcome summaries (`what changed`, `status result`, `next action`) for state-mutating commands. **Status: Done**. Deps: `P21-002`, `P21-003`.
+- [x] `P21-005` Add regression/snapshot tests for help text, validation messages, and config precedence outputs. **Status: Done**. Deps: `P21-004`.
+- [x] `P21-006` Create PR Task: open Phase 21 PR after coding tasks are done. **Status: Done (PR #22 opened: https://github.com/digital-thinking/ado/pull/22)**. Deps: `P21-005`.
 
 ## Phase 22: Adapter Health and Observability (Roadmap)
 
-- [ ] `P22-001` Standardize adapter startup health checks and startup diagnostics across Codex/Claude/Gemini adapters. Deps: `P21-006`.
-- [ ] `P22-002` Improve no-output and timeout telemetry with adapter-specific hints and consistent structured log markers. Deps: `P22-001`.
+- [x] `P22-001` Standardize adapter startup health checks and startup diagnostics across Codex/Claude/Gemini adapters. **Status: Done**. Deps: `P21-006`.
+- [x] `P22-002` Improve no-output and timeout telemetry with adapter-specific hints and consistent structured log markers. **Status: Done**. Deps: `P22-001`.
 - [ ] `P22-003` Define and apply a unified adapter failure taxonomy (auth/network/missing-binary/timeout/unknown) for runtime and recovery decisions. Deps: `P22-001`.
 - [ ] `P22-004` Improve per-agent log readability in CLI/web views (phase/task context, concise failure summaries, recovery trace links). Deps: `P22-002`, `P22-003`.
-- [ ] `P22-005` Add regression tests for startup health detection, telemetry emission, and failure taxonomy mapping. Deps: `P22-004`.
-- [ ] `P22-006` Create PR Task: open Phase 22 PR after coding tasks are done. Deps: `P22-005`.
+- [ ] `P22-005` Introduce a structured runtime event contract shared across CLI/Web/Telegram for task lifecycle, adapter output, tester/recovery, and terminal outcomes. Deps: `P22-004`.
+- [ ] `P22-006` Add regression tests for startup health detection, telemetry emission, failure taxonomy mapping, and runtime event-contract conformance. Deps: `P22-005`.
+- [ ] `P22-007` Create PR Task: open Phase 22 PR after coding tasks are done. Deps: `P22-006`.
 
 ## Phase 23: Integrations Expansion (Approved Scope)
 
-- [ ] `P23-001` Extend GitHub PR automation with configurable template mapping, labels, assignees, and draft/ready transitions. Deps: `P22-006`.
+- [ ] `P23-001` Extend GitHub PR automation with configurable template mapping, labels, assignees, and draft/ready transitions. Deps: `P22-007`.
 - [ ] `P23-002` Derive PR metadata from phase/task context with deterministic formatting and validation safeguards. Deps: `P23-001`.
 - [ ] `P23-003` Deepen CI integration by mapping failed checks to targeted fix tasks and richer CI diagnostics in loop output. Deps: `P23-002`.
 - [ ] `P23-004` Improve CI state handling for retries/reruns and transition reporting without introducing loop instability. Deps: `P23-003`.
 - [ ] `P23-005` Expand Telegram-only notifications for phase/task/recovery/CI/PR lifecycle events with noise controls. Deps: `P23-004`.
 - [ ] `P23-006` Add integration tests for PR automation, CI mapping/retry flows, and Telegram notification triggers/payloads. Deps: `P23-005`.
 - [ ] `P23-007` Create PR Task: open Phase 23 PR after coding tasks are done. Deps: `P23-006`.
+
+## Phase 24: Extensibility Hooks (Roadmap)
+
+- [ ] `P24-001` Define strict hook contracts and registration mechanism for lifecycle extension hooks: `before_task_start`, `after_task_done`, `on_recovery`, `on_ci_failed`. Deps: `P23-007`.
+- [ ] `P24-002` Implement hook runner with fail-fast isolation, deterministic ordering, timeout guardrails, and structured error propagation to phase-runner logs. Deps: `P24-001`.
+- [ ] `P24-003` Integrate lifecycle hooks into phase-runner and tester/recovery loop without introducing alternate execution paths. Deps: `P24-002`.
+- [ ] `P24-004` Add regression tests for hook contract validation, ordering guarantees, timeout behavior, and failure propagation semantics. Deps: `P24-003`.
+- [ ] `P24-005` Create PR Task: open Phase 24 PR after coding tasks are done. Deps: `P24-004`.

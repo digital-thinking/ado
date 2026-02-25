@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import { CommandRegistry, type CommandDefinition } from "./command-registry";
+import { ValidationError } from "./validation";
 
 describe("CommandRegistry", () => {
   let originalInfo: typeof console.info;
@@ -76,6 +77,26 @@ describe("CommandRegistry", () => {
     expect(output).toContain("config");
   });
 
+  test("global help includes hint footer", async () => {
+    const registry = new CommandRegistry(testCommands);
+    await registry.run([]);
+    const output = infoOutput.join("\n");
+    expect(output).toContain(
+      "Run 'ixado <command> help' for subcommand details.",
+    );
+  });
+
+  test("global help aligns descriptions with dynamic column width", async () => {
+    const registry = new CommandRegistry(testCommands);
+    await registry.run([]);
+    // The longest usage in testCommands is "task create <title>" (19 chars).
+    // Column width = 19 + 2 = 21. Every usage row should be padded to that width.
+    const usageLine = infoOutput.find((line) => line.includes("task list"));
+    expect(usageLine).toBeDefined();
+    // "task list" is 9 chars, padded to 21 → 12 trailing spaces before description
+    expect(usageLine).toContain("task list            ");
+  });
+
   test("prints global help on help command", async () => {
     const registry = new CommandRegistry(testCommands);
     await registry.run(["help"]);
@@ -91,10 +112,52 @@ describe("CommandRegistry", () => {
     expect(output).toContain("create <title>");
   });
 
-  test("throws on unknown command", async () => {
+  test("command help includes descriptions", async () => {
     const registry = new CommandRegistry(testCommands);
-    await expect(registry.run(["unknown"])).rejects.toThrow(
-      "Unknown command: unknown",
+    await registry.run(["task", "help"]);
+    const output = infoOutput.join("\n");
+    expect(output).toContain("List tasks");
+    expect(output).toContain("Create a task");
+  });
+
+  test("command help aligns descriptions with dynamic column width", async () => {
+    const registry = new CommandRegistry(testCommands);
+    await registry.run(["task", "help"]);
+    // Longest usage: "ixado task create <title>" = 25 chars, colWidth = 27.
+    // "ixado task list" = 15 chars → padded to 27 → 12 trailing spaces.
+    const listLine = infoOutput.find((line) =>
+      line.includes("ixado task list"),
     );
+    expect(listLine).toBeDefined();
+    expect(listLine).toMatch(/ixado task list\s{2,}/);
+  });
+
+  test("command help shows blank separator after header", async () => {
+    const registry = new CommandRegistry(testCommands);
+    await registry.run(["task", "help"]);
+    // The line after "Task commands:" should be blank.
+    const headerIdx = infoOutput.findIndex((line) => line === "Task commands:");
+    expect(headerIdx).toBeGreaterThanOrEqual(0);
+    expect(infoOutput[headerIdx + 1]).toBe("");
+  });
+
+  test("throws ValidationError on unknown command", async () => {
+    const registry = new CommandRegistry(testCommands);
+    await expect(registry.run(["unknown"])).rejects.toThrow(ValidationError);
+  });
+
+  test("unknown command ValidationError includes quoted name and hint", async () => {
+    const registry = new CommandRegistry(testCommands);
+    try {
+      await registry.run(["nosuchcmd"]);
+      expect.assertions(1); // should not reach here
+    } catch (err) {
+      expect(err).toBeInstanceOf(ValidationError);
+      const ve = err as ValidationError;
+      expect(ve.message).toContain("nosuchcmd");
+      expect(ve.hint).toContain("ixado help");
+      expect(ve.format()).toContain("Error: Unknown command: 'nosuchcmd'");
+      expect(ve.format()).toContain("  Hint:  Run 'ixado help'");
+    }
   });
 });

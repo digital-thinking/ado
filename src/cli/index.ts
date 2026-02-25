@@ -6,7 +6,12 @@ import { resolve, basename } from "node:path";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
-import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
+import {
+  buildAdapterExecutionPlan,
+  buildAdapterInitializationDiagnostic,
+  createAdapter,
+  formatAdapterStartupDiagnostic,
+} from "../adapters";
 import { createTelegramRuntime } from "../bot";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { PhaseRunner } from "../engine/phase-runner";
@@ -21,6 +26,7 @@ import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { initializeCliLogging } from "./logging";
 import { CommandRegistry, type CommandActionContext } from "./command-registry";
+import { ValidationError } from "./validation";
 import {
   getAvailableAgents,
   loadCliSettings,
@@ -227,6 +233,17 @@ function createControlCenterServiceWithAgentTracking(
       const adapter = createAdapter(workInput.assignee, processManager, {
         bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
       });
+      const startupDiagnostic = buildAdapterInitializationDiagnostic({
+        adapterId: workInput.assignee,
+        command: adapter.contract.command,
+        baseArgs: adapter.contract.baseArgs,
+        cwd: projectRootDir,
+        timeoutMs: assigneeSettings.timeoutMs,
+        startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
+      });
+      if (startupDiagnostic) {
+        console.info(formatAdapterStartupDiagnostic(startupDiagnostic));
+      }
       const artifacts = await createPromptLogArtifacts({
         cwd: projectRootDir,
         assignee: workInput.assignee,
@@ -253,6 +270,7 @@ function createControlCenterServiceWithAgentTracking(
           timeoutMs: assigneeSettings.timeoutMs,
           startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
           stdin,
+          adapterId: workInput.assignee,
           approvedAdapterSpawn: true,
           phaseId: workInput.phaseId,
           taskId: workInput.taskId,
@@ -410,6 +428,9 @@ async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(
       `Project '${existingProject.name}' is already registered at ${currentDir}.`,
     );
+    console.info(
+      `Next:    Run 'ixado switch ${existingProject.name}' to activate it, or 'ixado list' to see all projects.`,
+    );
     return;
   }
 
@@ -421,6 +442,9 @@ async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
   await saveCliSettings(globalSettingsFilePath, settings);
   console.info(
     `Registered project '${projectName}' at ${currentDir} in global config.`,
+  );
+  console.info(
+    `Next:    Run 'ixado switch ${projectName}' to set it active, then 'ixado phase create <name> <branch>'.`,
   );
 }
 
@@ -451,7 +475,10 @@ async function runListCommand(_ctx: CommandActionContext): Promise<void> {
 async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
   const projectName = args[0]?.trim() ?? "";
   if (!projectName) {
-    throw new Error("Usage: ixado switch <project-name>");
+    throw new ValidationError("Missing required argument: <project-name>.", {
+      usage: "ixado switch <project-name>",
+      hint: "Run 'ixado list' to see registered projects.",
+    });
   }
 
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
@@ -459,9 +486,10 @@ async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
   const project = settings.projects.find((p) => p.name === projectName);
   if (!project) {
     const available = settings.projects.map((p) => p.name).join(", ");
-    throw new Error(
-      `Project '${projectName}' not found. Registered projects: ${available || "none"}.`,
-    );
+    throw new ValidationError(`Project '${projectName}' not found.`, {
+      usage: "ixado switch <project-name>",
+      hint: `Registered projects: ${available || "none"}. Run 'ixado list' for details.`,
+    });
   }
 
   settings.activeProject = project.name;
@@ -469,6 +497,7 @@ async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
   console.info(
     `Switched active project to '${project.name}' at ${project.rootDir}.`,
   );
+  console.info(`Next:    Run 'ixado status' to see phase and task state.`);
 }
 
 async function runOnboardCommand(): Promise<void> {
@@ -503,6 +532,9 @@ async function runOnboardCommand(): Promise<void> {
     if (settings.telegram.enabled) {
       console.info("Telegram bot credentials stored in settings file.");
     }
+    console.info(
+      `Next:    Run 'ixado init' to register this directory as a project, then 'ixado phase create <name> <branch>'.`,
+    );
   } finally {
     rl.close();
   }
@@ -555,12 +587,16 @@ async function runWebStopCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(`Web control center stopped (pid: ${result.record.pid}).`);
     console.info(`Web logs: ${result.record.logFilePath}`);
     console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
+    console.info(`Next:    Run 'ixado web start' to restart it.`);
     return;
   }
 
   if (result.status === "permission_denied") {
     console.info(
       `Web control center is running at ${result.record.url} (pid: ${result.record.pid}), but this user cannot stop it (permission denied).`,
+    );
+    console.info(
+      `Next:    Run as the user who started the process to stop it.`,
     );
     return;
   }
@@ -569,10 +605,12 @@ async function runWebStopCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(
       "Web control center was not running. Removed stale runtime metadata.",
     );
+    console.info(`Next:    Run 'ixado web start [port]' to start it.`);
     return;
   }
 
   console.info("Web control center is not running.");
+  console.info(`Next:    Run 'ixado web start [port]' to start it.`);
 }
 
 async function runWebServeCommand({
@@ -635,7 +673,10 @@ function resolvePhaseRunMode(
     return "MANUAL";
   }
 
-  throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds>=0]");
+  throw new ValidationError(`Invalid phase run mode: '${rawMode}'.`, {
+    usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+    hint: "Use 'auto' for fully automatic execution or 'manual' for step-by-step confirmation.",
+  });
 }
 
 function resolveCountdownSeconds(
@@ -649,8 +690,12 @@ function resolveCountdownSeconds(
 
   const parsed = Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(
-      "Usage: ixado phase run [auto|manual] [countdownSeconds>=0]",
+    throw new ValidationError(
+      `Invalid countdown seconds: '${rawCountdown}'. Expected a non-negative integer.`,
+      {
+        usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+        hint: "Use 0 to skip the countdown, or a positive number for a timed delay.",
+      },
     );
   }
 
@@ -673,13 +718,18 @@ async function resolveActivePhaseTaskForNumber(
     state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
     state.phases[0];
   if (!phase) {
-    throw new Error("No active phase found.");
+    throw new ValidationError("No active phase found.", {
+      hint: "Run 'ixado phase create <name> <branchName>' to create a phase first.",
+    });
   }
 
   const task = phase.tasks[taskNumber - 1];
   if (!task) {
-    throw new Error(
-      `Task #${taskNumber} not found in active phase ${phase.name}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} not found in active phase '${phase.name}'.`,
+      {
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
     );
   }
 
@@ -692,7 +742,13 @@ async function runTaskStartCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task start <taskNumber> [assignee]");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task start <taskNumber> [assignee]",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -720,9 +776,9 @@ async function runTaskStartCommand({
   const assignee = CLIAdapterIdSchema.parse(assigneeCandidate);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: `Available agents: ${availableAgents.join(", ")}. Enable the agent with 'ixado onboard'.`,
+    });
   }
   console.info(`Starting active-phase task #${taskNumber} with ${assignee}.`);
 
@@ -745,8 +801,17 @@ async function runTaskStartCommand({
   console.info(
     `Task #${taskNumber} ${task.title} finished with status ${task.status}.`,
   );
-  if (task.status === "FAILED" && task.errorLogs) {
-    console.info(`Failure details: ${task.errorLogs}`);
+  if (task.status === "FAILED") {
+    if (task.errorLogs) {
+      console.info(`Failure details: ${task.errorLogs}`);
+    }
+    console.info(
+      `Next:    Retry with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else {
+    console.info(
+      `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
+    );
   }
 }
 
@@ -756,8 +821,12 @@ async function runTaskCreateCommand({
   const title = args[0]?.trim() ?? "";
   const description = args[1]?.trim() ?? "";
   if (!title || !description) {
-    throw new Error(
-      "Usage: ixado task create <title> <description> [assignee]",
+    throw new ValidationError(
+      "Missing required arguments: <title> and <description>.",
+      {
+        usage: "ixado task create <title> <description> [assignee]",
+        hint: "Enclose multi-word values in quotes.",
+      },
     );
   }
 
@@ -766,9 +835,10 @@ async function runTaskCreateCommand({
     ? WorkerAssigneeSchema.safeParse(rawAssignee)
     : { success: true as const, data: "UNASSIGNED" as const };
   if (!parsedAssignee.success) {
-    throw new Error(
-      "Usage: ixado task create <title> <description> [assignee]\nassignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
-    );
+    throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
+      usage: "ixado task create <title> <description> [assignee]",
+      hint: "assignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
+    });
   }
   const assignee = parsedAssignee.data;
   const settingsFilePath = resolveSettingsFilePath();
@@ -793,8 +863,13 @@ async function runTaskCreateCommand({
   });
   const refreshedPhase =
     updated.phases.find((phase) => phase.id === activePhase.id) ?? activePhase;
+  const taskNumber = refreshedPhase.tasks.length;
   console.info(
-    `Created task #${refreshedPhase.tasks.length} in ${refreshedPhase.name}: ${title}.`,
+    `Created task #${taskNumber} in ${refreshedPhase.name}: ${title}.`,
+  );
+  console.info(`Status:  TODO — assignee: ${assignee}`);
+  console.info(
+    `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
   );
 }
 
@@ -831,7 +906,13 @@ async function runTaskRetryCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task retry <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task retry <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -849,22 +930,25 @@ async function runTaskRetryCommand({
 
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
   if (task.status !== "FAILED") {
-    throw new Error(
-      `Task #${taskNumber} must be FAILED before retry. Current status: ${task.status}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
+      {
+        hint: "Only failed tasks can be retried.",
+      },
     );
   }
   if (task.assignee === "UNASSIGNED") {
-    throw new Error(
-      `Task #${taskNumber} has no retry assignee. Reset to TODO, assign an agent, and start it again.`,
-    );
+    throw new ValidationError(`Task #${taskNumber} has no assignee.`, {
+      hint: `Reset to TODO with 'ixado task reset ${taskNumber}', assign an agent, then start it again.`,
+    });
   }
 
   const assignee = CLIAdapterIdSchema.parse(task.assignee);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: `Available agents: ${availableAgents.join(", ")}. Enable the agent with 'ixado onboard'.`,
+    });
   }
 
   console.info(`Retrying active-phase task #${taskNumber} with ${assignee}.`);
@@ -887,8 +971,17 @@ async function runTaskRetryCommand({
   console.info(
     `Task #${taskNumber} ${retriedTask.title} finished with status ${retriedTask.status}.`,
   );
-  if (retriedTask.status === "FAILED" && retriedTask.errorLogs) {
-    console.info(`Failure details: ${retriedTask.errorLogs}`);
+  if (retriedTask.status === "FAILED") {
+    if (retriedTask.errorLogs) {
+      console.info(`Failure details: ${retriedTask.errorLogs}`);
+    }
+    console.info(
+      `Next:    Retry again with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else {
+    console.info(
+      `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
+    );
   }
 }
 
@@ -898,7 +991,13 @@ async function runTaskLogsCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task logs <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task logs <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -934,7 +1033,13 @@ async function runTaskResetCommand({
   const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task reset <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task reset <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -955,8 +1060,11 @@ async function runTaskResetCommand({
   );
 
   if (task.status !== "FAILED") {
-    throw new Error(
-      `Task #${taskNumber} must be FAILED before reset. Current status: ${task.status}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
+      {
+        hint: "Only failed tasks can be reset.",
+      },
     );
   }
 
@@ -966,6 +1074,9 @@ async function runTaskResetCommand({
   });
   console.info(
     `Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`,
+  );
+  console.info(
+    `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
   );
 }
 
@@ -1073,7 +1184,13 @@ async function runPhaseActiveCommand({
 }: CommandActionContext): Promise<void> {
   const phaseId = args[0]?.trim() ?? "";
   if (!phaseId) {
-    throw new Error("Usage: ixado phase active <phaseNumber|phaseId>");
+    throw new ValidationError(
+      "Missing required argument: <phaseNumber|phaseId>.",
+      {
+        usage: "ixado phase active <phaseNumber|phaseId>",
+        hint: "Run 'ixado phase list' to see available phases.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -1095,6 +1212,10 @@ async function runPhaseActiveCommand({
   }
 
   console.info(`Active phase set to ${active.name} (${active.id}).`);
+  console.info(`Status:  ${active.status} — ${active.tasks.length} task(s)`);
+  console.info(
+    `Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.`,
+  );
 }
 
 async function runPhaseCreateCommand({
@@ -1103,7 +1224,13 @@ async function runPhaseCreateCommand({
   const name = args[0]?.trim() ?? "";
   const branchName = args[1]?.trim() ?? "";
   if (!name || !branchName) {
-    throw new Error("Usage: ixado phase create <name> <branchName>");
+    throw new ValidationError(
+      "Missing required arguments: <name> and <branchName>.",
+      {
+        usage: "ixado phase create <name> <branchName>",
+        hint: "Provide a human-readable name and a valid git branch name.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -1128,6 +1255,12 @@ async function runPhaseCreateCommand({
   }
 
   console.info(`Created phase ${createdPhase.name} (${createdPhase.id}).`);
+  console.info(
+    `Status:  ${createdPhase.status} — branch: ${branchName}, ${createdPhase.tasks.length} task(s)`,
+  );
+  console.info(
+    `Next:    Add tasks with 'ixado task create <title> <description>', then run 'ixado phase run'.`,
+  );
 }
 
 function resolveAssignedTaskLabel(
@@ -1200,10 +1333,20 @@ function parseConfigMode(rawMode: string): boolean {
     return false;
   }
 
-  throw new Error("Usage: ixado config mode <auto|manual>");
+  throw new ValidationError(
+    `Invalid mode: '${rawMode}'. Expected 'auto' or 'manual'.`,
+    {
+      usage: "ixado config mode <auto|manual>",
+      hint: "Use 'auto' for automatic execution or 'manual' for step-by-step.",
+    },
+  );
 }
 
-function parseConfigToggle(rawValue: string, usage: string): boolean {
+function parseConfigToggle(
+  rawValue: string,
+  usage: string,
+  hint: string,
+): boolean {
   const normalized = rawValue.trim().toLowerCase();
   if (normalized === "on") {
     return true;
@@ -1212,22 +1355,44 @@ function parseConfigToggle(rawValue: string, usage: string): boolean {
     return false;
   }
 
-  throw new Error(usage);
+  throw new ValidationError(
+    `Invalid toggle value: '${rawValue}'. Expected 'on' or 'off'.`,
+    { usage, hint },
+  );
 }
 
 function parseConfigRecoveryMaxAttempts(rawValue: string): number {
   const maxAttempts = Number(rawValue.trim());
   if (!Number.isInteger(maxAttempts) || maxAttempts < 0 || maxAttempts > 10) {
-    throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
+    throw new ValidationError(
+      `Invalid recovery max attempts: '${rawValue}'. Expected an integer from 0 to 10.`,
+      {
+        usage: "ixado config recovery <maxAttempts:0-10>",
+        hint: "Use 0 to disable recovery, or a value from 1-10 for the attempt limit.",
+      },
+    );
   }
 
   return maxAttempts;
 }
 
+function getSettingsPrecedenceMessage(settingsFilePath: string): string {
+  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
+  if (settingsFilePath === globalSettingsFilePath) {
+    return `Scope: global defaults (${globalSettingsFilePath}).`;
+  }
+
+  return [
+    `Scope: project overrides (${settingsFilePath}).`,
+    `Precedence: project settings override global defaults (${globalSettingsFilePath}).`,
+  ].join(" ");
+}
+
 async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  console.info(`Settings: ${settingsFilePath}`);
+  console.info(`Settings file: ${settingsFilePath}`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
   console.info(
     `Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`,
   );
@@ -1245,7 +1410,10 @@ async function runConfigModeCommand({
 }: CommandActionContext): Promise<void> {
   const rawMode = args[0]?.trim() ?? "";
   if (!rawMode) {
-    throw new Error("Usage: ixado config mode <auto|manual>");
+    throw new ValidationError("Missing required argument: <auto|manual>.", {
+      usage: "ixado config mode <auto|manual>",
+      hint: "Use 'auto' for automatic execution or 'manual' for step-by-step.",
+    });
   }
 
   const autoMode = parseConfigMode(rawMode);
@@ -1262,6 +1430,8 @@ async function runConfigModeCommand({
     `Execution loop mode set to ${saved.executionLoop.autoMode ? "AUTO" : "MANUAL"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(`Next:    Run 'ixado phase run' to apply the new mode.`);
 }
 
 async function runConfigAssigneeCommand({
@@ -1269,18 +1439,30 @@ async function runConfigAssigneeCommand({
 }: CommandActionContext): Promise<void> {
   const rawAssignee = args[0]?.trim() ?? "";
   if (!rawAssignee) {
-    throw new Error(
-      "Usage: ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+    throw new ValidationError(
+      "Missing required argument: <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>.",
+      {
+        usage:
+          "ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+        hint: "Run 'ixado config' to see available adapters.",
+      },
     );
   }
 
-  const assignee = CLIAdapterIdSchema.parse(rawAssignee);
+  const parsedAssignee = CLIAdapterIdSchema.safeParse(rawAssignee);
+  if (!parsedAssignee.success) {
+    throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
+      usage: "ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+      hint: "Valid values: CODEX_CLI, CLAUDE_CLI, GEMINI_CLI, MOCK_CLI.",
+    });
+  }
+  const assignee = parsedAssignee.data;
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   if (!settings.agents[assignee].enabled) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Enable it before setting as default.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: "Enable the agent in settings before setting it as default.",
+    });
   }
 
   const saved = await saveCliSettings(settingsFilePath, {
@@ -1292,6 +1474,10 @@ async function runConfigAssigneeCommand({
   });
   console.info(`Default coding CLI set to ${saved.internalWork.assignee}.`);
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' or 'ixado task start <n>' to use the new default.`,
+  );
 }
 
 async function runConfigUsageCommand({
@@ -1299,12 +1485,16 @@ async function runConfigUsageCommand({
 }: CommandActionContext): Promise<void> {
   const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
-    throw new Error("Usage: ixado config usage <on|off>");
+    throw new ValidationError("Missing required argument: <on|off>.", {
+      usage: "ixado config usage <on|off>",
+      hint: "Use 'on' to enable usage tracking or 'off' to disable it.",
+    });
   }
 
   const codexbarEnabled = parseConfigToggle(
     rawValue,
-    "Usage: ixado config usage <on|off>",
+    "ixado config usage <on|off>",
+    "Use 'on' to enable usage tracking or 'off' to disable it.",
   );
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1320,6 +1510,10 @@ async function runConfigUsageCommand({
     `Codexbar usage telemetry set to ${saved.usage.codexbarEnabled ? "ON" : "OFF"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Usage data will ${saved.usage.codexbarEnabled ? "be collected" : "not be collected"} on next run.`,
+  );
 }
 
 async function runConfigRecoveryCommand({
@@ -1327,7 +1521,13 @@ async function runConfigRecoveryCommand({
 }: CommandActionContext): Promise<void> {
   const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
-    throw new Error("Usage: ixado config recovery <maxAttempts:0-10>");
+    throw new ValidationError(
+      "Missing required argument: <maxAttempts:0-10>.",
+      {
+        usage: "ixado config recovery <maxAttempts:0-10>",
+        hint: "Use 0 to disable recovery, or a value from 1-10 for the attempt limit.",
+      },
+    );
   }
 
   const maxAttempts = parseConfigRecoveryMaxAttempts(rawValue);
@@ -1345,6 +1545,10 @@ async function runConfigRecoveryCommand({
     `Exception recovery max attempts set to ${saved.exceptionRecovery.maxAttempts}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated recovery limit.`,
+  );
 }
 
 async function runCli(args: string[]): Promise<void> {
@@ -1453,7 +1657,7 @@ async function runCli(args: string[]): Promise<void> {
       subcommands: [
         {
           name: "show",
-          description: "Show global defaults",
+          description: "Show effective config (project overrides global)",
           action: runConfigShowCommand,
         },
         {
@@ -1511,7 +1715,11 @@ async function runCli(args: string[]): Promise<void> {
 }
 
 await runCli(process.argv.slice(2)).catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Startup failed: ${message}`);
+  if (error instanceof ValidationError) {
+    console.error(error.format());
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+  }
   process.exitCode = 1;
 });
