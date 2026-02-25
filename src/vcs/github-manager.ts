@@ -47,6 +47,20 @@ export type PollCiStatusInput = {
   cwd: string;
   intervalMs?: number;
   timeoutMs?: number;
+  terminalConfirmations?: number;
+  onTransition?: (transition: CiPollTransition) => void | Promise<void>;
+};
+
+export type CiPollTransition = {
+  pollCount: number;
+  previousOverall: CiCheckState | null;
+  overall: CiCheckState;
+  previousChecksFingerprint: string | null;
+  checksFingerprint: string;
+  isRerun: boolean;
+  isTerminal: boolean;
+  terminalObservationCount: number;
+  requiredTerminalObservations: number;
 };
 
 type StatusCheckRollupResponse = {
@@ -114,6 +128,21 @@ function computeOverallState(checks: CiCheck[]): CiCheckState {
   }
 
   return "PENDING";
+}
+
+function checkFingerprint(check: CiCheck): string {
+  return `${check.name.trim().toLowerCase()}::${check.state}::${check.detailsUrl ?? ""}`;
+}
+
+function summaryFingerprint(summary: CiStatusSummary): string {
+  const checks = [...summary.checks].sort((a, b) =>
+    checkFingerprint(a).localeCompare(checkFingerprint(b)),
+  );
+  return `${summary.overall}|${checks.map(checkFingerprint).join("|")}`;
+}
+
+function isTerminalState(state: CiCheckState): boolean {
+  return state === "SUCCESS" || state === "FAILURE" || state === "CANCELLED";
 }
 
 export class GitHubManager {
@@ -230,15 +259,64 @@ export class GitHubManager {
   async pollCiStatus(input: PollCiStatusInput): Promise<CiStatusSummary> {
     const intervalMs = input.intervalMs ?? 15_000;
     const timeoutMs = input.timeoutMs ?? 15 * 60 * 1000;
+    const requiredTerminalObservations = Math.max(
+      1,
+      input.terminalConfirmations ?? 1,
+    );
     const startedAt = Date.now();
+    let pollCount = 0;
+    let previousOverall: CiCheckState | null = null;
+    let previousChecksFingerprint: string | null = null;
+    let terminalState: CiCheckState | null = null;
+    let terminalObservationCount = 0;
 
     while (true) {
+      pollCount += 1;
       const summary = await this.getCiStatus(input.prNumber, input.cwd);
+      const checksFingerprint = summaryFingerprint(summary);
+      const transitioned =
+        previousOverall !== summary.overall ||
+        previousChecksFingerprint !== checksFingerprint;
+
+      const isTerminal = isTerminalState(summary.overall);
+      if (isTerminal) {
+        if (
+          terminalState === summary.overall &&
+          previousChecksFingerprint === checksFingerprint
+        ) {
+          terminalObservationCount += 1;
+        } else {
+          terminalState = summary.overall;
+          terminalObservationCount = 1;
+        }
+      } else {
+        terminalState = null;
+        terminalObservationCount = 0;
+      }
+
+      if (transitioned && input.onTransition) {
+        const isRerun =
+          previousOverall !== null &&
+          isTerminalState(previousOverall) &&
+          summary.overall === "PENDING";
+        await input.onTransition({
+          pollCount,
+          previousOverall,
+          overall: summary.overall,
+          previousChecksFingerprint,
+          checksFingerprint,
+          isRerun,
+          isTerminal,
+          terminalObservationCount,
+          requiredTerminalObservations,
+        });
+      }
+      previousOverall = summary.overall;
+      previousChecksFingerprint = checksFingerprint;
 
       if (
-        summary.overall === "SUCCESS" ||
-        summary.overall === "FAILURE" ||
-        summary.overall === "CANCELLED"
+        isTerminal &&
+        terminalObservationCount >= requiredTerminalObservations
       ) {
         return summary;
       }
@@ -247,6 +325,13 @@ export class GitHubManager {
         throw new Error(
           `CI polling timed out after ${timeoutMs}ms for PR #${input.prNumber}.`,
         );
+      }
+
+      if (
+        isTerminal &&
+        terminalObservationCount < requiredTerminalObservations
+      ) {
+        continue;
       }
 
       await new Promise<void>((resolve) => {

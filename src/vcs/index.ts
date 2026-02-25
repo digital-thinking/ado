@@ -13,6 +13,7 @@ export type {
   CiCheckState,
   CiStatusSummary,
   CreatePullRequestInput,
+  CiPollTransition,
   MarkPullRequestReadyInput,
   MergePullRequestInput,
   PollCiStatusInput,

@@ -247,7 +247,7 @@ describe("PhaseRunner", () => {
     const ghCalls = (mockRunner.run as ReturnType<typeof mock>).mock.calls
       .map((entry: any[]) => entry[0])
       .filter((call: any) => call.command === "gh");
-    expect(ghCalls).toHaveLength(3);
+    expect(ghCalls).toHaveLength(4);
     expect(ghCalls[0].args).toContain("--title");
     expect(ghCalls[0].args).toContain("Phase 23");
     expect(ghCalls[0].args).toContain("--body");
@@ -265,7 +265,14 @@ describe("PhaseRunner", () => {
       "--json",
       "statusCheckRollup",
     ]);
-    expect(ghCalls[2].args).toEqual(["pr", "ready", "2301"]);
+    expect(ghCalls[2].args).toEqual([
+      "pr",
+      "view",
+      "2301",
+      "--json",
+      "statusCheckRollup",
+    ]);
+    expect(ghCalls[3].args).toEqual(["pr", "ready", "2301"]);
   });
 
   test("recovery fallback: handles DirtyWorktreeError during branching", async () => {
@@ -517,6 +524,189 @@ describe("PhaseRunner", () => {
     expect(ciFailedCall?.[0].ciStatusContext).toContain(
       "CI_FIX mapping: created=2, skipped_existing=0",
     );
+  });
+
+  test("P23-004: reports deterministic CI transitions across rerun progression and converges to READY_FOR_REVIEW", async () => {
+    const phaseId = "43111111-1111-4111-8111-111111111111";
+    const taskId = "43222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 23 CI Retry/Rerun",
+          branchName: "phase-23-ci-retry-rerun",
+          status: "PLANNING",
+          prUrl: undefined as string | undefined,
+          tasks: [
+            {
+              id: taskId,
+              title: "P23-004 implementation",
+              description: "Improve CI transition handling",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const runtimeMessages: string[] = [];
+    let ciViewCallCount = 0;
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = mockState.phases[0] as any;
+        phase.status = input.status;
+        if (typeof input.ciStatusContext === "string") {
+          phase.ciStatusContext = input.ciStatusContext;
+        }
+        return mockState;
+      }),
+      setPhasePrUrl: mock(async (input: { phaseId: string; prUrl: string }) => {
+        mockState.phases[0].prUrl = input.prUrl;
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: '{"verdict":"APPROVED","comments":[]}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-23-ci-retry-rerun",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("--cached") &&
+          input.args.includes("--name-only")
+        ) {
+          return { exitCode: 0, stdout: "src/a.ts\n", stderr: "" };
+        }
+        if (input.args.includes("pr") && input.args.includes("create")) {
+          return {
+            exitCode: 0,
+            stdout: "https://github.com/org/repo/pull/2304\n",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("pr") &&
+          input.args.includes("view") &&
+          input.args.includes("statusCheckRollup")
+        ) {
+          ciViewCallCount += 1;
+          if (ciViewCallCount === 1) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
+              }),
+              stderr: "",
+            };
+          }
+          if (ciViewCallCount === 2) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                statusCheckRollup: [
+                  {
+                    name: "build",
+                    status: "COMPLETED",
+                    conclusion: "FAILURE",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+          if (ciViewCallCount === 3) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
+              }),
+              stderr: "",
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              statusCheckRollup: [
+                {
+                  name: "build",
+                  status: "COMPLETED",
+                  conclusion: "SUCCESS",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        ciEnabled: true,
+        testerCommand: null,
+        testerArgs: null,
+      },
+      undefined,
+      async (event) => {
+        if (event.type === "task.lifecycle.progress") {
+          runtimeMessages.push(event.payload.message);
+        }
+      },
+      mockRunner,
+    );
+
+    await runner.run();
+
+    expect(runtimeMessages).toContain(
+      "CI transition PR #2304: INIT -> PENDING (poll=1)",
+    );
+    expect(runtimeMessages).toContain(
+      "CI transition PR #2304: PENDING -> FAILURE (poll=2) | terminal-confirmation=1/2",
+    );
+    expect(runtimeMessages).toContain(
+      "CI transition PR #2304: FAILURE -> PENDING (poll=3) | rerun-detected",
+    );
+    expect(runtimeMessages).toContain(
+      "CI transition PR #2304: PENDING -> SUCCESS (poll=4) | terminal-confirmation=1/2",
+    );
+
+    const statusCalls = (mockControl.setPhaseStatus as ReturnType<typeof mock>)
+      .mock.calls;
+    const statuses = statusCalls.map((entry: any[]) => entry[0].status);
+    expect(statuses).toContain("AWAITING_CI");
+    expect(statuses).toContain("READY_FOR_REVIEW");
+    expect(statuses).not.toContain("CI_FAILED");
+    expect(mockControl.createTask).toHaveBeenCalledTimes(0);
   });
 
   test("P17-001: recovery loop breaks after failed postcondition re-check (no infinite retry)", async () => {

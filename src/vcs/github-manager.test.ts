@@ -195,6 +195,85 @@ describe("GitHubManager", () => {
     expect(runner.calls).toHaveLength(2);
   });
 
+  test("poll reports deterministic transitions and rerun progression", async () => {
+    const runner = new MockProcessRunner([
+      {
+        stdout: JSON.stringify({
+          statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
+        }),
+      },
+      {
+        stdout: JSON.stringify({
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "FAILURE" },
+          ],
+        }),
+      },
+      {
+        stdout: JSON.stringify({
+          statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
+        }),
+      },
+      {
+        stdout: JSON.stringify({
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+          ],
+        }),
+      },
+      {
+        stdout: JSON.stringify({
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+          ],
+        }),
+      },
+    ]);
+    const manager = new GitHubManager(runner);
+    const transitions: Array<{
+      previousOverall: string | null;
+      overall: string;
+      isRerun: boolean;
+      terminalObservationCount: number;
+      requiredTerminalObservations: number;
+    }> = [];
+
+    const summary = await manager.pollCiStatus({
+      prNumber: 1,
+      cwd: "C:/repo",
+      intervalMs: 1,
+      timeoutMs: 200,
+      terminalConfirmations: 2,
+      onTransition: async (transition) => {
+        transitions.push({
+          previousOverall: transition.previousOverall,
+          overall: transition.overall,
+          isRerun: transition.isRerun,
+          terminalObservationCount: transition.terminalObservationCount,
+          requiredTerminalObservations: transition.requiredTerminalObservations,
+        });
+      },
+    });
+
+    expect(summary.overall).toBe("SUCCESS");
+    expect(runner.calls).toHaveLength(5);
+    expect(transitions.map((entry) => entry.previousOverall)).toEqual([
+      null,
+      "PENDING",
+      "FAILURE",
+      "PENDING",
+    ]);
+    expect(transitions.map((entry) => entry.overall)).toEqual([
+      "PENDING",
+      "FAILURE",
+      "PENDING",
+      "SUCCESS",
+    ]);
+    expect(transitions[2]?.isRerun).toBe(true);
+    expect(transitions[3]?.terminalObservationCount).toBe(1);
+    expect(transitions[3]?.requiredTerminalObservations).toBe(2);
+  });
+
   test("parses pull request number from URL", () => {
     expect(
       parsePullRequestNumberFromUrl("https://github.com/org/repo/pull/42"),

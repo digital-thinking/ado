@@ -22,6 +22,7 @@ import { ProcessManager, type ProcessRunner } from "../process";
 import {
   GitHubManager,
   GitManager,
+  type CiPollTransition,
   parsePullRequestNumberFromUrl,
   PrivilegedGitActions,
 } from "../vcs";
@@ -805,6 +806,30 @@ ${testerResult.fixTaskDescription}`.trim(),
     const ciSummary = await this.github.pollCiStatus({
       prNumber,
       cwd: this.config.projectRootDir,
+      intervalMs: 1_000,
+      terminalConfirmations: 2,
+      onTransition: async (transition) => {
+        const transitionMessage = this.formatCiTransitionMessage({
+          prNumber,
+          transition,
+        });
+        console.info(transitionMessage);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "task-lifecycle",
+            type: "task.lifecycle.progress",
+            payload: {
+              message: transitionMessage,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+      },
     });
     const ciDiagnostics = formatCiDiagnostics({
       prNumber,
@@ -1135,6 +1160,18 @@ ${testerResult.fixTaskDescription}`.trim(),
     throw new Error(
       `Recovery attempts exhausted (${this.config.maxRecoveryAttempts}): ${lastError?.message ?? input.errorMessage}`,
     );
+  }
+
+  private formatCiTransitionMessage(input: {
+    prNumber: number;
+    transition: CiPollTransition;
+  }): string {
+    const previousOverall = input.transition.previousOverall ?? "INIT";
+    const rerunSuffix = input.transition.isRerun ? " | rerun-detected" : "";
+    const terminalSuffix = input.transition.isTerminal
+      ? ` | terminal-confirmation=${input.transition.terminalObservationCount}/${input.transition.requiredTerminalObservations}`
+      : "";
+    return `CI transition PR #${input.prNumber}: ${previousOverall} -> ${input.transition.overall} (poll=${input.transition.pollCount})${rerunSuffix}${terminalSuffix}`;
   }
 
   private async publishRuntimeEvent(event: RuntimeEvent): Promise<void> {
