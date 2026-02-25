@@ -663,3 +663,112 @@ describe("P23-006 integration coverage", () => {
     ).toBe(false);
   });
 });
+
+describe("P25-005 integration coverage", () => {
+  test("terminal phase with actionable tasks resumes execution instead of failing preflight", async () => {
+    const phaseId = "53333333-3333-4333-8333-333333333333";
+    const taskId = "54444444-4444-4444-8444-444444444444";
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 25 Resumable",
+          branchName: "phase-25-resumable",
+          status: "DONE",
+          tasks: [
+            {
+              id: taskId,
+              title: "Continue from terminal phase",
+              description: "Task added after terminal phase status",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const control = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => state),
+      setPhaseStatus: mock(async (input: { status: string }) => {
+        state.phases[0].status = input.status as any;
+        return state;
+      }),
+      startActiveTaskAndWait: mock(async (input: { taskNumber: number }) => {
+        const task = state.phases[0].tasks[input.taskNumber - 1];
+        if (task) {
+          task.status = "DONE";
+        }
+        return state;
+      }),
+      createTask: mock(async () => state),
+      recordRecoveryAttempt: mock(async () => state),
+      runInternalWork: mock(async () => ({ stdout: "", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const runner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.command === "git" && input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.command === "git" &&
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-25-resumable\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const events: RuntimeEvent[] = [];
+    const phaseRunner = new PhaseRunner(
+      control,
+      {
+        ...createBaseConfig(),
+        ciEnabled: false,
+      },
+      undefined,
+      async (event) => {
+        events.push(event);
+      },
+      runner,
+    );
+
+    await expect(phaseRunner.run()).resolves.toBeUndefined();
+    expect(control.startActiveTaskAndWait).toHaveBeenCalledWith({
+      taskNumber: 1,
+      assignee: "CODEX_CLI",
+      resume: false,
+    });
+
+    const statusCalls = (control.setPhaseStatus as ReturnType<typeof mock>).mock
+      .calls;
+    const toStatuses = statusCalls
+      .map((entry: any[]) => entry[0]?.status)
+      .filter(
+        (status: unknown): status is string => typeof status === "string",
+      );
+    expect(toStatuses).toContain("BRANCHING");
+    expect(toStatuses[toStatuses.length - 1]).toBe("DONE");
+
+    const terminalOutcome = events.find(
+      (event) => event.type === "terminal.outcome",
+    );
+    expect(terminalOutcome).toBeDefined();
+    if (!terminalOutcome || terminalOutcome.type !== "terminal.outcome") {
+      throw new Error("Expected terminal.outcome event.");
+    }
+    expect(terminalOutcome.payload.outcome).toBe("success");
+  });
+});

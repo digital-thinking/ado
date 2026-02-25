@@ -502,6 +502,128 @@ describe("ControlCenterService", () => {
     expect(task.status).toBe("DONE");
   });
 
+  test("fails completion when CI-triggered update side effect cannot be verified", async () => {
+    let runCount = 0;
+    const preflightRunner = buildPassingGitHubPreflightRunner();
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => {
+        runCount += 1;
+        return {
+          command: "codex",
+          args: ["exec", "prompt"],
+          stdout: "applied update",
+          stderr: "",
+          durationMs: 50,
+        };
+      },
+      undefined,
+      undefined,
+      preflightRunner,
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase CI Signal Gate",
+      branchName: "phase-ci-signal-gate",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Apply CI-triggered updates",
+      description: "Trigger CI status updates for this phase",
+      assignee: "CODEX_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(runCount).toBe(1);
+    expect(task.status).toBe("FAILED");
+    expect(task.errorLogs).toContain(
+      "Completion side-effect verification failed",
+    );
+    expect(task.completionVerification?.status).toBe("FAILED");
+    expect(task.completionVerification?.contracts).toEqual([
+      "CI_TRIGGERED_UPDATE",
+    ]);
+    expect(task.completionVerification?.missingSideEffects.join(" ")).toContain(
+      "phase has no CI signal",
+    );
+    expect(
+      task.completionVerification?.probes.some(
+        (probe) => probe.name === "phase CI signal" && probe.success === false,
+      ),
+    ).toBe(true);
+  });
+
+  test("fails fast before worker run when GitHub capability preflight fails for remote push tasks", async () => {
+    let runCount = 0;
+    const missingGh = new Error("spawn gh ENOENT") as NodeJS.ErrnoException;
+    missingGh.code = "ENOENT";
+    const preflightRunner = new MockProcessRunner([
+      missingGh,
+      { stdout: "deadbeef\trefs/heads/HEAD\n" },
+    ]);
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => {
+        runCount += 1;
+        return {
+          command: "codex",
+          args: ["exec", "prompt"],
+          stdout: "should not run",
+          stderr: "",
+          durationMs: 50,
+        };
+      },
+      undefined,
+      undefined,
+      preflightRunner,
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Push Preflight",
+      branchName: "phase-push-preflight",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Remote push task",
+      description: "Push to origin after local changes",
+      assignee: "CODEX_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(runCount).toBe(0);
+    expect(task.status).toBe("FAILED");
+    expect(task.errorCategory).toBe("AGENT_FAILURE");
+    expect(task.adapterFailureKind).toBe("missing-binary");
+    expect(task.errorLogs).toContain(
+      "Runtime capability preflight failed for GitHub-bound task",
+    );
+    expect(task.completionVerification?.status).toBe("FAILED");
+    expect(task.completionVerification?.contracts).toEqual(["REMOTE_PUSH"]);
+    expect(task.completionVerification?.missingSideEffects.join(" ")).toContain(
+      "Install GitHub CLI",
+    );
+  });
+
   test("resolves side-effect verification contracts from task text", () => {
     const contracts = resolveTaskCompletionSideEffectContracts({
       title: "Create PR Task and remote push",

@@ -4,6 +4,7 @@ import type { ApiDependencies } from "./types";
 import type { ProjectState } from "../../types";
 import { RuntimeEventSchema } from "../../types/runtime-events";
 import {
+  buildAgentHeartbeatDiagnostic,
   buildAgentIdleDiagnostic,
   formatAgentRuntimeDiagnostic,
 } from "../../agent-runtime-diagnostics";
@@ -155,6 +156,49 @@ describe("agents API enrichment", () => {
       event: "idle-diagnostic",
       occurredAt: "2026-02-25T20:00:00.000Z",
       summary: "Idle 2m0s (elapsed 2m0s).",
+    });
+  });
+
+  test("GET /api/agents summarizes heartbeat diagnostics for runtime telemetry", async () => {
+    const heartbeatDiagnostic = formatAgentRuntimeDiagnostic(
+      buildAgentHeartbeatDiagnostic({
+        agentId: "agent-1",
+        adapterId: "CODEX_CLI",
+        command: "codex",
+        elapsedMs: 120_000,
+        idleMs: 45_000,
+        occurredAt: "2026-02-25T20:05:00.000Z",
+      }),
+    );
+    const deps: ApiDependencies = {
+      ...mockDeps,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: [heartbeatDiagnostic],
+          },
+        ],
+      } as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(1);
+    expect(data[0].runtimeDiagnostic).toEqual({
+      event: "heartbeat",
+      occurredAt: "2026-02-25T20:05:00.000Z",
+      summary: "Heartbeat: elapsed 2m0s, idle 45s.",
     });
   });
 
