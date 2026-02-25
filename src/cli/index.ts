@@ -31,6 +31,7 @@ import {
   CLIAdapterIdSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
+  type PhaseFailureKind,
 } from "../types";
 import {
   createTelegramNotificationEvaluator,
@@ -705,6 +706,36 @@ async function runWebServeCommand({
   );
   console.info(`Web logs: ${runtime.logFilePath}`);
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
+}
+
+function resolvePhaseFailureKindLabel(
+  failureKind: PhaseFailureKind | undefined,
+): string {
+  switch (failureKind) {
+    case "LOCAL_TESTER":
+      return "local tester failure";
+    case "REMOTE_CI":
+      return "remote CI failure";
+    case "AGENT_FAILURE":
+      return "agent execution failure";
+    default:
+      return "failure";
+  }
+}
+
+function resolvePhaseFailureGuidance(
+  failureKind: PhaseFailureKind | undefined,
+): string {
+  switch (failureKind) {
+    case "LOCAL_TESTER":
+      return "Local test suite failed. Complete the CI_FIX task(s) to fix failing tests, then rerun 'ixado phase run'.";
+    case "REMOTE_CI":
+      return "Remote CI checks failed on the PR. Complete the CI_FIX task(s) to address CI errors, then rerun 'ixado phase run'.";
+    case "AGENT_FAILURE":
+      return "Task agent execution failed. Retry the failed task with 'ixado task retry <n>' or reset it with 'ixado task reset <n>'.";
+    default:
+      return "Phase execution stopped. Run 'ixado task list' to review tasks and 'ixado phase run' to resume.";
+  }
 }
 
 type PhaseRunMode = "AUTO" | "MANUAL";
@@ -1430,9 +1461,19 @@ async function runStatusCommand(): Promise<void> {
   console.info(`Project: ${state.projectName}`);
   console.info(`Root: ${state.rootDir}`);
   console.info(`Phases: ${state.phases.length}`);
-  console.info(
-    `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
-  );
+  if (activePhase?.status === "CI_FAILED") {
+    const kindLabel = resolvePhaseFailureKindLabel(activePhase.failureKind);
+    console.info(
+      `Active: ${activePhase.name} (${activePhase.status} — ${kindLabel})`,
+    );
+    console.info(
+      `Guidance: ${resolvePhaseFailureGuidance(activePhase.failureKind)}`,
+    );
+  } else {
+    console.info(
+      `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
+    );
+  }
   console.info(`Available agents: ${availableAgents.join(", ")}`);
   console.info(`Running Agents (${runningAgents.length}):`);
   if (runningAgents.length === 0) {

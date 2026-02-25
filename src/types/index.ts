@@ -392,6 +392,14 @@ export const AdapterFailureKindSchema = z.enum([
 ]);
 export type AdapterFailureKind = z.infer<typeof AdapterFailureKindSchema>;
 
+// Typed reason a phase transitioned to CI_FAILED, enabling kind-specific operator guidance.
+export const PhaseFailureKindSchema = z.enum([
+  "LOCAL_TESTER", // Local test runner (tester step) failed during CODING phase
+  "REMOTE_CI", // Remote CI checks (GitHub Actions) failed after PR creation
+  "AGENT_FAILURE", // Task execution agent subprocess failed
+]);
+export type PhaseFailureKind = z.infer<typeof PhaseFailureKindSchema>;
+
 export const ExceptionRecoveryResultSchema = z
   .object({
     status: z.enum(["fixed", "unfixable"]),
@@ -486,6 +494,7 @@ export const PhaseSchema = z.object({
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
   ciStatusContext: z.string().optional(), // Stores the GH CLI output if CI fails
+  failureKind: PhaseFailureKindSchema.optional(), // Why the phase entered CI_FAILED
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Phase = z.infer<typeof PhaseSchema>;

@@ -20,6 +20,7 @@ import {
   CLIAdapterIdSchema,
   ExceptionMetadataSchema,
   ExceptionRecoveryResultSchema,
+  PhaseFailureKindSchema,
   PhaseSchema,
   PhaseStatusSchema,
   RecoveryAttemptRecordSchema,
@@ -30,6 +31,7 @@ import {
   type ExceptionMetadata,
   type ExceptionRecoveryResult,
   type Phase,
+  type PhaseFailureKind,
   type PhaseStatus,
   type ProjectState,
   type RecoveryAttemptRecord,
@@ -136,6 +138,7 @@ export type SetPhaseStatusInput = {
   phaseId: string;
   status: PhaseStatus;
   ciStatusContext?: string;
+  failureKind?: PhaseFailureKind;
 };
 
 export type RecordRecoveryAttemptInput = {
@@ -708,11 +711,19 @@ export class ControlCenterService {
       status === "CI_FAILED"
         ? normalizedContext || phase.ciStatusContext
         : undefined;
+    const rawFailureKind = input.failureKind
+      ? PhaseFailureKindSchema.parse(input.failureKind)
+      : undefined;
+    const failureKind =
+      status === "CI_FAILED"
+        ? (rawFailureKind ?? phase.failureKind)
+        : undefined;
     const nextPhases = [...state.phases];
     nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
       status,
       ciStatusContext,
+      failureKind,
     });
 
     const nextState = await engine.writeProjectState({

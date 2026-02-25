@@ -32,6 +32,7 @@ import { PhasePreflightError } from "../errors";
 import {
   type CLIAdapterId,
   type Phase,
+  type PhaseFailureKind,
   type PullRequestAutomationSettings,
   type Task,
 } from "../types";
@@ -329,6 +330,7 @@ export class PhaseRunner {
           await this.control.setPhaseStatus({
             phaseId: phase.id,
             status: "CI_FAILED",
+            failureKind: "AGENT_FAILURE" as PhaseFailureKind,
             ciStatusContext: `Branching failed: ${message}
 Recovery: ${recoveryMessage}`,
           });
@@ -551,6 +553,7 @@ Recovery: ${recoveryMessage}`,
         await this.control.setPhaseStatus({
           phaseId: updatedPhase.id,
           status: "CI_FAILED",
+          failureKind: "AGENT_FAILURE" as PhaseFailureKind,
           ciStatusContext: `${failureMessage}
 Recovery: ${recoveryMessage}`,
         });
@@ -561,6 +564,7 @@ Recovery: ${recoveryMessage}`,
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "CI_FAILED",
+      failureKind: "AGENT_FAILURE" as PhaseFailureKind,
       ciStatusContext: `Execution failed after ${maxTaskRunCount} run attempts for task #${taskNumber}.`,
     });
     throw new Error(
@@ -690,6 +694,7 @@ Recovery: ${recoveryMessage}`,
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
+        failureKind: "LOCAL_TESTER" as PhaseFailureKind,
         ciStatusContext: `${testerResult.errorMessage}
 
 ${testerResult.fixTaskDescription}`.trim(),
@@ -925,6 +930,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
+        failureKind: "REMOTE_CI" as PhaseFailureKind,
         ciStatusContext: ciFailureContext,
       });
 
@@ -1004,6 +1010,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
+        failureKind: "REMOTE_CI" as PhaseFailureKind,
         ciStatusContext: validationResult.pendingComments.join("\n"),
       });
       console.info(
