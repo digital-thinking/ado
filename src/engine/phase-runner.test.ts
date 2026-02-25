@@ -198,6 +198,25 @@ describe("PhaseRunner", () => {
             stderr: "",
           };
         }
+        if (
+          input.args.includes("pr") &&
+          input.args.includes("view") &&
+          input.args.includes("statusCheckRollup")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              statusCheckRollup: [
+                {
+                  name: "build",
+                  status: "COMPLETED",
+                  conclusion: "SUCCESS",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
         return { exitCode: 0, stdout: "", stderr: "" };
       }),
     } as any;
@@ -228,7 +247,7 @@ describe("PhaseRunner", () => {
     const ghCalls = (mockRunner.run as ReturnType<typeof mock>).mock.calls
       .map((entry: any[]) => entry[0])
       .filter((call: any) => call.command === "gh");
-    expect(ghCalls).toHaveLength(2);
+    expect(ghCalls).toHaveLength(3);
     expect(ghCalls[0].args).toContain("--title");
     expect(ghCalls[0].args).toContain("Phase 23");
     expect(ghCalls[0].args).toContain("--body");
@@ -239,7 +258,14 @@ describe("PhaseRunner", () => {
       "- **P23-001**: ",
     );
     expect(ghCalls[0].args).toContain("--draft");
-    expect(ghCalls[1].args).toEqual(["pr", "ready", "2301"]);
+    expect(ghCalls[1].args).toEqual([
+      "pr",
+      "view",
+      "2301",
+      "--json",
+      "statusCheckRollup",
+    ]);
+    expect(ghCalls[2].args).toEqual(["pr", "ready", "2301"]);
   });
 
   test("recovery fallback: handles DirtyWorktreeError during branching", async () => {
@@ -327,6 +353,170 @@ describe("PhaseRunner", () => {
       phaseId: phaseId,
       status: "DONE",
     });
+  });
+
+  test("P23-003: maps failed CI checks to targeted CI_FIX tasks with rich diagnostics", async () => {
+    const phaseId = "41111111-1111-4111-8111-111111111111";
+    const taskId = "42222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 23 CI Mapping",
+          branchName: "phase-23-ci-mapping",
+          status: "PLANNING",
+          prUrl: undefined as string | undefined,
+          tasks: [
+            {
+              id: taskId,
+              title: "P23-003 implementation",
+              description: "Implement CI mapping",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = mockState.phases[0] as any;
+        phase.status = input.status;
+        if (typeof input.ciStatusContext === "string") {
+          phase.ciStatusContext = input.ciStatusContext;
+        }
+        return mockState;
+      }),
+      setPhasePrUrl: mock(async (input: { phaseId: string; prUrl: string }) => {
+        mockState.phases[0].prUrl = input.prUrl;
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async (input: any) => {
+        mockState.phases[0].tasks.push({
+          id: `${mockState.phases[0].tasks.length + 1}`,
+          title: input.title,
+          description: input.description,
+          status: input.status,
+          assignee: input.assignee,
+          dependencies: input.dependencies,
+        });
+        return mockState;
+      }),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: '{"verdict":"APPROVED","comments":[]}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-23-ci-mapping",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("--cached") &&
+          input.args.includes("--name-only")
+        ) {
+          return { exitCode: 0, stdout: "src/a.ts\n", stderr: "" };
+        }
+        if (input.args.includes("pr") && input.args.includes("create")) {
+          return {
+            exitCode: 0,
+            stdout: "https://github.com/org/repo/pull/2303\n",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("pr") &&
+          input.args.includes("view") &&
+          input.args.includes("statusCheckRollup")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              statusCheckRollup: [
+                {
+                  name: "lint",
+                  status: "COMPLETED",
+                  conclusion: "FAILURE",
+                  detailsUrl: "https://ci.example/lint",
+                },
+                {
+                  name: "unit tests",
+                  status: "COMPLETED",
+                  conclusion: "FAILURE",
+                },
+                {
+                  name: "build",
+                  status: "COMPLETED",
+                  conclusion: "SUCCESS",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        ciEnabled: true,
+        testerCommand: null,
+        testerArgs: null,
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await expect(runner.run()).rejects.toThrow(
+      "Execution loop stopped after CI checks failed. Targeted CI_FIX tasks are pending.",
+    );
+
+    const createdTitles = (
+      mockControl.createTask as ReturnType<typeof mock>
+    ).mock.calls.map((entry: any[]) => entry[0].title);
+    expect(createdTitles).toEqual(["CI_FIX: lint", "CI_FIX: unit tests"]);
+
+    const ciFailedCall = (
+      mockControl.setPhaseStatus as ReturnType<typeof mock>
+    ).mock.calls.find((entry: any[]) => entry[0].status === "CI_FAILED");
+    expect(ciFailedCall).toBeDefined();
+    expect(ciFailedCall?.[0].ciStatusContext).toContain(
+      "CI status for PR #2303: FAILURE",
+    );
+    expect(ciFailedCall?.[0].ciStatusContext).toContain(
+      "- lint [FAILURE] -> https://ci.example/lint",
+    );
+    expect(ciFailedCall?.[0].ciStatusContext).toContain(
+      "CI_FIX mapping: created=2, skipped_existing=0",
+    );
   });
 
   test("P17-001: recovery loop breaks after failed postcondition re-check (no infinite retry)", async () => {

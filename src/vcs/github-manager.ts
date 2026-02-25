@@ -22,6 +22,7 @@ export type CiCheckState =
 export type CiCheck = {
   name: string;
   state: CiCheckState;
+  detailsUrl?: string;
 };
 
 export type CiStatusSummary = {
@@ -213,6 +214,11 @@ export class GitHubManager {
         (typeof rawCheck.context === "string" && rawCheck.context) ||
         "unknown-check",
       state: normalizeCheckState(rawCheck),
+      detailsUrl:
+        (typeof rawCheck.detailsUrl === "string" && rawCheck.detailsUrl) ||
+        (typeof rawCheck.url === "string" && rawCheck.url) ||
+        (typeof rawCheck.targetUrl === "string" && rawCheck.targetUrl) ||
+        undefined,
     }));
 
     return {

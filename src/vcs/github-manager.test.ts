@@ -139,6 +139,34 @@ describe("GitHubManager", () => {
     expect(summary.checks).toEqual([{ name: "test", state: "FAILURE" }]);
   });
 
+  test("includes CI check details URL when available", async () => {
+    const runner = new MockProcessRunner([
+      {
+        stdout: JSON.stringify({
+          statusCheckRollup: [
+            {
+              name: "lint",
+              status: "COMPLETED",
+              conclusion: "FAILURE",
+              detailsUrl: "https://ci.example/lint",
+            },
+          ],
+        }),
+      },
+    ]);
+    const manager = new GitHubManager(runner);
+
+    const summary = await manager.getCiStatus(1, "C:/repo");
+
+    expect(summary.checks).toEqual([
+      {
+        name: "lint",
+        state: "FAILURE",
+        detailsUrl: "https://ci.example/lint",
+      },
+    ]);
+  });
+
   test("polls until CI reaches terminal success state", async () => {
     const runner = new MockProcessRunner([
       {

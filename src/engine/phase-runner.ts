@@ -6,6 +6,10 @@ import {
   runExceptionRecovery,
   verifyRecoveryPostcondition,
 } from "./exception-recovery";
+import {
+  deriveTargetedCiFixTasks,
+  formatCiDiagnostics,
+} from "./ci-check-mapping";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
 import { PhaseLoopControl } from "./phase-loop-control";
@@ -789,6 +793,88 @@ ${testerResult.fixTaskDescription}`.trim(),
     if (!validationPhase) {
       throw new Error(
         `Completed phase not found for CI validation: ${phase.id}`,
+      );
+    }
+
+    const prUrl = validationPhase.prUrl?.trim();
+    if (!prUrl) {
+      throw new Error("CI validation requires a phase PR URL.");
+    }
+    const prNumber = parsePullRequestNumberFromUrl(prUrl);
+    console.info(`Polling GitHub CI checks for PR #${prNumber}.`);
+    const ciSummary = await this.github.pollCiStatus({
+      prNumber,
+      cwd: this.config.projectRootDir,
+    });
+    const ciDiagnostics = formatCiDiagnostics({
+      prNumber,
+      prUrl,
+      summary: ciSummary,
+    });
+    console.info(ciDiagnostics);
+
+    if (ciSummary.overall !== "SUCCESS") {
+      const currentState = await this.control.getState();
+      const currentPhase = currentState.phases.find(
+        (p: any) => p.id === phase.id,
+      );
+      if (!currentPhase) {
+        throw new Error(
+          `Active phase not found during CI failure mapping: ${phase.id}`,
+        );
+      }
+
+      const mapping = deriveTargetedCiFixTasks({
+        summary: ciSummary,
+        prUrl,
+        existingTasks: currentPhase.tasks,
+      });
+
+      for (const taskInput of mapping.tasksToCreate) {
+        await this.control.createTask({
+          phaseId: phase.id,
+          title: taskInput.title,
+          description: taskInput.description,
+          assignee: this.config.activeAssignee,
+          dependencies: taskInput.dependencies,
+          status: taskInput.status,
+        });
+      }
+
+      const nextAction =
+        mapping.tasksToCreate.length > 0
+          ? "Next action: complete the new CI_FIX task(s) and rerun phase execution."
+          : "Next action: complete the existing CI_FIX task(s) and rerun phase execution.";
+      const ciFailureContext = [
+        ciDiagnostics,
+        `CI_FIX mapping: created=${mapping.tasksToCreate.length}, skipped_existing=${mapping.skippedTaskTitles.length}`,
+        nextAction,
+      ].join("\n");
+
+      await this.control.setPhaseStatus({
+        phaseId: phase.id,
+        status: "CI_FAILED",
+        ciStatusContext: ciFailureContext,
+      });
+
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "terminal-outcome",
+          type: "terminal.outcome",
+          payload: {
+            outcome: "failure",
+            summary: `CI checks failed for PR #${prNumber}; created ${mapping.tasksToCreate.length} CI_FIX task(s).`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+      throw new Error(
+        "Execution loop stopped after CI checks failed. Targeted CI_FIX tasks are pending.",
       );
     }
 
