@@ -575,6 +575,52 @@ export function controlCenterHtml(params: {
       return text.slice(0, 120) + "...";
     }
 
+    function summarizeFailureText(value) {
+      const text = String(value || "").trim();
+      if (!text) {
+        return "No failure details available.";
+      }
+
+      const lines = text
+        .split(/\\r?\\n/)
+        .map((line) => line.replace(/\\s+/g, " ").trim())
+        .filter((line) => line.length > 0);
+      if (lines.length === 0) {
+        return "No failure details available.";
+      }
+
+      const preferred =
+        lines.find((line) =>
+          /\\b(error|failed|exception|timeout|exit code|unauthorized|denied)\\b/i.test(line),
+        ) || lines[0];
+      if (preferred.length <= 140) {
+        return preferred;
+      }
+      return preferred.slice(0, 137) + "...";
+    }
+
+    function toAnchorToken(raw) {
+      return String(raw || "")
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 80) || "unknown";
+    }
+
+    function renderRecoveryLinks(links) {
+      if (!Array.isArray(links) || links.length === 0) {
+        return "";
+      }
+
+      return links
+        .map((link) => {
+          const label = escapeHtml(link && link.label ? link.label : "trace");
+          const href = escapeHtml(link && link.href ? link.href : "#");
+          return '<a class="mono small" href="' + href + '">' + label + "</a>";
+        })
+        .join(" | ");
+    }
+
     function renderTabs() {
       tabStrip.innerHTML = "";
       projects.forEach((project) => {
@@ -901,6 +947,8 @@ export function controlCenterHtml(params: {
                   recoveryAttempts.length > 0
                     ? recoveryAttempts[recoveryAttempts.length - 1]
                     : null;
+                const taskAnchor = toAnchorToken(task.id);
+                const failureSummary = summarizeFailureText(task.errorLogs);
                 const assigneeControl = (() => {
                   if (task.status === "TODO") {
                     return (
@@ -920,13 +968,46 @@ export function controlCenterHtml(params: {
 
                   if (task.status === "FAILED") {
                     const retryAssignee = task.assignee === "UNASSIGNED" ? "" : task.assignee;
+                    const recoveryHistoryId = "task-recovery-" + taskAnchor;
+                    const latestAttemptNumber =
+                      latestRecovery && Number.isInteger(latestRecovery.attemptNumber)
+                        ? latestRecovery.attemptNumber
+                        : recoveryAttempts.length;
+                    const latestRecoveryId = recoveryHistoryId + "-" + latestAttemptNumber;
                     return (
                       '<div class="small">Retry Agent: <span class="mono">' + escapeHtml(retryAssignee || "UNASSIGNED") + "</span></div>" +
+                      '<div class="small">Failure summary: <span class="mono">' + escapeHtml(failureSummary) + "</span></div>" +
                       '<div class="row">' +
                         '<button type="button" class="secondary task-run-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '" data-assignee="' + escapeHtml(retryAssignee) + '"' + (hasUnfinishedDependency || !retryAssignee ? " disabled" : "") + '>Retry</button>' +
                         '<button type="button" class="secondary task-reset-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '">Reset TODO</button>' +
                       "</div>" +
                       '<details><summary class="small">Failure logs</summary><pre class="mono small">' + escapeHtml(task.errorLogs || "No logs available.") + "</pre></details>" +
+                      (recoveryAttempts.length > 0
+                        ? '<details id="' + escapeHtml(recoveryHistoryId) + '"><summary class="small">Recovery trace history</summary>' +
+                          recoveryAttempts.map((attempt) => {
+                            const attemptNumber =
+                              Number.isInteger(attempt.attemptNumber) && attempt.attemptNumber > 0
+                                ? attempt.attemptNumber
+                                : 0;
+                            const attemptId = recoveryHistoryId + "-" + attemptNumber;
+                            return (
+                              '<div id="' +
+                              escapeHtml(attemptId) +
+                              '" class="small mono" style="margin-top:6px;">' +
+                              "attempt " +
+                              escapeHtml(String(attemptNumber)) +
+                              ": " +
+                              escapeHtml((attempt.result && attempt.result.status) || "unknown") +
+                              " - " +
+                              escapeHtml((attempt.result && attempt.result.reasoning) || "") +
+                              "</div>"
+                            );
+                          }).join("") +
+                          (latestRecovery
+                            ? '<div class="small">Latest trace: <a class="mono" href="#' + escapeHtml(latestRecoveryId) + '">attempt ' + escapeHtml(String(latestAttemptNumber)) + "</a></div>"
+                            : "") +
+                          "</details>"
+                        : "") +
                       (hasUnfinishedDependency
                         ? '<div class="small" style="color:#7a2618;">Cannot retry until all dependencies are DONE.</div>'
                         : "") +
@@ -941,7 +1022,7 @@ export function controlCenterHtml(params: {
                 })();
 
                 return (
-                  '<div class="task-card">' +
+                  '<div class="task-card" id="task-card-' + escapeHtml(taskAnchor) + '">' +
                     '<button type="button" class="secondary task-edit-toggle-button task-edit-corner" title="Edit task" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '"' + (editDisabled ? " disabled" : "") + '>&#9998;</button>' +
                     '<div class="task-view-inline">' +
                       '<div><strong>' + escapeHtml(task.title) + '</strong></div>' +
@@ -1010,7 +1091,13 @@ export function controlCenterHtml(params: {
       agentTopTableBody.innerHTML = "";
       agents.forEach((agent) => {
         const projectName = agent.projectName || "-";
-        const taskName = agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
+        const taskName = (() => {
+          if (agent.taskTitle && Number.isInteger(agent.taskNumber)) {
+            const phaseLabel = agent.phaseName ? agent.phaseName + " " : "";
+            return phaseLabel + "#" + agent.taskNumber + " " + agent.taskTitle;
+          }
+          return agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
+        })();
         const pid = agent.pid === undefined || agent.pid === null ? "-" : agent.pid;
 
         const row = document.createElement("tr");
@@ -1405,11 +1492,19 @@ export function controlCenterHtml(params: {
           const data = JSON.parse(event.data);
           if (data.type === "output") {
             const span = document.createElement("span");
-            span.textContent = data.line + "\\n";
+            span.textContent = (data.formattedLine || data.line) + "\\n";
             logModalBody.appendChild(span);
             logModalBody.scrollTop = logModalBody.scrollHeight;
           } else if (data.type === "status") {
-            logModalStatus.textContent = "Agent status: " + data.status + ". Stream ended.";
+            const summary = data.failureSummary ? " Failure: " + data.failureSummary : "";
+            logModalStatus.textContent = "Agent status: " + data.status + "." + summary + " Stream ended.";
+            const linksHtml = renderRecoveryLinks(data.recoveryLinks);
+            if (linksHtml) {
+              const linksLine = document.createElement("div");
+              linksLine.innerHTML = "Recovery traces: " + linksHtml;
+              logModalStatus.appendChild(document.createElement("br"));
+              logModalStatus.appendChild(linksLine);
+            }
             source.close();
             currentEventSource = null;
           }

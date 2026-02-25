@@ -96,4 +96,107 @@ describe("agents API enrichment", () => {
     expect(mockAgents.list.mock.calls.length).toBe(initialListCount + 1);
     // Ensure no other agent methods were called (like start, kill, assign, etc if we had mocked them)
   });
+
+  test("GET /api/agents/:id/logs/stream includes formatted line, context, and recovery links", async () => {
+    let capturedListener: ((event: any) => void) | undefined;
+    const deps: ApiDependencies = {
+      control: {
+        getState: async () =>
+          ({
+            projectName: "project-a",
+            rootDir: "/tmp/a",
+            phases: [
+              {
+                id: "phase-1",
+                name: "Phase 1",
+                branchName: "phase-1",
+                status: "CODING",
+                tasks: [
+                  {
+                    id: "task-1",
+                    title: "Task One",
+                    status: "FAILED",
+                    assignee: "CODEX_CLI",
+                    dependencies: [],
+                    recoveryAttempts: [
+                      {
+                        id: "rec-1",
+                        occurredAt: new Date().toISOString(),
+                        attemptNumber: 1,
+                        exception: {
+                          category: "AGENT_FAILURE",
+                          message: "boom",
+                        },
+                        result: { status: "fixed", reasoning: "patched" },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }) as any,
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            phaseId: "phase-1",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: ["line one"],
+          },
+        ],
+        subscribe: (_id: string, listener: (event: any) => void) => {
+          capturedListener = listener;
+          return () => {};
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/logs/stream"),
+      new URL("http://localhost/api/agents/agent-1/logs/stream"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    const reader = response!.body!.getReader();
+    const decoder = new TextDecoder();
+
+    const chunk1 = await reader.read();
+    const payload1 = decoder.decode(chunk1.value);
+    expect(payload1).toContain('"line":"line one"');
+    expect(payload1).toContain(
+      '"formattedLine":"[phase: Phase 1 | task #1 Task One] line one"',
+    );
+
+    setTimeout(() => {
+      capturedListener?.({
+        type: "status",
+        agentId: "agent-1",
+        status: "FAILED",
+      });
+    }, 10);
+
+    const chunk2 = await reader.read();
+    const payload2 = decoder.decode(chunk2.value);
+    expect(payload2).toContain('"status":"FAILED"');
+    expect(payload2).toContain('"failureSummary":"line one"');
+    expect(payload2).toContain('"href":"#task-card-task-1"');
+    expect(payload2).toContain('"href":"#task-recovery-task-1-1"');
+  });
 });
