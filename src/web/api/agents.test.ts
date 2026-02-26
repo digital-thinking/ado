@@ -562,3 +562,123 @@ describe("agents API enrichment", () => {
     expect(payload.formattedLine).toContain("[agent-runtime] Idle 2m0s");
   });
 });
+
+describe("P26-014: GET /api/agents recency ordering", () => {
+  function makeDeps(agents: any[]): ApiDependencies {
+    return {
+      agents: { list: () => agents } as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+    } as any;
+  }
+
+  test("returns agents sorted by startedAt descending (most recent first)", async () => {
+    const deps = makeDeps([
+      {
+        id: "agent-old",
+        name: "Old",
+        projectName: "project-a",
+        status: "STOPPED",
+        startedAt: "2026-02-20T10:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "agent-new",
+        name: "New",
+        projectName: "project-a",
+        status: "RUNNING",
+        startedAt: "2026-02-26T12:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "agent-mid",
+        name: "Mid",
+        projectName: "project-a",
+        status: "STOPPED",
+        startedAt: "2026-02-23T08:00:00.000Z",
+        outputTail: [],
+      },
+    ]);
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(3);
+    expect(data[0].id).toBe("agent-new");
+    expect(data[1].id).toBe("agent-mid");
+    expect(data[2].id).toBe("agent-old");
+  });
+
+  test("agents with missing startedAt sort to the end", async () => {
+    const deps = makeDeps([
+      {
+        id: "agent-no-time",
+        name: "NoTime",
+        projectName: "project-a",
+        status: "STOPPED",
+        startedAt: undefined,
+        outputTail: [],
+      },
+      {
+        id: "agent-with-time",
+        name: "WithTime",
+        projectName: "project-a",
+        status: "RUNNING",
+        startedAt: "2026-02-26T09:00:00.000Z",
+        outputTail: [],
+      },
+    ]);
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(2);
+    expect(data[0].id).toBe("agent-with-time");
+    expect(data[1].id).toBe("agent-no-time");
+  });
+
+  test("returns all agents unsorted when all have equal startedAt", async () => {
+    const ts = "2026-02-26T10:00:00.000Z";
+    const deps = makeDeps([
+      {
+        id: "a1",
+        name: "A1",
+        projectName: "p",
+        status: "RUNNING",
+        startedAt: ts,
+        outputTail: [],
+      },
+      {
+        id: "a2",
+        name: "A2",
+        projectName: "p",
+        status: "RUNNING",
+        startedAt: ts,
+        outputTail: [],
+      },
+    ]);
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(2);
+    // Both have same timestamp — order is stable, all records present.
+    expect(data.map((a: any) => a.id)).toContain("a1");
+    expect(data.map((a: any) => a.id)).toContain("a2");
+  });
+});

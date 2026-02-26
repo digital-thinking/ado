@@ -152,8 +152,14 @@ export async function handleAgentsApi(
 ): Promise<Response | null> {
   if (request.method === "GET" && url.pathname === "/api/agents") {
     const agents = deps.agents.list();
+    // Sort by startedAt descending (most recent first) for deterministic recency ordering.
+    const sortedAgents = [...agents].sort((a, b) => {
+      const aTime = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const bTime = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      return bTime - aTime;
+    });
     const statesByProject = new Map<string, ProjectState | undefined>();
-    for (const agent of agents) {
+    for (const agent of sortedAgents) {
       const projectName = agent.projectName ?? deps.projectName;
       if (statesByProject.has(projectName)) {
         continue;
@@ -169,7 +175,7 @@ export async function handleAgentsApi(
     }
 
     return json(
-      agents.map((agent) => {
+      sortedAgents.map((agent) => {
         const recovery = agent.taskId
           ? recoveryCache.get(agent.taskId)
           : undefined;
