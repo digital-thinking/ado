@@ -456,6 +456,7 @@ export const TaskCompletionVerificationSchema = z.object({
   status: z.enum(["PASSED", "FAILED"]),
   probes: z.array(SideEffectProbeSchema).min(1),
   missingSideEffects: z.array(z.string().min(1)).default([]),
+  envFingerprint: z.record(z.string(), z.string()).optional(),
 });
 export type TaskCompletionVerification = z.infer<
   typeof TaskCompletionVerificationSchema

@@ -178,8 +178,8 @@ export async function startWebControlCenter(
     onFailure: onAgentFailure,
   });
 
-  control = new ControlCenterService(
-    (projectName) => {
+  control = new ControlCenterService({
+    stateEngine: (projectName) => {
       const settingsFilePath = input.settingsFilePath;
       return (async () => {
         const s = await loadCliSettings(settingsFilePath);
@@ -196,8 +196,8 @@ export async function startWebControlCenter(
         throw new Error(`Project not found: ${projectName}`);
       })();
     },
-    resolve(input.cwd, "TASKS.md"),
-    async (workInput) => {
+    tasksMarkdownFilePath: resolve(input.cwd, "TASKS.md"),
+    internalWorkRunner: async (workInput) => {
       const assigneeSettings = input.agentSettings[workInput.assignee];
       if (!assigneeSettings.enabled) {
         const available = CLI_ADAPTER_IDS.filter(
@@ -297,15 +297,15 @@ export async function startWebControlCenter(
         durationMs: result.durationMs,
       };
     },
-    async () => {
+    repositoryResetRunner: async () => {
       await processManager.run({
         command: "git",
         args: ["reset", "--hard"],
         cwd: input.cwd,
       });
     },
-    onStateChange,
-  );
+    onStateChange: onStateChange,
+  });
 
   // 4. Initial cache load for all known projects.
   const { refreshRecoveryCache } = await import("./api/agents");

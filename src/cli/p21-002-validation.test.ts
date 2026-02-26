@@ -463,6 +463,40 @@ describe("P21-002 CLI argument validation", () => {
     expect(result.stderr).toContain("No phases found in project state");
   });
 
+  test("task create fails fast when activePhaseId is missing", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-active-phase-missing-");
+    sandboxes.push(sandbox);
+
+    const initialState = {
+      projectName: "test-project",
+      rootDir: sandbox.projectDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      phases: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          name: "Phase 1",
+          branchName: "feature/phase-1",
+          status: "PLANNING",
+          tasks: [],
+        },
+      ],
+      activePhaseId: undefined,
+    };
+    await sandbox.writeProjectState(initialState as any);
+
+    const result = runIxado(
+      ["task", "create", "Task A", "Task description"],
+      sandbox,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Error: Active phase ID is not set in project state.",
+    );
+    expect(result.stderr).toContain("ixado phase active <phaseNumber|phaseId>");
+  });
+
   // ── exit code consistency ─────────────────────────────────────────────────
 
   test("all validation errors produce exit code 1", async () => {

@@ -270,10 +270,10 @@ function createControlCenterServiceWithAgentTracking(
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
   projectName: string,
 ): ControlCenterService {
-  return new ControlCenterService(
-    new StateEngine(stateFilePath),
-    resolve(projectRootDir, "TASKS.md"),
-    async (workInput) => {
+  return new ControlCenterService({
+    stateEngine: new StateEngine(stateFilePath),
+    tasksMarkdownFilePath: resolve(projectRootDir, "TASKS.md"),
+    internalWorkRunner: async (workInput) => {
       const availableAgents = getAvailableAgents(settings);
       if (!availableAgents.includes(workInput.assignee)) {
         throw new Error(
@@ -360,14 +360,14 @@ function createControlCenterServiceWithAgentTracking(
         throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
       }
     },
-    async () => {
+    repositoryResetRunner: async () => {
       await processManager.run({
         command: "git",
         args: ["reset", "--hard"],
         cwd: projectRootDir,
       });
     },
-  );
+  });
 }
 
 function createServices(

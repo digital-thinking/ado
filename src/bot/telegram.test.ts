@@ -174,6 +174,27 @@ describe("telegram command handlers", () => {
     expect(ctx.replies[1]).toContain("finished with status DONE");
   });
 
+  test("fails starttask when activePhaseId is missing after execution", async () => {
+    const ctx = createCtx(123, "/starttask 1 CODEX_CLI");
+
+    await handleStartTaskCommand(
+      ctx,
+      123,
+      ["CODEX_CLI", "MOCK_CLI"],
+      "MOCK_CLI",
+      async () => {
+        const state = buildState();
+        state.activePhaseId = undefined;
+        state.phases[0].tasks[0].status = "DONE";
+        return state;
+      },
+    );
+
+    expect(ctx.replies[0]).toContain("Starting task");
+    expect(ctx.replies[1]).toContain("Task start failed:");
+    expect(ctx.replies[1]).toContain("Active phase ID is not set");
+  });
+
   test("returns usage for invalid starttask command", async () => {
     const ctx = createCtx(123, "/starttask");
 

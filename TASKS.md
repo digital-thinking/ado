@@ -60,7 +60,7 @@ Status markers:
 - [x] `P26-012` Add regression/integration tests for Phase 26: failure-kind transitions, CI_FIX cap behavior, all-phase reconciliation, restart consistency hooks, atomic persistence, adapter-ID schema parsing, active-phase selection policy, truncation markers, and branch-base verification. Deps: `P26-002`, `P26-004`, `P26-007`, `P26-008`, `P26-009`, `P26-010`, `P26-011`.
 - [x] `P26-014` Cap agent lists in web UI to the most recent 5 records for both Global Agents and per-project Running Agents using deterministic recency ordering. Deps: `P26-005`.
 - [x] `P26-015` Filter agent log stream content to hide file-interaction chatter and show only reasoning/thinking progress plus terminal outcome context. Deps: `P26-009`.
-- [ ] `P26-016` Fix GitHub capability preflight false negatives and environment mismatch diagnostics: correct network probe semantics, capture effective runtime identity/env fingerprints, and report actionable auth/runtime differences. Deps: `P26-001`.
+- [x] `P26-016` Fix GitHub capability preflight false negatives and environment mismatch diagnostics: correct network probe semantics, capture effective runtime identity/env fingerprints, and report actionable auth/runtime differences. Deps: `P26-001`.
 - [ ] `P26-017` Add regression/integration tests for new Phase 26 agent UX + preflight tasks (top-5 agent truncation, reasoning-only log stream filter, and GitHub preflight parity diagnostics). Deps: `P26-014`, `P26-015`, `P26-016`.
 - [ ] `P26-013` Create PR Task: open Phase 26 PR after coding tasks are done. Deps: `P26-012`, `P26-017`.
 

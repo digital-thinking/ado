@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
 
 import { z } from "zod";
@@ -187,6 +188,15 @@ type RepositoryResetRunner = () => Promise<void>;
 export type StateEngineFactory = (
   projectName: string,
 ) => StateEngine | Promise<StateEngine>;
+
+export type ControlCenterServiceOptions = {
+  stateEngine: StateEngine | StateEngineFactory;
+  tasksMarkdownFilePath?: string;
+  internalWorkRunner?: InternalWorkRunner;
+  repositoryResetRunner?: RepositoryResetRunner;
+  onStateChange?: (projectName: string, state: ProjectState) => void;
+  sideEffectProbeRunner?: ProcessRunner;
+};
 
 type ImportedTaskDraft = ImportedTaskPlan & {
   id: string;
@@ -423,18 +433,22 @@ export class ControlCenterService {
   private readonly sideEffectProbeRunner: ProcessRunner;
   private defaultProjectName?: string;
 
-  constructor(
-    stateOrFactory: StateEngine | StateEngineFactory,
-    tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
-    internalWorkRunner?: InternalWorkRunner,
-    repositoryResetRunner?: RepositoryResetRunner,
-    onStateChange?: (projectName: string, state: ProjectState) => void,
-    sideEffectProbeRunner: ProcessRunner = new ProcessManager(),
-  ) {
-    if (typeof stateOrFactory === "function") {
-      this.stateEngineFactory = stateOrFactory;
+  constructor(options: ControlCenterServiceOptions) {
+    const {
+      stateEngine,
+      tasksMarkdownFilePath = resolve(
+        process.cwd(),
+        DEFAULT_TASKS_MARKDOWN_PATH,
+      ),
+      internalWorkRunner,
+      repositoryResetRunner,
+      onStateChange,
+      sideEffectProbeRunner = new ProcessManager(),
+    } = options;
+    if (typeof stateEngine === "function") {
+      this.stateEngineFactory = stateEngine;
     } else {
-      this.stateEngineFactory = () => stateOrFactory;
+      this.stateEngineFactory = () => stateEngine;
     }
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
@@ -1245,6 +1259,12 @@ export class ControlCenterService {
 
     const probes: SideEffectProbeResult[] = [];
     const missingSideEffects: string[] = [];
+    const envFingerprint: Record<string, string> = {
+      hostname: hostname(),
+      platform: process.platform,
+      arch: process.arch,
+    };
+
     let adapterFailureKind: AdapterFailureKind = "unknown";
     const setFailureKind = (kind?: AdapterFailureKind) => {
       if (!kind || kind === "unknown" || adapterFailureKind !== "unknown") {
@@ -1253,6 +1273,7 @@ export class ControlCenterService {
       adapterFailureKind = kind;
     };
 
+    // 1. Tooling Probe
     const ghToolingProbe = await this.runCommandProbe(state.rootDir, "gh", [
       "--version",
     ]);
@@ -1267,6 +1288,7 @@ export class ControlCenterService {
         success: true,
         details: `Tooling available: ${versionLine}`,
       });
+      envFingerprint["gh_version"] = versionLine;
     } else {
       setFailureKind(ghToolingProbe.failureKind);
       probes.push({
@@ -1279,6 +1301,7 @@ export class ControlCenterService {
       );
     }
 
+    // 2. Auth Probe
     if (!ghToolingProbe.success) {
       probes.push({
         name: "gh auth status --hostname github.com",
@@ -1286,9 +1309,6 @@ export class ControlCenterService {
         details:
           "Skipped because GitHub CLI tooling check failed (gh is unavailable).",
       });
-      missingSideEffects.push(
-        "Auth preflight was skipped because GitHub CLI is unavailable. Install GitHub CLI, then run 'gh auth login --hostname github.com'.",
-      );
     } else {
       const ghAuthProbe = await this.runCommandProbe(state.rootDir, "gh", [
         "auth",
@@ -1302,6 +1322,12 @@ export class ControlCenterService {
           success: true,
           details: "GitHub CLI authentication is valid for github.com.",
         });
+        const userMatch = /as ([a-zA-Z0-9-]+)/.exec(
+          ghAuthProbe.stderr + ghAuthProbe.stdout,
+        );
+        if (userMatch) {
+          envFingerprint["gh_user"] = userMatch[1];
+        }
       } else {
         setFailureKind(ghAuthProbe.failureKind);
         probes.push({
@@ -1315,34 +1341,65 @@ export class ControlCenterService {
       }
     }
 
+    // 3. Git Identity Probes
+    const gitNameProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "config",
+      "user.name",
+    ]);
+    const gitEmailProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "config",
+      "user.email",
+    ]);
+    if (gitNameProbe.success && gitNameProbe.stdout.trim()) {
+      envFingerprint["git_user_name"] = gitNameProbe.stdout.trim();
+    }
+    if (gitEmailProbe.success && gitEmailProbe.stdout.trim()) {
+      envFingerprint["git_user_email"] = gitEmailProbe.stdout.trim();
+    }
+
+    // 4. Network/Access Probe (Corrected semantics: use actual remote if available)
+    const remoteProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    const remoteUrl = remoteProbe.success
+      ? remoteProbe.stdout.trim()
+      : "https://github.com/github/gitignore.git";
+
     const networkProbe = await this.runCommandProbe(state.rootDir, "git", [
       "ls-remote",
-      "https://github.com/github/gitignore.git",
+      remoteUrl,
       "HEAD",
     ]);
-    const hasGitHubResponse = networkProbe.stdout.trim().length > 0;
-    if (networkProbe.success && hasGitHubResponse) {
+
+    if (networkProbe.success && networkProbe.stdout.trim().length > 0) {
       probes.push({
-        name: "git ls-remote github.com",
+        name: `git ls-remote ${remoteUrl}`,
         success: true,
-        details: "Network reachability to github.com verified.",
+        details: `Network reachability and access to ${remoteUrl} verified.`,
       });
     } else {
       setFailureKind(networkProbe.failureKind);
+      const isAuthIssue =
+        networkProbe.stderr.includes("Permission denied") ||
+        networkProbe.stderr.includes(
+          "fatal: Could not read from remote repository",
+        );
+
       probes.push({
-        name: "git ls-remote github.com",
+        name: `git ls-remote ${remoteUrl}`,
         success: false,
         details: networkProbe.success
-          ? "git ls-remote github.com returned no output."
+          ? `git ls-remote returned no output for ${remoteUrl}.`
           : networkProbe.details,
       });
-      missingSideEffects.push(
-        `Network preflight failed: ${
-          networkProbe.success
-            ? "git ls-remote github.com returned no output."
-            : networkProbe.details
-        } Verify outbound connectivity to github.com (VPN/proxy/firewall) and retry.`,
-      );
+
+      const diagnostic = isAuthIssue
+        ? `Access denied to ${remoteUrl}. Verify your SSH keys or HTTPS credentials and repository permissions.`
+        : `Network preflight failed for ${remoteUrl}: ${networkProbe.details} Verify outbound connectivity to github.com (VPN/proxy/firewall).`;
+
+      missingSideEffects.push(diagnostic);
     }
 
     if (missingSideEffects.length === 0) {
@@ -1356,6 +1413,7 @@ export class ControlCenterService {
         status: "FAILED",
         probes,
         missingSideEffects,
+        envFingerprint,
       }),
       adapterFailureKind,
     };

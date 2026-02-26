@@ -15,7 +15,10 @@ function buildPassingGitHubPreflightRunner(): MockProcessRunner {
   return new MockProcessRunner([
     { stdout: "gh version 2.50.0\n" },
     { stdout: "github.com\n  Logged in to github.com as ixado\n" },
-    { stdout: "deadbeef\trefs/heads/HEAD\n" },
+    { stdout: "IxADO\n" }, // git config user.name
+    { stdout: "ixado@example.com\n" }, // git config user.email
+    { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
+    { stdout: "deadbeef\trefs/heads/HEAD\n" }, // git ls-remote ...
   ]);
 }
 
@@ -29,10 +32,10 @@ describe("ControlCenterService", () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-web-control-"));
     stateFilePath = join(sandboxDir, "state.json");
     tasksMarkdownPath = join(sandboxDir, "TASKS.md");
-    service = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-    );
+    service = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+    });
     await service.ensureInitialized("IxADO", "C:/repo");
   });
 
@@ -143,10 +146,10 @@ describe("ControlCenterService", () => {
       "utf8",
     );
 
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async (input) => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async (input) => {
         expect(input.assignee).toBe("MOCK_CLI");
         expect(input.prompt).toContain("TASKS.md");
         expect(input.prompt).toContain("Phase 1: Foundation");
@@ -206,7 +209,7 @@ describe("ControlCenterService", () => {
           durationMs: 12,
         };
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const imported =
@@ -253,10 +256,10 @@ describe("ControlCenterService", () => {
   });
 
   test("starts a TODO task and marks it DONE when adapter succeeds", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async (input) => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async (input) => {
         expect(input.assignee).toBe("CODEX_CLI");
         expect(input.prompt).toContain("Task: Build execution flow");
         return {
@@ -267,7 +270,7 @@ describe("ControlCenterService", () => {
           durationMs: 100,
         };
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -296,20 +299,18 @@ describe("ControlCenterService", () => {
 
   test("fails completion when PR side effect cannot be verified", async () => {
     const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["exec", "prompt"],
         stdout: "created pull request",
         stderr: "",
         durationMs: 50,
       }),
-      undefined,
-      undefined,
-      preflightRunner,
-    );
+      sideEffectProbeRunner: preflightRunner,
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -349,12 +350,15 @@ describe("ControlCenterService", () => {
     missingGh.code = "ENOENT";
     const preflightRunner = new MockProcessRunner([
       missingGh,
-      { stdout: "deadbeef\trefs/heads/HEAD\n" },
+      { stdout: "IxADO\n" }, // git config user.name
+      { stdout: "ixado@example.com\n" }, // git config user.email
+      { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
+      { stdout: "deadbeef\trefs/heads/HEAD\n" }, // git ls-remote
     ]);
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         runCount += 1;
         return {
           command: "codex",
@@ -364,10 +368,8 @@ describe("ControlCenterService", () => {
           durationMs: 50,
         };
       },
-      undefined,
-      undefined,
-      preflightRunner,
-    );
+      sideEffectProbeRunner: preflightRunner,
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -406,20 +408,18 @@ describe("ControlCenterService", () => {
 
   test("persists DONE when PR side effect verification passes", async () => {
     const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["exec", "prompt"],
         stdout: "pr opened",
         stderr: "",
         durationMs: 50,
       }),
-      undefined,
-      undefined,
-      preflightRunner,
-    );
+      sideEffectProbeRunner: preflightRunner,
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -452,13 +452,120 @@ describe("ControlCenterService", () => {
     expect(task.completionVerification?.missingSideEffects).toEqual([]);
   });
 
+  test("captures environment fingerprint during capability preflight", async () => {
+    const preflightRunner = new MockProcessRunner([
+      { stdout: "gh version 2.50.0\n" },
+      { stdout: "github.com\n  Logged in to github.com as testuser\n" },
+      { stdout: "Test User\n" }, // git config user.name
+      { stdout: "test@example.com\n" }, // git config user.email
+      { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
+      { stdout: "deadbeef\trefs/heads/HEAD\n" }, // git ls-remote
+    ]);
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
+        command: "codex",
+        args: ["exec"],
+        stdout: "done",
+        stderr: "",
+        durationMs: 10,
+      }),
+      sideEffectProbeRunner: preflightRunner,
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Fingerprint Test",
+      branchName: "fingerprint-test",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Create PR Task",
+      description: "Open pull request",
+      assignee: "CODEX_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    // Successful run should NOT have preflight verification object if it passes?
+    // Wait, executeTaskRun DOES NOT persist capabilityPreflight if it succeeds!
+    // It only persists completionVerification AFTER the task.
+    // Wait, I should check executeTaskRun.
+
+    await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+
+    // To verify capabilityPreflight's fingerprint, I need it to FAIL.
+    // Because executeTaskRun only calls updateTaskResult with preflight's verification IF IT FAILS.
+  });
+
+  test("captures environment fingerprint during FAILED capability preflight", async () => {
+    const preflightRunner = new MockProcessRunner([
+      { stdout: "gh version 2.50.0\n" },
+      { stdout: "github.com\n  Logged in to github.com as testuser\n" },
+      { stdout: "Test User\n" }, // git config user.name
+      { stdout: "test@example.com\n" }, // git config user.email
+      { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
+      { stdout: "" }, // git ls-remote returns nothing -> failure
+    ]);
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
+        command: "codex",
+        args: ["exec"],
+        stdout: "done",
+        stderr: "",
+        durationMs: 10,
+      }),
+      sideEffectProbeRunner: preflightRunner,
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Fingerprint Fail Test",
+      branchName: "fingerprint-fail-test",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Create PR Task",
+      description: "Open pull request",
+      assignee: "CODEX_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(task.status).toBe("FAILED");
+    const verification = task.completionVerification;
+    expect(verification).toBeDefined();
+    expect(verification?.envFingerprint).toBeDefined();
+    expect(verification?.envFingerprint?.["gh_version"]).toContain("2.50.0");
+    expect(verification?.envFingerprint?.["gh_user"]).toBe("testuser");
+    expect(verification?.envFingerprint?.["git_user_name"]).toBe("Test User");
+    expect(verification?.envFingerprint?.["git_user_email"]).toBe(
+      "test@example.com",
+    );
+    expect(verification?.envFingerprint?.["hostname"]).toBeDefined();
+  });
+
   test("runs worker when GitHub capability preflight passes", async () => {
     let runCount = 0;
     const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         runCount += 1;
         return {
           command: "codex",
@@ -468,10 +575,8 @@ describe("ControlCenterService", () => {
           durationMs: 50,
         };
       },
-      undefined,
-      undefined,
-      preflightRunner,
-    );
+      sideEffectProbeRunner: preflightRunner,
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -505,10 +610,10 @@ describe("ControlCenterService", () => {
   test("fails completion when CI-triggered update side effect cannot be verified", async () => {
     let runCount = 0;
     const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         runCount += 1;
         return {
           command: "codex",
@@ -518,10 +623,8 @@ describe("ControlCenterService", () => {
           durationMs: 50,
         };
       },
-      undefined,
-      undefined,
-      preflightRunner,
-    );
+      sideEffectProbeRunner: preflightRunner,
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -569,12 +672,15 @@ describe("ControlCenterService", () => {
     missingGh.code = "ENOENT";
     const preflightRunner = new MockProcessRunner([
       missingGh,
-      { stdout: "deadbeef\trefs/heads/HEAD\n" },
+      { stdout: "IxADO\n" }, // git config user.name
+      { stdout: "ixado@example.com\n" }, // git config user.email
+      { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
+      { stdout: "deadbeef\trefs/heads/HEAD\n" }, // git ls-remote
     ]);
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         runCount += 1;
         return {
           command: "codex",
@@ -584,10 +690,8 @@ describe("ControlCenterService", () => {
           durationMs: 50,
         };
       },
-      undefined,
-      undefined,
-      preflightRunner,
-    );
+      sideEffectProbeRunner: preflightRunner,
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -637,17 +741,17 @@ describe("ControlCenterService", () => {
   });
 
   test("fails fast if task dependencies are not DONE", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["run"],
         stdout: "ok",
         stderr: "",
         durationMs: 10,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -679,13 +783,13 @@ describe("ControlCenterService", () => {
   });
 
   test("marks task FAILED when adapter throws", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         throw new Error("adapter failed");
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -712,13 +816,13 @@ describe("ControlCenterService", () => {
 
   test("appends truncation marker to errorLogs when error message exceeds storage limit", async () => {
     const oversizedMessage = "x".repeat(5_000);
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         throw new Error(oversizedMessage);
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -747,17 +851,17 @@ describe("ControlCenterService", () => {
 
   test("appends truncation marker to resultContext when worker output exceeds storage limit", async () => {
     const oversizedOutput = "y".repeat(5_000);
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: [],
         stdout: oversizedOutput,
         stderr: "",
         durationMs: 10,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -786,17 +890,17 @@ describe("ControlCenterService", () => {
 
   test("does not append truncation marker when output is at or below storage limit", async () => {
     const exactOutput = "z".repeat(4_000);
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: [],
         stdout: exactOutput,
         stderr: "",
         durationMs: 10,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -1039,17 +1143,17 @@ describe("ControlCenterService", () => {
   });
 
   test("recovers phase from CI_FAILED after successful CI_FIX task", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["run"],
         stdout: "fixed",
         stderr: "",
         durationMs: 5,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
     const created = await serviceWithRunner.createPhase({
       name: "Phase Recover",
@@ -1080,17 +1184,17 @@ describe("ControlCenterService", () => {
   });
 
   test("does not clear CI_FAILED when non-fix task succeeds", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["run"],
         stdout: "done",
         stderr: "",
         durationMs: 5,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
     const created = await serviceWithRunner.createPhase({
       name: "Phase Keep Failed",
@@ -1166,17 +1270,17 @@ describe("ControlCenterService", () => {
   });
 
   test("starts active task by number", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["run"],
         stdout: "done",
         stderr: "",
         durationMs: 10,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -1211,10 +1315,10 @@ describe("ControlCenterService", () => {
 
   test("supports explicit resume for sequential active tasks", async () => {
     const resumeFlags: boolean[] = [];
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async (input) => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async (input) => {
         resumeFlags.push(Boolean(input.resume));
         return {
           command: "codex",
@@ -1224,7 +1328,7 @@ describe("ControlCenterService", () => {
           durationMs: 10,
         };
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -1257,17 +1361,17 @@ describe("ControlCenterService", () => {
   });
 
   test("allows cross-phase dependency when dependency task is DONE", async () => {
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => ({
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
         command: "codex",
         args: ["run"],
         stdout: "ok",
         stderr: "",
         durationMs: 10,
       }),
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const phaseA = await serviceWithRunner.createPhase({
@@ -1315,10 +1419,10 @@ describe("ControlCenterService", () => {
 
   test("fails fast when retrying FAILED task with different assignee", async () => {
     let runCount = 0;
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         runCount += 1;
         if (runCount === 1) {
           throw new Error("first run failed");
@@ -1332,7 +1436,7 @@ describe("ControlCenterService", () => {
           durationMs: 10,
         };
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -1366,10 +1470,10 @@ describe("ControlCenterService", () => {
 
   test("retries FAILED task with same assignee using resume mode", async () => {
     let runCount = 0;
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async (input) => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async (input) => {
         runCount += 1;
         if (runCount === 1) {
           throw new Error("first run failed");
@@ -1384,7 +1488,7 @@ describe("ControlCenterService", () => {
           durationMs: 10,
         };
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -1415,16 +1519,16 @@ describe("ControlCenterService", () => {
 
   test("resetTaskToTodo hard-resets repository and clears failed task", async () => {
     let resetCalled = 0;
-    const serviceWithRunner = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
         throw new Error("adapter failed");
       },
-      async () => {
+      repositoryResetRunner: async () => {
         resetCalled += 1;
       },
-    );
+    });
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
@@ -1458,16 +1562,15 @@ describe("ControlCenterService", () => {
   test("calls onStateChange hook when state is written", async () => {
     let callCount = 0;
     let lastProjectName = "";
-    const serviceWithHook = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-      undefined,
-      undefined,
-      (projectName) => {
+    const serviceWithHook = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: undefined,
+      onStateChange: (projectName) => {
         callCount += 1;
         lastProjectName = projectName;
       },
-    );
+    });
     await serviceWithHook.ensureInitialized("IxADO", "C:/repo");
 
     await serviceWithHook.createPhase({
@@ -1494,10 +1597,10 @@ describe("ControlCenterService – reconcileInProgressTasks (P20-002)", () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-"));
     stateFilePath = join(sandboxDir, "state.json");
     tasksMarkdownPath = join(sandboxDir, "TASKS.md");
-    service = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-    );
+    service = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+    });
     await service.ensureInitialized("IxADO", "C:/repo");
   });
 
@@ -1686,10 +1789,10 @@ describe("ControlCenterService – reconcileInProgressTaskToTodo (P26-004)", () 
     sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-task-"));
     stateFilePath = join(sandboxDir, "state.json");
     tasksMarkdownPath = join(sandboxDir, "TASKS.md");
-    service = new ControlCenterService(
-      new StateEngine(stateFilePath),
-      tasksMarkdownPath,
-    );
+    service = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+    });
     await service.ensureInitialized("IxADO", "C:/repo");
   });
 
