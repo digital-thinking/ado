@@ -347,6 +347,8 @@ export async function startWebControlCenter(
       setActivePhase: (input) => control.setActivePhase(input),
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),
+      reconcileInProgressTaskToTodo: (input) =>
+        control.reconcileInProgressTaskToTodo(input),
       failTaskIfInProgress: (input) => control.failTaskIfInProgress(input),
       recordRecoveryAttempt: (input) => control.recordRecoveryAttempt(input),
       importFromTasksMarkdown: (assignee, name) =>

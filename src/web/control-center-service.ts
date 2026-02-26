@@ -1809,6 +1809,70 @@ export class ControlCenterService {
     return reconcileCount;
   }
 
+  /**
+   * Resets a single IN_PROGRESS task back to TODO by task ID.
+   *
+   * Called when a UI-initiated agent restart abandons the previous run so the
+   * task is not left permanently stuck in IN_PROGRESS. Idempotent: if the task
+   * is not found or is not IN_PROGRESS, the call is a no-op.
+   */
+  async reconcileInProgressTaskToTodo(input: {
+    taskId: string;
+    projectName?: string;
+  }): Promise<void> {
+    const taskId = input.taskId.trim();
+    if (!taskId) {
+      return;
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+
+    let phaseIndex = -1;
+    let taskIndex = -1;
+    for (let index = 0; index < state.phases.length; index += 1) {
+      const foundTaskIndex = state.phases[index].tasks.findIndex(
+        (task) => task.id === taskId,
+      );
+      if (foundTaskIndex >= 0) {
+        phaseIndex = index;
+        taskIndex = foundTaskIndex;
+        break;
+      }
+    }
+
+    if (phaseIndex < 0 || taskIndex < 0) {
+      return;
+    }
+
+    const phase = state.phases[phaseIndex];
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "IN_PROGRESS") {
+      return;
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "TODO",
+      resultContext: undefined,
+      errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      completionVerification: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = { ...phase, tasks: nextTasks };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+  }
+
   async failTaskIfInProgress(input: {
     taskId: string;
     reason: string;

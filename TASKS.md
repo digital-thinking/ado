@@ -49,7 +49,7 @@ Status markers:
 - [x] `P26-001` Split/clarify phase failure semantics so local tester failures and remote CI failures are represented distinctly (status or typed `failureKind`), with operator guidance tied to failure kind. Deps: `P25-006`.
 - [x] `P26-002` Add CI_FIX cascade guardrails: enforce a configurable depth/count cap for fix-task fan-out and fail fast with actionable messaging when exceeded. Deps: `P26-001`.
 - [x] `P26-003` Reconcile stale `IN_PROGRESS` tasks across all phases (not only active phase) during startup recovery. Deps: `P26-001`.
-- [ ] `P26-004` Wire agent restart/kill flows to task-state reconciliation hooks so UI-initiated lifecycle actions cannot leave tasks permanently inconsistent. Deps: `P26-003`.
+- [x] `P26-004` Wire agent restart/kill flows to task-state reconciliation hooks so UI-initiated lifecycle actions cannot leave tasks permanently inconsistent. Deps: `P26-003`.
 - [ ] `P26-005` Add cross-store consistency reconciliation between global agent registry and project task state at startup (stale RUNNING agents vs task terminal states). Deps: `P26-003`.
 - [ ] `P26-006` Make JSON persistence atomic for critical state files (temp-file + rename) and reduce agent-registry write amplification with batched flush strategy. Deps: `P26-005`.
 - [ ] `P26-007` Replace hardcoded adapter-ID parsing in persisted-agent deserialization with schema-driven parsing (`CLIAdapterIdSchema`) to keep adapter support DRY. Deps: `P26-006`.

@@ -1536,3 +1536,158 @@ describe("ControlCenterService – reconcileInProgressTasks (P20-002)", () => {
     expect(count).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P26-004: reconcileInProgressTaskToTodo – per-task reconciliation for
+// UI-initiated agent restart flows
+// ---------------------------------------------------------------------------
+
+describe("ControlCenterService – reconcileInProgressTaskToTodo (P26-004)", () => {
+  let sandboxDir: string;
+  let stateFilePath: string;
+  let tasksMarkdownPath: string;
+  let service: ControlCenterService;
+
+  beforeEach(async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-task-"));
+    stateFilePath = join(sandboxDir, "state.json");
+    tasksMarkdownPath = join(sandboxDir, "TASKS.md");
+    service = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+    );
+    await service.ensureInitialized("IxADO", "C:/repo");
+  });
+
+  afterEach(async () => {
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  test("resets an IN_PROGRESS task to TODO by taskId", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 1",
+      branchName: "phase-1",
+    });
+    const phaseId = phaseState.phases[0].id;
+    await service.createTask({
+      phaseId,
+      title: "Task A",
+      description: "First task",
+    });
+
+    const engineForManipulation = new StateEngine(stateFilePath);
+    const raw = await engineForManipulation.readProjectState();
+    const taskId = raw.phases[0].tasks[0].id;
+    raw.phases[0].tasks[0] = {
+      ...raw.phases[0].tasks[0],
+      status: "IN_PROGRESS",
+    };
+    await engineForManipulation.writeProjectState(raw);
+
+    await service.reconcileInProgressTaskToTodo({ taskId });
+
+    const state = await service.getState();
+    expect(state.phases[0].tasks[0].status).toBe("TODO");
+    expect(state.phases[0].tasks[0].errorLogs).toBeUndefined();
+    expect(state.phases[0].tasks[0].resultContext).toBeUndefined();
+  });
+
+  test("leaves non-IN_PROGRESS tasks unchanged (idempotent)", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 1",
+      branchName: "phase-1",
+    });
+    const phaseId = phaseState.phases[0].id;
+    await service.createTask({ phaseId, title: "Task A", description: "desc" });
+
+    const engineForManipulation = new StateEngine(stateFilePath);
+    const raw = await engineForManipulation.readProjectState();
+    const taskId = raw.phases[0].tasks[0].id;
+    // Task is already TODO – calling reconcile should be a no-op.
+    await service.reconcileInProgressTaskToTodo({ taskId });
+
+    const state = await service.getState();
+    expect(state.phases[0].tasks[0].status).toBe("TODO");
+  });
+
+  test("is a no-op when taskId is not found", async () => {
+    await service.createPhase({ name: "Phase 1", branchName: "phase-1" });
+
+    // Should not throw.
+    await expect(
+      service.reconcileInProgressTaskToTodo({ taskId: "nonexistent-id" }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("is a no-op when taskId is empty string", async () => {
+    await expect(
+      service.reconcileInProgressTaskToTodo({ taskId: "" }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("only resets the target task, leaving others unchanged", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 1",
+      branchName: "phase-1",
+    });
+    const phaseId = phaseState.phases[0].id;
+    await service.createTask({ phaseId, title: "Task A", description: "desc" });
+    await service.createTask({ phaseId, title: "Task B", description: "desc" });
+
+    const engineForManipulation = new StateEngine(stateFilePath);
+    const raw = await engineForManipulation.readProjectState();
+    const taskAId = raw.phases[0].tasks[0].id;
+    raw.phases[0].tasks[0] = {
+      ...raw.phases[0].tasks[0],
+      status: "IN_PROGRESS",
+    };
+    raw.phases[0].tasks[1] = {
+      ...raw.phases[0].tasks[1],
+      status: "IN_PROGRESS",
+    };
+    await engineForManipulation.writeProjectState(raw);
+
+    await service.reconcileInProgressTaskToTodo({ taskId: taskAId });
+
+    const state = await service.getState();
+    expect(state.phases[0].tasks[0].status).toBe("TODO");
+    expect(state.phases[0].tasks[1].status).toBe("IN_PROGRESS");
+  });
+
+  test("finds the task across non-active phases", async () => {
+    const first = await service.createPhase({
+      name: "Phase 1",
+      branchName: "phase-1",
+    });
+    const phase1Id = first.phases[0].id;
+    await service.createTask({
+      phaseId: phase1Id,
+      title: "Phase 1 Task",
+      description: "desc",
+    });
+
+    const second = await service.createPhase({
+      name: "Phase 2",
+      branchName: "phase-2",
+    });
+    const phase2Id = second.phases.find((p) => p.id !== phase1Id)?.id;
+    if (!phase2Id) {
+      throw new Error("Expected second phase ID");
+    }
+    await service.setActivePhase({ phaseId: phase2Id });
+
+    const engineForManipulation = new StateEngine(stateFilePath);
+    const raw = await engineForManipulation.readProjectState();
+    const taskId = raw.phases[0].tasks[0].id; // task in phase 1 (inactive)
+    raw.phases[0].tasks[0] = {
+      ...raw.phases[0].tasks[0],
+      status: "IN_PROGRESS",
+    };
+    await engineForManipulation.writeProjectState(raw);
+
+    await service.reconcileInProgressTaskToTodo({ taskId });
+
+    const state = await service.getState();
+    expect(state.phases[0].tasks[0].status).toBe("TODO");
+  });
+});

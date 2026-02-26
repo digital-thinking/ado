@@ -234,7 +234,19 @@ export async function handleAgentsApi(
 
   const restartMatch = /^\/api\/agents\/([^/]+)\/restart$/.exec(url.pathname);
   if (request.method === "POST" && restartMatch) {
-    return json(deps.agents.restart(restartMatch[1]));
+    const agentId = restartMatch[1];
+    const agentToRestart = deps.agents.list().find((a) => a.id === agentId);
+    if (agentToRestart?.taskId) {
+      try {
+        await deps.control.reconcileInProgressTaskToTodo({
+          taskId: agentToRestart.taskId,
+          projectName: agentToRestart.projectName,
+        });
+      } catch {
+        // Stale task reference — proceed with the restart anyway.
+      }
+    }
+    return json(deps.agents.restart(agentId));
   }
 
   const logStreamMatch = /^\/api\/agents\/([^/]+)\/logs\/stream$/.exec(

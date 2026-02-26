@@ -321,6 +321,170 @@ describe("agents API enrichment", () => {
     }
   });
 
+  test("POST /api/agents/:id/restart reconciles IN_PROGRESS task to TODO before restarting", async () => {
+    const reconcileCalls: Array<{ taskId: string; projectName?: string }> = [];
+    const restartCalls: string[] = [];
+
+    const deps: ApiDependencies = {
+      control: {
+        reconcileInProgressTaskToTodo: async (input: {
+          taskId: string;
+          projectName?: string;
+        }) => {
+          reconcileCalls.push(input);
+        },
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: [],
+          },
+        ],
+        restart: (id: string) => {
+          restartCalls.push(id);
+          return { id, status: "RUNNING" };
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/restart", {
+        method: "POST",
+      }),
+      new URL("http://localhost/api/agents/agent-1/restart"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(reconcileCalls).toHaveLength(1);
+    expect(reconcileCalls[0]).toEqual({
+      taskId: "task-1",
+      projectName: "project-a",
+    });
+    expect(restartCalls).toEqual(["agent-1"]);
+  });
+
+  test("POST /api/agents/:id/restart proceeds even if reconcile throws", async () => {
+    const restartCalls: string[] = [];
+
+    const deps: ApiDependencies = {
+      control: {
+        reconcileInProgressTaskToTodo: async () => {
+          throw new Error("State engine unavailable.");
+        },
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-2",
+            name: "Worker",
+            projectName: "project-b",
+            taskId: "task-stale",
+            status: "RUNNING",
+            outputTail: [],
+          },
+        ],
+        restart: (id: string) => {
+          restartCalls.push(id);
+          return { id, status: "RUNNING" };
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-b",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-2/restart", {
+        method: "POST",
+      }),
+      new URL("http://localhost/api/agents/agent-2/restart"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(restartCalls).toEqual(["agent-2"]);
+  });
+
+  test("POST /api/agents/:id/restart skips reconcile for agents without a taskId", async () => {
+    const reconcileCalls: unknown[] = [];
+    const restartCalls: string[] = [];
+
+    const deps: ApiDependencies = {
+      control: {
+        reconcileInProgressTaskToTodo: async (input: unknown) => {
+          reconcileCalls.push(input);
+        },
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-3",
+            name: "Bare",
+            projectName: "project-a",
+            taskId: undefined,
+            status: "RUNNING",
+            outputTail: [],
+          },
+        ],
+        restart: (id: string) => {
+          restartCalls.push(id);
+          return { id, status: "RUNNING" };
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-3/restart", {
+        method: "POST",
+      }),
+      new URL("http://localhost/api/agents/agent-3/restart"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(reconcileCalls).toHaveLength(0);
+    expect(restartCalls).toEqual(["agent-3"]);
+  });
+
   test("GET /api/agents/:id/logs/stream formats runtime diagnostics for readability", async () => {
     const idleDiagnostic = formatAgentRuntimeDiagnostic(
       buildAgentIdleDiagnostic({
