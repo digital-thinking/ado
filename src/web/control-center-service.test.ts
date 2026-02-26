@@ -1459,6 +1459,55 @@ describe("ControlCenterService – reconcileInProgressTasks (P20-002)", () => {
     expect(state.phases[0].tasks[2].status).toBe("TODO");
   });
 
+  test("reconciles IN_PROGRESS tasks across non-active phases", async () => {
+    const first = await service.createPhase({
+      name: "Phase 1",
+      branchName: "phase-1",
+    });
+    const phase1Id = first.phases[0].id;
+    await service.createTask({
+      phaseId: phase1Id,
+      title: "Phase 1 Task",
+      description: "desc",
+    });
+
+    const second = await service.createPhase({
+      name: "Phase 2",
+      branchName: "phase-2",
+    });
+    const phase2Id = second.phases.find((phase) => phase.id !== phase1Id)?.id;
+    if (!phase2Id) {
+      throw new Error("Expected second phase ID");
+    }
+    await service.createTask({
+      phaseId: phase2Id,
+      title: "Phase 2 Task",
+      description: "desc",
+    });
+
+    // Keep phase 2 active to prove phase 1 is also reconciled.
+    await service.setActivePhase({ phaseId: phase2Id });
+
+    const engineForManipulation = new StateEngine(stateFilePath);
+    const raw = await engineForManipulation.readProjectState();
+    raw.phases[0].tasks[0] = {
+      ...raw.phases[0].tasks[0],
+      status: "IN_PROGRESS",
+    };
+    raw.phases[1].tasks[0] = {
+      ...raw.phases[1].tasks[0],
+      status: "IN_PROGRESS",
+    };
+    await engineForManipulation.writeProjectState(raw);
+
+    const count = await service.reconcileInProgressTasks();
+
+    expect(count).toBe(2);
+    const state = await service.getState();
+    expect(state.phases[0].tasks[0].status).toBe("TODO");
+    expect(state.phases[1].tasks[0].status).toBe("TODO");
+  });
+
   test("is idempotent: second call on already-TODO tasks returns 0", async () => {
     const phaseState = await service.createPhase({
       name: "Phase 1",

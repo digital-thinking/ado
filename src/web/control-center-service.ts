@@ -1760,7 +1760,7 @@ export class ControlCenterService {
   }
 
   /**
-   * Reconciles any IN_PROGRESS tasks in the active phase back to TODO.
+   * Reconciles any IN_PROGRESS tasks across all phases back to TODO.
    *
    * Called at startup (before the phase execution loop begins) to recover from
    * a prior process crash that left tasks stuck in IN_PROGRESS. Returns the
@@ -1769,39 +1769,37 @@ export class ControlCenterService {
   async reconcileInProgressTasks(projectName?: string): Promise<number> {
     const engine = await this.getEngine(projectName);
     const state = await engine.readProjectState();
-    const activePhase = state.activePhaseId
-      ? state.phases.find((phase) => phase.id === state.activePhaseId)
-      : state.phases[0];
-    if (!activePhase) {
-      return 0;
-    }
 
     let reconcileCount = 0;
-    const nextTasks = activePhase.tasks.map((task) => {
-      if (task.status !== "IN_PROGRESS") {
-        return task;
-      }
-      reconcileCount += 1;
-      return TaskSchema.parse({
-        ...task,
-        status: "TODO",
-        resultContext: undefined,
-        errorLogs: undefined,
-        errorCategory: undefined,
-        adapterFailureKind: undefined,
-        completionVerification: undefined,
+    const nextPhases = state.phases.map((phase) => {
+      let phaseChanged = false;
+      const nextTasks = phase.tasks.map((task) => {
+        if (task.status !== "IN_PROGRESS") {
+          return task;
+        }
+        reconcileCount += 1;
+        phaseChanged = true;
+        return TaskSchema.parse({
+          ...task,
+          status: "TODO",
+          resultContext: undefined,
+          errorLogs: undefined,
+          errorCategory: undefined,
+          adapterFailureKind: undefined,
+          completionVerification: undefined,
+        });
       });
+
+      if (!phaseChanged) {
+        return phase;
+      }
+
+      return { ...phase, tasks: nextTasks };
     });
 
     if (reconcileCount === 0) {
       return 0;
     }
-
-    const phaseIndex = state.phases.findIndex(
-      (phase) => phase.id === activePhase.id,
-    );
-    const nextPhases = [...state.phases];
-    nextPhases[phaseIndex] = { ...activePhase, tasks: nextTasks };
 
     const nextState = await engine.writeProjectState({
       ...state,
