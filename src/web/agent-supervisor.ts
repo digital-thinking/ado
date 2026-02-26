@@ -385,6 +385,60 @@ export class AgentSupervisor {
     return reconcileCount;
   }
 
+  /**
+   * Reconciles RUNNING agents using an external consistency predicate (for
+   * example, cross-store task-state checks at startup).
+   *
+   * Returns the number of agents transitioned from RUNNING to STOPPED.
+   */
+  reconcileRunningAgentsWhere(
+    predicate: (agent: AgentView) => boolean,
+  ): number {
+    if (!this.registryFilePath) {
+      return 0;
+    }
+
+    const stoppedAt = nowIso();
+    let reconcileCount = 0;
+    const persisted = this.readPersistedAgents();
+    const updated = persisted.map((agent) => {
+      if (agent.status !== "RUNNING") {
+        return agent;
+      }
+      if (!predicate(agent)) {
+        return agent;
+      }
+
+      reconcileCount += 1;
+      return {
+        ...agent,
+        status: "STOPPED" as AgentStatus,
+        stoppedAt,
+      };
+    });
+
+    if (reconcileCount > 0) {
+      this.writePersistedAgents(updated);
+      for (const [id, record] of this.records.entries()) {
+        if (record.status !== "RUNNING") {
+          continue;
+        }
+        const view = toView(record);
+        if (!predicate(view)) {
+          continue;
+        }
+
+        this.records.set(id, {
+          ...record,
+          status: "STOPPED",
+          stoppedAt,
+        });
+      }
+    }
+
+    return reconcileCount;
+  }
+
   list(): AgentView[] {
     const inMemory = [...this.records.values()].map(toView);
     if (!this.registryFilePath) {
