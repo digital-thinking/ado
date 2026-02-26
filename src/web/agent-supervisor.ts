@@ -22,7 +22,7 @@ import {
   buildAgentIdleDiagnostic,
   formatAgentRuntimeDiagnostic,
 } from "../agent-runtime-diagnostics";
-import type { CLIAdapterId } from "../types";
+import { CLIAdapterIdSchema, type CLIAdapterId } from "../types";
 import {
   createRuntimeEvent,
   type RuntimeAgentStatus,
@@ -206,13 +206,10 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     phaseId:
       typeof candidate.phaseId === "string" ? candidate.phaseId : undefined,
     taskId: typeof candidate.taskId === "string" ? candidate.taskId : undefined,
-    adapterId:
-      candidate.adapterId === "MOCK_CLI" ||
-      candidate.adapterId === "CLAUDE_CLI" ||
-      candidate.adapterId === "GEMINI_CLI" ||
-      candidate.adapterId === "CODEX_CLI"
-        ? candidate.adapterId
-        : undefined,
+    adapterId: (() => {
+      const result = CLIAdapterIdSchema.safeParse(candidate.adapterId);
+      return result.success ? result.data : undefined;
+    })(),
     projectName:
       typeof candidate.projectName === "string"
         ? candidate.projectName
