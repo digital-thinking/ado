@@ -15,6 +15,7 @@ import {
 import {
   buildRecoveryTraceLinks,
   formatPhaseTaskContext,
+  isFileInteractionChatter,
   summarizeFailure,
 } from "../../log-readability";
 
@@ -282,6 +283,11 @@ export async function handleAgentsApi(
         const sendRuntimeEvent = (event: RuntimeEvent) => {
           const legacy = toLegacyAgentEvent(event);
           if (legacy?.type === "output") {
+            // Suppress low-signal file-interaction chatter so users see only
+            // reasoning / thinking progress and terminal outcome context.
+            if (isFileInteractionChatter(legacy.line)) {
+              return;
+            }
             const displayLine = formatOutputLineForAgentView(legacy.line);
             send({
               ...legacy,

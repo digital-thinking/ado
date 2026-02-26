@@ -563,6 +563,220 @@ describe("agents API enrichment", () => {
   });
 });
 
+describe("P26-015: log stream chatter filtering", () => {
+  /**
+   * Build deps for a STOPPED agent with the given outputTail. The SSE stream
+   * closes immediately after draining the backlog + emitting the terminal
+   * status event, so the reader loop terminates without hanging.
+   */
+  function makeStreamDeps(outputTail: string[]): ApiDependencies {
+    return {
+      control: {
+        getState: async () =>
+          ({
+            projectName: "project-a",
+            rootDir: "/tmp/a",
+            phases: [
+              {
+                id: "phase-1",
+                name: "Phase 1",
+                branchName: "phase-1",
+                status: "CODING",
+                tasks: [
+                  {
+                    id: "task-1",
+                    title: "Task One",
+                    status: "DONE",
+                    assignee: "CLAUDE_CLI",
+                    dependencies: [],
+                  },
+                ],
+              },
+            ],
+          }) as any,
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            phaseId: "phase-1",
+            taskId: "task-1",
+            // STOPPED so stream closes after backlog + terminal event (no subscribe needed).
+            status: "STOPPED",
+            lastExitCode: 0,
+            outputTail,
+          },
+        ],
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+  }
+
+  async function collectStreamLines(outputTail: string[]): Promise<string[]> {
+    const deps = makeStreamDeps(outputTail);
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/logs/stream"),
+      new URL("http://localhost/api/agents/agent-1/logs/stream"),
+      deps,
+    );
+    expect(response).not.toBeNull();
+    const reader = response!.body!.getReader();
+    const decoder = new TextDecoder();
+    const lines: string[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value).trim();
+      if (text.startsWith("data: ")) {
+        const payload = JSON.parse(text.slice("data: ".length)) as any;
+        if (payload.type === "output" && typeof payload.line === "string") {
+          lines.push(payload.line);
+        }
+      }
+    }
+    return lines;
+  }
+
+  test("suppresses file-read chatter lines from backlog", async () => {
+    const tail = [
+      "Read /src/engine/phase-runner.ts",
+      "I need to update the phase-runner logic",
+      "Writing src/new-file.ts",
+      "● Edit(file_path: 'src/types/index.ts')",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toEqual(["I need to update the phase-runner logic"]);
+  });
+
+  test("preserves error lines even if they start with a file-verb prefix", async () => {
+    const tail = [
+      "Read /src/file.ts",
+      "Error reading /src/file.ts: permission denied",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toEqual(["Error reading /src/file.ts: permission denied"]);
+  });
+
+  test("preserves ixado system diagnostic lines in backlog", async () => {
+    const tail = [
+      "Read /path/to/file.ts",
+      "[ixado][heartbeat] agent=abc elapsed=30s idle=10s",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toContain(
+      "[ixado][heartbeat] agent=abc elapsed=30s idle=10s",
+    );
+    expect(lines).not.toContain("Read /path/to/file.ts");
+  });
+
+  test("passes all lines through when none match chatter patterns", async () => {
+    const tail = [
+      "Analyzing the test failures to determine root cause",
+      "Found 3 issues in the integration test suite",
+      "Proposing fix for the reconciliation logic",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toEqual(tail);
+  });
+
+  test("terminal outcome (status) events are always sent regardless of chatter", async () => {
+    const deps: ApiDependencies = {
+      control: {
+        getState: async () =>
+          ({
+            projectName: "project-a",
+            rootDir: "/tmp/a",
+            phases: [
+              {
+                id: "phase-1",
+                name: "Phase 1",
+                branchName: "phase-1",
+                status: "CODING",
+                tasks: [
+                  {
+                    id: "task-1",
+                    title: "Task",
+                    status: "IN_PROGRESS",
+                    assignee: "CLAUDE_CLI",
+                    dependencies: [],
+                  },
+                ],
+              },
+            ],
+          }) as any,
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            phaseId: "phase-1",
+            taskId: "task-1",
+            status: "RUNNING",
+            // outputTail contains only chatter — nothing should come through as
+            // output events, but the terminal status event must still be emitted.
+            outputTail: ["Read /src/file.ts", "Writing src/output.ts"],
+          },
+        ],
+        subscribe: (_id: string, listener: (event: any) => void) => {
+          setTimeout(() => {
+            listener({ type: "status", agentId: "agent-1", status: "STOPPED" });
+          }, 5);
+          return () => {};
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/logs/stream"),
+      new URL("http://localhost/api/agents/agent-1/logs/stream"),
+      deps,
+    );
+    expect(response).not.toBeNull();
+    const reader = response!.body!.getReader();
+    const decoder = new TextDecoder();
+    const events: any[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value).trim();
+      if (text.startsWith("data: ")) {
+        events.push(JSON.parse(text.slice("data: ".length)));
+      }
+    }
+    // No output events from the chatter-only backlog.
+    const outputEvents = events.filter((e) => e.type === "output");
+    expect(outputEvents).toHaveLength(0);
+    // Status event must still be present.
+    const statusEvents = events.filter((e) => e.type === "status");
+    expect(statusEvents.length).toBeGreaterThan(0);
+  });
+});
+
 describe("P26-014: GET /api/agents recency ordering", () => {
   function makeDeps(agents: any[]): ApiDependencies {
     return {
