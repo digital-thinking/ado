@@ -710,6 +710,119 @@ describe("ControlCenterService", () => {
     expect(task.errorLogs).toContain("adapter failed");
   });
 
+  test("appends truncation marker to errorLogs when error message exceeds storage limit", async () => {
+    const oversizedMessage = "x".repeat(5_000);
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => {
+        throw new Error(oversizedMessage);
+      },
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Trunc Error",
+      branchName: "phase-trunc-error",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Trunc task",
+      description: "Task that fails with oversized error",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(task.status).toBe("FAILED");
+    expect(task.errorLogs).toEndWith("\n... [truncated]");
+    expect(task.errorLogs!.length).toBe(4_000);
+  });
+
+  test("appends truncation marker to resultContext when worker output exceeds storage limit", async () => {
+    const oversizedOutput = "y".repeat(5_000);
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => ({
+        command: "codex",
+        args: [],
+        stdout: oversizedOutput,
+        stderr: "",
+        durationMs: 10,
+      }),
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Trunc Result",
+      branchName: "phase-trunc-result",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Trunc result task",
+      description: "Task that completes with oversized output",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(task.status).toBe("DONE");
+    expect(task.resultContext).toEndWith("\n... [truncated]");
+    expect(task.resultContext!.length).toBe(4_000);
+  });
+
+  test("does not append truncation marker when output is at or below storage limit", async () => {
+    const exactOutput = "z".repeat(4_000);
+    const serviceWithRunner = new ControlCenterService(
+      new StateEngine(stateFilePath),
+      tasksMarkdownPath,
+      async () => ({
+        command: "codex",
+        args: [],
+        stdout: exactOutput,
+        stderr: "",
+        durationMs: 10,
+      }),
+    );
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase No Trunc",
+      branchName: "phase-no-trunc",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "No trunc task",
+      description: "Task at exact storage limit",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+    const task = finished.phases[0].tasks[0];
+
+    expect(task.status).toBe("DONE");
+    expect(task.resultContext).not.toContain("[truncated]");
+    expect(task.resultContext!.length).toBe(4_000);
+  });
+
   test("sets active phase", async () => {
     const createdA = await service.createPhase({
       name: "Phase A",
@@ -1029,6 +1142,27 @@ describe("ControlCenterService", () => {
     expect(list.items).toHaveLength(2);
     expect(list.items[0]).toMatchObject({ number: 1, title: "Task One" });
     expect(list.items[1]).toMatchObject({ number: 2, title: "Task Two" });
+  });
+
+  test("fails fast when activePhaseId is missing", async () => {
+    const created = await service.createPhase({
+      name: "Phase Missing Active",
+      branchName: "phase-missing-active",
+    });
+    const phaseId = created.phases[0].id;
+    await service.createTask({
+      phaseId,
+      title: "Task One",
+      description: "First",
+    });
+
+    const raw = await Bun.file(stateFilePath).json();
+    raw.activePhaseId = undefined;
+    await Bun.write(stateFilePath, JSON.stringify(raw, null, 2));
+
+    await expect(service.listActivePhaseTasks()).rejects.toThrow(
+      "Active phase ID is not set",
+    );
   });
 
   test("starts active task by number", async () => {

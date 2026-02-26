@@ -53,8 +53,8 @@ Status markers:
 - [x] `P26-005` Add cross-store consistency reconciliation between global agent registry and project task state at startup (stale RUNNING agents vs task terminal states). Deps: `P26-003`.
 - [x] `P26-006` Make JSON persistence atomic for critical state files (temp-file + rename) and reduce agent-registry write amplification with batched flush strategy. Deps: `P26-005`.
 - [x] `P26-007` Replace hardcoded adapter-ID parsing in persisted-agent deserialization with schema-driven parsing (`CLIAdapterIdSchema`) to keep adapter support DRY. Deps: `P26-006`.
-- [ ] `P26-008` Replace silent active-phase fallback (`phases[0]`) with explicit deterministic behavior (strict error or explicit warning + policy) for multi-phase safety. Deps: `P26-001`.
-- [ ] `P26-009` Add explicit truncation markers for stored `resultContext`/`errorLogs` so operators can see when diagnostic text was shortened. Deps: `P26-006`.
+- [x] `P26-008` Replace silent active-phase fallback (`phases[0]`) with explicit deterministic behavior (strict error or explicit warning + policy) for multi-phase safety. Deps: `P26-001`.
+- [x] `P26-009` Add explicit truncation markers for stored `resultContext`/`errorLogs` so operators can see when diagnostic text was shortened. Deps: `P26-006`.
 - [ ] `P26-010` Validate branch base preconditions before creating a phase branch from `HEAD` to avoid accidental branch-from-branch drift. Deps: `P26-008`.
 - [ ] `P26-011` Refactor `ControlCenterService` constructor to a typed options object (remove positional optional-argument anti-pattern) and update call sites. Deps: `P26-006`.
 - [ ] `P26-012` Add regression/integration tests for Phase 26: failure-kind transitions, CI_FIX cap behavior, all-phase reconciliation, restart consistency hooks, atomic persistence, adapter-ID schema parsing, active-phase selection policy, truncation markers, and branch-base verification. Deps: `P26-002`, `P26-004`, `P26-007`, `P26-008`, `P26-009`, `P26-010`, `P26-011`.

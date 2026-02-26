@@ -15,6 +15,10 @@ import {
   ProcessManager,
   type ProcessRunner,
 } from "../process";
+import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
@@ -46,6 +50,7 @@ const DEFAULT_TASKS_MARKDOWN_PATH = "TASKS.md";
 const TASKS_IMPORT_TIMEOUT_MS = 180_000;
 const TASK_EXECUTION_TIMEOUT_MS = 3_600_000;
 const MAX_STORED_CONTEXT_LENGTH = 4_000;
+const TRUNCATION_MARKER = "\n... [truncated]";
 
 const ImportedTaskPlanSchema = z.object({
   code: z.string().min(1),
@@ -248,23 +253,31 @@ function truncateForState(value: string): string {
     return value;
   }
 
-  return value.slice(0, MAX_STORED_CONTEXT_LENGTH);
+  return (
+    value.slice(0, MAX_STORED_CONTEXT_LENGTH - TRUNCATION_MARKER.length) +
+    TRUNCATION_MARKER
+  );
 }
 
 function resolveActivePhaseOrThrow(state: ProjectState): Phase {
-  const explicitActive = state.activePhaseId
-    ? state.phases.find((phase) => phase.id === state.activePhaseId)
-    : undefined;
-  if (explicitActive) {
-    return explicitActive;
+  try {
+    return resolveActivePhaseStrict(state);
+  } catch (error) {
+    if (!(error instanceof ActivePhaseResolutionError)) {
+      throw error;
+    }
+    if (error.code === "NO_PHASES") {
+      throw new Error("No phases found.");
+    }
+    if (error.code === "ACTIVE_PHASE_ID_MISSING") {
+      throw new Error(
+        "Active phase ID is not set. Run 'ixado phase active <phaseNumber|phaseId>'.",
+      );
+    }
+    throw new Error(
+      `Active phase ID "${error.activePhaseId}" not found in project state.`,
+    );
   }
-
-  const firstPhase = state.phases[0];
-  if (!firstPhase) {
-    throw new Error("No phases found.");
-  }
-
-  return firstPhase;
 }
 
 function resolvePhaseIdForReference(
