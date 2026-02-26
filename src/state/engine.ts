@@ -1,7 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { ProjectStateSchema, TaskSchema, type ProjectState, type Task } from "../types";
+import {
+  ProjectStateSchema,
+  TaskSchema,
+  type ProjectState,
+  type Task,
+} from "../types";
 
 export type StateEngineInitInput = {
   projectName: string;
@@ -62,7 +67,9 @@ export class StateEngine {
   async writeTasks(phaseId: string, tasks: Task[]): Promise<ProjectState> {
     const validatedTasks = tasks.map((task) => TaskSchema.parse(task));
     const state = await this.readProjectState();
-    const phaseIndex = state.phases.findIndex((candidate) => candidate.id === phaseId);
+    const phaseIndex = state.phases.findIndex(
+      (candidate) => candidate.id === phaseId,
+    );
 
     if (phaseIndex < 0) {
       throw new Error(`Phase not found: ${phaseId}`);
@@ -98,14 +105,23 @@ export class StateEngine {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      throw new Error(`State file contains invalid JSON: ${this.stateFilePath}`);
+      throw new Error(
+        `State file contains invalid JSON: ${this.stateFilePath}`,
+      );
     }
 
     return ProjectStateSchema.parse(parsed);
   }
 
   private async writeRawState(state: ProjectState): Promise<void> {
-    await mkdir(dirname(this.stateFilePath), { recursive: true });
-    await writeFile(this.stateFilePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    const dir = dirname(this.stateFilePath);
+    await mkdir(dir, { recursive: true });
+    // Write to a sibling temp file first, then atomically rename into place so
+    // a crash or power-loss mid-write never leaves a partially-written state
+    // file.  rename(2) is atomic on POSIX when source and destination share the
+    // same filesystem, which is guaranteed here because both paths share `dir`.
+    const tmpPath = `${this.stateFilePath}.tmp`;
+    await writeFile(tmpPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await rename(tmpPath, this.stateFilePath);
   }
 }
