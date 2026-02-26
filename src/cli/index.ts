@@ -23,6 +23,10 @@ import { PhaseRunner } from "../engine/phase-runner";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
+import {
   buildRecoveryTraceLinks,
   formatPhaseTaskContext,
   summarizeFailure,
@@ -743,14 +747,23 @@ type PhaseRunMode = "AUTO" | "MANUAL";
 function resolveActivePhaseFromState(
   state: Awaited<ReturnType<ControlCenterService["getState"]>>,
 ): Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number] {
-  const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
-  if (!phase) {
-    throw new Error("No active phase found.");
-  }
+  try {
+    return resolveActivePhaseStrict(state);
+  } catch (error) {
+    if (error instanceof ActivePhaseResolutionError) {
+      switch (error.code) {
+        case "ACTIVE_PHASE_ID_MISSING":
+        case "ACTIVE_PHASE_ID_NOT_FOUND":
+          throw new Error(
+            `${error.message} Run 'ixado phase active <phaseNumber|phaseId>'.`,
+          );
+        default:
+          throw error;
+      }
+    }
 
-  return phase;
+    throw error;
+  }
 }
 
 function resolvePhaseRunMode(
