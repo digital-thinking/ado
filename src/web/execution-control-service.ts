@@ -1,4 +1,5 @@
 import { ExecutionRunLock } from "../engine/execution-run-lock";
+import { resolveActivePhaseStrict } from "../state/active-phase";
 import type { AgentView } from "./agent-supervisor";
 import type { ControlCenterService } from "./control-center-service";
 import type { CLIAdapterId, ProjectState, Task } from "../types";
@@ -44,10 +45,7 @@ function pickNextAutoTask(tasks: Task[]): Task | undefined {
 }
 
 function resolveActivePhase(state: ProjectState) {
-  const explicit = state.activePhaseId
-    ? state.phases.find((phase) => phase.id === state.activePhaseId)
-    : undefined;
-  return explicit ?? state.phases[0];
+  return resolveActivePhaseStrict(state);
 }
 
 function resolveTask(
@@ -212,18 +210,6 @@ export class ExecutionControlService {
 
         const state = await this.control.getState(projectName);
         const phase = resolveActivePhase(state);
-        if (!phase) {
-          this.setStatus({
-            running: false,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: "No phase available to execute.",
-          });
-          return;
-        }
 
         const nextTask = pickNextAutoTask(phase.tasks);
         if (!nextTask) {

@@ -128,6 +128,8 @@ export const ExecutionLoopSettingsSchema = z.object({
   ciEnabled: z.boolean().default(false),
   ciBaseBranch: z.string().min(1).default("main"),
   validationMaxRetries: z.number().int().min(0).max(20).default(3),
+  ciFixMaxFanOut: z.number().int().min(1).max(50).default(10),
+  ciFixMaxDepth: z.number().int().min(1).max(10).default(3),
   pullRequest: PullRequestAutomationSettingsSchema.default({
     defaultTemplatePath: null,
     templateMappings: [],
@@ -210,6 +212,8 @@ export const CliSettingsSchema = z
       ciEnabled: false,
       ciBaseBranch: "main",
       validationMaxRetries: 3,
+      ciFixMaxFanOut: 10,
+      ciFixMaxDepth: 3,
       pullRequest: {
         defaultTemplatePath: null,
         templateMappings: [],
@@ -300,6 +304,8 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   ciEnabled: z.boolean().optional(),
   ciBaseBranch: z.string().min(1).optional(),
   validationMaxRetries: z.number().int().min(0).max(20).optional(),
+  ciFixMaxFanOut: z.number().int().min(1).max(50).optional(),
+  ciFixMaxDepth: z.number().int().min(1).max(10).optional(),
   pullRequest: PullRequestAutomationSettingsOverrideSchema.optional(),
 });
 
@@ -392,6 +398,14 @@ export const AdapterFailureKindSchema = z.enum([
 ]);
 export type AdapterFailureKind = z.infer<typeof AdapterFailureKindSchema>;
 
+// Typed reason a phase transitioned to CI_FAILED, enabling kind-specific operator guidance.
+export const PhaseFailureKindSchema = z.enum([
+  "LOCAL_TESTER", // Local test runner (tester step) failed during CODING phase
+  "REMOTE_CI", // Remote CI checks (GitHub Actions) failed after PR creation
+  "AGENT_FAILURE", // Task execution agent subprocess failed
+]);
+export type PhaseFailureKind = z.infer<typeof PhaseFailureKindSchema>;
+
 export const ExceptionRecoveryResultSchema = z
   .object({
     status: z.enum(["fixed", "unfixable"]),
@@ -442,6 +456,7 @@ export const TaskCompletionVerificationSchema = z.object({
   status: z.enum(["PASSED", "FAILED"]),
   probes: z.array(SideEffectProbeSchema).min(1),
   missingSideEffects: z.array(z.string().min(1)).default([]),
+  envFingerprint: z.record(z.string(), z.string()).optional(),
 });
 export type TaskCompletionVerification = z.infer<
   typeof TaskCompletionVerificationSchema
@@ -486,6 +501,7 @@ export const PhaseSchema = z.object({
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
   ciStatusContext: z.string().optional(), // Stores the GH CLI output if CI fails
+  failureKind: PhaseFailureKindSchema.optional(), // Why the phase entered CI_FAILED
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
 export type Phase = z.infer<typeof PhaseSchema>;

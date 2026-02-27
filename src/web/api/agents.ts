@@ -15,6 +15,7 @@ import {
 import {
   buildRecoveryTraceLinks,
   formatPhaseTaskContext,
+  isFileInteractionChatter,
   summarizeFailure,
 } from "../../log-readability";
 
@@ -152,8 +153,14 @@ export async function handleAgentsApi(
 ): Promise<Response | null> {
   if (request.method === "GET" && url.pathname === "/api/agents") {
     const agents = deps.agents.list();
+    // Sort by startedAt descending (most recent first) for deterministic recency ordering.
+    const sortedAgents = [...agents].sort((a, b) => {
+      const aTime = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const bTime = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      return bTime - aTime;
+    });
     const statesByProject = new Map<string, ProjectState | undefined>();
-    for (const agent of agents) {
+    for (const agent of sortedAgents) {
       const projectName = agent.projectName ?? deps.projectName;
       if (statesByProject.has(projectName)) {
         continue;
@@ -169,7 +176,7 @@ export async function handleAgentsApi(
     }
 
     return json(
-      agents.map((agent) => {
+      sortedAgents.map((agent) => {
         const recovery = agent.taskId
           ? recoveryCache.get(agent.taskId)
           : undefined;
@@ -234,7 +241,19 @@ export async function handleAgentsApi(
 
   const restartMatch = /^\/api\/agents\/([^/]+)\/restart$/.exec(url.pathname);
   if (request.method === "POST" && restartMatch) {
-    return json(deps.agents.restart(restartMatch[1]));
+    const agentId = restartMatch[1];
+    const agentToRestart = deps.agents.list().find((a) => a.id === agentId);
+    if (agentToRestart?.taskId) {
+      try {
+        await deps.control.reconcileInProgressTaskToTodo({
+          taskId: agentToRestart.taskId,
+          projectName: agentToRestart.projectName,
+        });
+      } catch {
+        // Stale task reference — proceed with the restart anyway.
+      }
+    }
+    return json(deps.agents.restart(agentId));
   }
 
   const logStreamMatch = /^\/api\/agents\/([^/]+)\/logs\/stream$/.exec(
@@ -264,6 +283,11 @@ export async function handleAgentsApi(
         const sendRuntimeEvent = (event: RuntimeEvent) => {
           const legacy = toLegacyAgentEvent(event);
           if (legacy?.type === "output") {
+            // Suppress low-signal file-interaction chatter so users see only
+            // reasoning / thinking progress and terminal outcome context.
+            if (isFileInteractionChatter(legacy.line)) {
+              return;
+            }
             const displayLine = formatOutputLineForAgentView(legacy.line);
             send({
               ...legacy,

@@ -23,6 +23,10 @@ import { PhaseRunner } from "../engine/phase-runner";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
+import {
   buildRecoveryTraceLinks,
   formatPhaseTaskContext,
   summarizeFailure,
@@ -31,6 +35,7 @@ import {
   CLIAdapterIdSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
+  type PhaseFailureKind,
 } from "../types";
 import {
   createTelegramNotificationEvaluator,
@@ -269,10 +274,10 @@ function createControlCenterServiceWithAgentTracking(
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
   projectName: string,
 ): ControlCenterService {
-  return new ControlCenterService(
-    new StateEngine(stateFilePath),
-    resolve(projectRootDir, "TASKS.md"),
-    async (workInput) => {
+  return new ControlCenterService({
+    stateEngine: new StateEngine(stateFilePath),
+    tasksMarkdownFilePath: resolve(projectRootDir, "TASKS.md"),
+    internalWorkRunner: async (workInput) => {
       const availableAgents = getAvailableAgents(settings);
       if (!availableAgents.includes(workInput.assignee)) {
         throw new Error(
@@ -359,14 +364,14 @@ function createControlCenterServiceWithAgentTracking(
         throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
       }
     },
-    async () => {
+    repositoryResetRunner: async () => {
       await processManager.run({
         command: "git",
         args: ["reset", "--hard"],
         cwd: projectRootDir,
       });
     },
-  );
+  });
 }
 
 function createServices(
@@ -707,19 +712,58 @@ async function runWebServeCommand({
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
 }
 
+function resolvePhaseFailureKindLabel(
+  failureKind: PhaseFailureKind | undefined,
+): string {
+  switch (failureKind) {
+    case "LOCAL_TESTER":
+      return "local tester failure";
+    case "REMOTE_CI":
+      return "remote CI failure";
+    case "AGENT_FAILURE":
+      return "agent execution failure";
+    default:
+      return "failure";
+  }
+}
+
+function resolvePhaseFailureGuidance(
+  failureKind: PhaseFailureKind | undefined,
+): string {
+  switch (failureKind) {
+    case "LOCAL_TESTER":
+      return "Local test suite failed. Complete the CI_FIX task(s) to fix failing tests, then rerun 'ixado phase run'.";
+    case "REMOTE_CI":
+      return "Remote CI checks failed on the PR. Complete the CI_FIX task(s) to address CI errors, then rerun 'ixado phase run'.";
+    case "AGENT_FAILURE":
+      return "Task agent execution failed. Retry the failed task with 'ixado task retry <n>' or reset it with 'ixado task reset <n>'.";
+    default:
+      return "Phase execution stopped. Run 'ixado task list' to review tasks and 'ixado phase run' to resume.";
+  }
+}
+
 type PhaseRunMode = "AUTO" | "MANUAL";
 
 function resolveActivePhaseFromState(
   state: Awaited<ReturnType<ControlCenterService["getState"]>>,
 ): Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number] {
-  const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
-  if (!phase) {
-    throw new Error("No active phase found.");
-  }
+  try {
+    return resolveActivePhaseStrict(state);
+  } catch (error) {
+    if (error instanceof ActivePhaseResolutionError) {
+      switch (error.code) {
+        case "ACTIVE_PHASE_ID_MISSING":
+        case "ACTIVE_PHASE_ID_NOT_FOUND":
+          throw new Error(
+            `${error.message} Run 'ixado phase active <phaseNumber|phaseId>'.`,
+          );
+        default:
+          throw error;
+      }
+    }
 
-  return phase;
+    throw error;
+  }
 }
 
 function resolvePhaseRunMode(
@@ -1264,6 +1308,8 @@ async function runPhaseRunCommand({
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
       ciPullRequest: settings.executionLoop.pullRequest,
       validationMaxRetries: settings.executionLoop.validationMaxRetries,
+      ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
+      ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
       projectRootDir,
       projectName,
       policy,
@@ -1430,9 +1476,19 @@ async function runStatusCommand(): Promise<void> {
   console.info(`Project: ${state.projectName}`);
   console.info(`Root: ${state.rootDir}`);
   console.info(`Phases: ${state.phases.length}`);
-  console.info(
-    `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
-  );
+  if (activePhase?.status === "CI_FAILED") {
+    const kindLabel = resolvePhaseFailureKindLabel(activePhase.failureKind);
+    console.info(
+      `Active: ${activePhase.name} (${activePhase.status} — ${kindLabel})`,
+    );
+    console.info(
+      `Guidance: ${resolvePhaseFailureGuidance(activePhase.failureKind)}`,
+    );
+  } else {
+    console.info(
+      `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
+    );
+  }
   console.info(`Available agents: ${availableAgents.join(", ")}`);
   console.info(`Running Agents (${runningAgents.length}):`);
   if (runningAgents.length === 0) {

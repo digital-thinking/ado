@@ -30,6 +30,8 @@ describe("PhaseRunner", () => {
       markReadyOnApproval: false,
     },
     validationMaxRetries: 1,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
     policy: DEFAULT_AUTH_POLICY,
@@ -1334,6 +1336,8 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
       markReadyOnApproval: false,
     },
     validationMaxRetries: 1,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
     policy: DEFAULT_AUTH_POLICY,
@@ -1642,6 +1646,8 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       markReadyOnApproval: false,
     },
     validationMaxRetries: 1,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
     policy: DEFAULT_AUTH_POLICY,
@@ -2024,7 +2030,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     expect(wasCalled()).toBe(false);
   });
 
-  test("activePhaseId absent → falls back to first phase (no PhasePreflightError)", async () => {
+  test("activePhaseId absent throws PhasePreflightError", async () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
@@ -2048,35 +2054,22 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       ],
     };
 
-    const mockRunner: ProcessRunner = {
-      run: mock(async (input: any) => {
-        if (input.args.includes("--porcelain"))
-          return { exitCode: 0, stdout: "", stderr: "" };
-        if (input.args.includes("--show-current"))
-          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }),
-    } as any;
-
-    const control = {
-      ...makeMockControl(state),
-      getState: mock(async () => state),
-      startActiveTaskAndWait: mock(async () => {
-        state.phases[0].tasks[0].status = "DONE";
-        return state;
-      }),
-      setPhaseStatus: mock(async () => state),
-    } as unknown as ControlCenterService;
-
+    const { runner, wasCalled } = makeSpyRunner();
     const pr = new PhaseRunner(
-      control,
+      makeMockControl(state),
       baseConfig,
       undefined,
       undefined,
-      mockRunner,
+      runner,
     );
-    // Must not throw PhasePreflightError — fallback to first phase is valid
-    await expect(pr.run()).resolves.toBeUndefined();
+
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    expect((error as PhasePreflightError).message).toContain(
+      "Active phase ID is missing",
+    );
+    expect(wasCalled()).toBe(false);
   });
 });
 
@@ -2104,6 +2097,8 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
       markReadyOnApproval: false,
     },
     validationMaxRetries: 1,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
     policy: DEFAULT_AUTH_POLICY,
@@ -2315,6 +2310,8 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
       markReadyOnApproval: false,
     },
     validationMaxRetries: 1,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
     policy: DEFAULT_AUTH_POLICY,
@@ -2662,5 +2659,277 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     // createTask must NOT have been called — the existing CI_FIX task (by dependency)
     // covers this failure.
     expect(mockControl.createTask).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P26-010: branch base preconditions
+// ---------------------------------------------------------------------------
+
+describe("PhaseRunner – P26-010 branch base preconditions", () => {
+  const phaseId = "f0000000-0000-4000-8000-000000000001";
+  const taskId = "f1000000-0000-4000-8000-000000000001";
+
+  const baseConfig: PhaseRunnerConfig = {
+    mode: "AUTO",
+    countdownSeconds: 0,
+    activeAssignee: "MOCK_CLI",
+    maxRecoveryAttempts: 0,
+    testerCommand: null,
+    testerArgs: null,
+    testerTimeoutMs: 1000,
+    ciEnabled: false,
+    ciBaseBranch: "main",
+    ciPullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
+    validationMaxRetries: 1,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
+    projectRootDir: "/tmp/project",
+    projectName: "test-project",
+    policy: DEFAULT_AUTH_POLICY,
+    role: "admin",
+  };
+
+  function makeMockControl(stateOverride: object) {
+    return {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => stateOverride),
+      setPhaseStatus: mock(async () => stateOverride),
+      startActiveTaskAndWait: mock(async () => stateOverride),
+      createTask: mock(async () => stateOverride),
+      recordRecoveryAttempt: mock(async () => stateOverride),
+      runInternalWork: mock(async () => ({ stdout: "", stderr: "" })),
+    } as unknown as ControlCenterService;
+  }
+
+  test("throws PhasePreflightError when HEAD is on a non-base branch and phase branch does not exist", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        // localBranchExists: branch not found
+        if (
+          input.args.includes("rev-parse") &&
+          input.args.includes("--verify")
+        ) {
+          throw new Error("unknown revision or path");
+        }
+        // getCurrentBranch: returns a feature branch (not ciBaseBranch)
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feature/some-other-work", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    expect((error as PhasePreflightError).message).toContain("feat/phase-1");
+    expect((error as PhasePreflightError).message).toContain(
+      "feature/some-other-work",
+    );
+    expect((error as PhasePreflightError).message).toContain("main");
+  });
+
+  test("allows branch creation when HEAD is on ciBaseBranch and phase branch does not exist", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [], // no tasks — execution loop exits immediately
+        },
+      ],
+    };
+
+    const mockControl = makeMockControl(state);
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        // localBranchExists: branch not found
+        if (
+          input.args.includes("rev-parse") &&
+          input.args.includes("--verify")
+        ) {
+          throw new Error("unknown revision or path");
+        }
+        // getCurrentBranch: on ciBaseBranch
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "main", stderr: "" };
+        }
+        // ensureCleanWorkingTree: clean
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        // checkout existing branch (no -b): fails — branch doesn't exist
+        if (input.args.includes("checkout") && !input.args.includes("-b")) {
+          throw new Error("pathspec 'feat/phase-1' did not match any file(s)");
+        }
+        // checkout -b (createBranch) and all other git calls: success
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const pr = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await pr.run();
+
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "DONE" }),
+    );
+  });
+
+  test("skips base-branch check when phase branch already exists locally", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [], // no tasks — execution loop exits immediately
+        },
+      ],
+    };
+
+    const mockControl = makeMockControl(state);
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        // localBranchExists: branch EXISTS — return success
+        if (
+          input.args.includes("rev-parse") &&
+          input.args.includes("--verify")
+        ) {
+          return { exitCode: 0, stdout: "abc123def456", stderr: "" };
+        }
+        // getCurrentBranch: on a non-base branch (would fail if check were applied)
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feature/unrelated-work", stderr: "" };
+        }
+        // ensureCleanWorkingTree: clean
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        // checkout existing branch: success (branch already exists)
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const pr = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await pr.run();
+
+    // Phase should complete normally despite HEAD being on non-base branch
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "DONE" }),
+    );
+  });
+
+  test("error message includes actionable git checkout command", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (
+          input.args.includes("rev-parse") &&
+          input.args.includes("--verify")
+        ) {
+          throw new Error("not found");
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "dev/experiment", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    const error = await pr.run().catch((e) => e);
+
+    expect(error).toBeInstanceOf(PhasePreflightError);
+    // Must contain the actionable checkout instruction
+    expect((error as PhasePreflightError).message).toMatch(/git checkout main/);
   });
 });

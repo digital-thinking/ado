@@ -46,23 +46,23 @@ Status markers:
 
 ### Phase 26: State Consistency & Orchestration Hardening (from validated BUGS.md points)
 
-- [ ] `P26-001` Split/clarify phase failure semantics so local tester failures and remote CI failures are represented distinctly (status or typed `failureKind`), with operator guidance tied to failure kind. Deps: `P25-006`.
-- [ ] `P26-002` Add CI_FIX cascade guardrails: enforce a configurable depth/count cap for fix-task fan-out and fail fast with actionable messaging when exceeded. Deps: `P26-001`.
-- [ ] `P26-003` Reconcile stale `IN_PROGRESS` tasks across all phases (not only active phase) during startup recovery. Deps: `P26-001`.
-- [ ] `P26-004` Wire agent restart/kill flows to task-state reconciliation hooks so UI-initiated lifecycle actions cannot leave tasks permanently inconsistent. Deps: `P26-003`.
-- [ ] `P26-005` Add cross-store consistency reconciliation between global agent registry and project task state at startup (stale RUNNING agents vs task terminal states). Deps: `P26-003`.
-- [ ] `P26-006` Make JSON persistence atomic for critical state files (temp-file + rename) and reduce agent-registry write amplification with batched flush strategy. Deps: `P26-005`.
-- [ ] `P26-007` Replace hardcoded adapter-ID parsing in persisted-agent deserialization with schema-driven parsing (`CLIAdapterIdSchema`) to keep adapter support DRY. Deps: `P26-006`.
-- [ ] `P26-008` Replace silent active-phase fallback (`phases[0]`) with explicit deterministic behavior (strict error or explicit warning + policy) for multi-phase safety. Deps: `P26-001`.
-- [ ] `P26-009` Add explicit truncation markers for stored `resultContext`/`errorLogs` so operators can see when diagnostic text was shortened. Deps: `P26-006`.
-- [ ] `P26-010` Validate branch base preconditions before creating a phase branch from `HEAD` to avoid accidental branch-from-branch drift. Deps: `P26-008`.
-- [ ] `P26-011` Refactor `ControlCenterService` constructor to a typed options object (remove positional optional-argument anti-pattern) and update call sites. Deps: `P26-006`.
-- [ ] `P26-012` Add regression/integration tests for Phase 26: failure-kind transitions, CI_FIX cap behavior, all-phase reconciliation, restart consistency hooks, atomic persistence, adapter-ID schema parsing, active-phase selection policy, truncation markers, and branch-base verification. Deps: `P26-002`, `P26-004`, `P26-007`, `P26-008`, `P26-009`, `P26-010`, `P26-011`.
-- [ ] `P26-014` Cap agent lists in web UI to the most recent 5 records for both Global Agents and per-project Running Agents using deterministic recency ordering. Deps: `P26-005`.
-- [ ] `P26-015` Filter agent log stream content to hide file-interaction chatter and show only reasoning/thinking progress plus terminal outcome context. Deps: `P26-009`.
-- [ ] `P26-016` Fix GitHub capability preflight false negatives and environment mismatch diagnostics: correct network probe semantics, capture effective runtime identity/env fingerprints, and report actionable auth/runtime differences. Deps: `P26-001`.
-- [ ] `P26-017` Add regression/integration tests for new Phase 26 agent UX + preflight tasks (top-5 agent truncation, reasoning-only log stream filter, and GitHub preflight parity diagnostics). Deps: `P26-014`, `P26-015`, `P26-016`.
-- [ ] `P26-013` Create PR Task: open Phase 26 PR after coding tasks are done. Deps: `P26-012`, `P26-017`.
+- [x] `P26-001` Split/clarify phase failure semantics so local tester failures and remote CI failures are represented distinctly (status or typed `failureKind`), with operator guidance tied to failure kind. Deps: `P25-006`.
+- [x] `P26-002` Add CI_FIX cascade guardrails: enforce a configurable depth/count cap for fix-task fan-out and fail fast with actionable messaging when exceeded. Deps: `P26-001`.
+- [x] `P26-003` Reconcile stale `IN_PROGRESS` tasks across all phases (not only active phase) during startup recovery. Deps: `P26-001`.
+- [x] `P26-004` Wire agent restart/kill flows to task-state reconciliation hooks so UI-initiated lifecycle actions cannot leave tasks permanently inconsistent. Deps: `P26-003`.
+- [x] `P26-005` Add cross-store consistency reconciliation between global agent registry and project task state at startup (stale RUNNING agents vs task terminal states). Deps: `P26-003`.
+- [x] `P26-006` Make JSON persistence atomic for critical state files (temp-file + rename) and reduce agent-registry write amplification with batched flush strategy. Deps: `P26-005`.
+- [x] `P26-007` Replace hardcoded adapter-ID parsing in persisted-agent deserialization with schema-driven parsing (`CLIAdapterIdSchema`) to keep adapter support DRY. Deps: `P26-006`.
+- [x] `P26-008` Replace silent active-phase fallback (`phases[0]`) with explicit deterministic behavior (strict error or explicit warning + policy) for multi-phase safety. Deps: `P26-001`.
+- [x] `P26-009` Add explicit truncation markers for stored `resultContext`/`errorLogs` so operators can see when diagnostic text was shortened. Deps: `P26-006`.
+- [x] `P26-010` Validate branch base preconditions before creating a phase branch from `HEAD` to avoid accidental branch-from-branch drift. Deps: `P26-008`.
+- [x] `P26-011` Refactor `ControlCenterService` constructor to a typed options object (remove positional optional-argument anti-pattern) and update call sites. Deps: `P26-006`.
+- [x] `P26-012` Add regression/integration tests for Phase 26: failure-kind transitions, CI_FIX cap behavior, all-phase reconciliation, restart consistency hooks, atomic persistence, adapter-ID schema parsing, active-phase selection policy, truncation markers, and branch-base verification. Deps: `P26-002`, `P26-004`, `P26-007`, `P26-008`, `P26-009`, `P26-010`, `P26-011`.
+- [x] `P26-014` Cap agent lists in web UI to the most recent 5 records for both Global Agents and per-project Running Agents using deterministic recency ordering. Deps: `P26-005`.
+- [x] `P26-015` Filter agent log stream content to hide file-interaction chatter and show only reasoning/thinking progress plus terminal outcome context. Deps: `P26-009`.
+- [x] `P26-016` Fix GitHub capability preflight false negatives and environment mismatch diagnostics: correct network probe semantics, capture effective runtime identity/env fingerprints, and report actionable auth/runtime differences. Deps: `P26-001`.
+- [x] `P26-017` Add regression/integration tests for new Phase 26 agent UX + preflight tasks (top-5 agent truncation, reasoning-only log stream filter, and GitHub preflight parity diagnostics). Deps: `P26-014`, `P26-015`, `P26-016`.
+- [x] `P26-013` Create PR Task: open Phase 26 PR after coding tasks are done. Deps: `P26-012`, `P26-017`.
 
 ## Deferred / Later
 

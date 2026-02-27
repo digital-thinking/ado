@@ -1,0 +1,9 @@
+P26-008 Replace silent active-phase fallback (`phases[0]`) with explicit deterministic behavior (strict error or explicit warning + policy)
+
+Implement this task in the repository. Requirements:
+- Find logic that silently falls back to phases[0] when active phase cannot be determined.
+- Replace this with explicit deterministic behavior: either strict error, or explicit warning combined with an explicit documented policy.
+- Ensure behavior is deterministic and observable (no silent fallback).
+- Update/add tests accordingly.
+- Commit the changes on the current feature branch with a clear commit message referencing P26-008.
+- Return a concise summary of files changed and rationale.

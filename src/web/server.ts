@@ -52,6 +52,21 @@ export type WebControlCenterRuntime = {
 
 const WEB_SERVER_HOST = "127.0.0.1";
 const WEB_SERVER_IDLE_TIMEOUT_SECONDS = 255;
+const TERMINAL_TASK_STATUSES = new Set(["DONE", "FAILED"]);
+
+function findTaskStatusById(
+  state: ProjectState,
+  taskId: string,
+): string | undefined {
+  for (const phase of state.phases) {
+    const task = phase.tasks.find((candidate) => candidate.id === taskId);
+    if (task) {
+      return task.status;
+    }
+  }
+
+  return undefined;
+}
 
 async function resolveWebPort(
   requestedPort: number | undefined,
@@ -163,8 +178,8 @@ export async function startWebControlCenter(
     onFailure: onAgentFailure,
   });
 
-  control = new ControlCenterService(
-    (projectName) => {
+  control = new ControlCenterService({
+    stateEngine: (projectName) => {
       const settingsFilePath = input.settingsFilePath;
       return (async () => {
         const s = await loadCliSettings(settingsFilePath);
@@ -181,8 +196,8 @@ export async function startWebControlCenter(
         throw new Error(`Project not found: ${projectName}`);
       })();
     },
-    resolve(input.cwd, "TASKS.md"),
-    async (workInput) => {
+    tasksMarkdownFilePath: resolve(input.cwd, "TASKS.md"),
+    internalWorkRunner: async (workInput) => {
       const assigneeSettings = input.agentSettings[workInput.assignee];
       if (!assigneeSettings.enabled) {
         const available = CLI_ADAPTER_IDS.filter(
@@ -282,15 +297,15 @@ export async function startWebControlCenter(
         durationMs: result.durationMs,
       };
     },
-    async () => {
+    repositoryResetRunner: async () => {
       await processManager.run({
         command: "git",
         args: ["reset", "--hard"],
         cwd: input.cwd,
       });
     },
-    onStateChange,
-  );
+    onStateChange: onStateChange,
+  });
 
   // 4. Initial cache load for all known projects.
   const { refreshRecoveryCache } = await import("./api/agents");
@@ -310,6 +325,42 @@ export async function startWebControlCenter(
   }
 
   await control.ensureInitialized(input.projectName, input.cwd);
+
+  const projectNames = new Set<string>([
+    input.projectName,
+    ...settings.projects.map((project) => project.name),
+  ]);
+  const statesByProject = new Map<string, ProjectState>();
+  for (const projectName of projectNames) {
+    try {
+      const state = await control.getState(projectName);
+      statesByProject.set(projectName, state);
+    } catch {
+      // Ignore projects with no state yet.
+    }
+  }
+
+  const crossStoreReconciledAgents = agents.reconcileRunningAgentsWhere(
+    (agent) => {
+      if (!agent.taskId || !agent.projectName) {
+        return false;
+      }
+      const projectState = statesByProject.get(agent.projectName);
+      if (!projectState) {
+        return false;
+      }
+      const taskStatus = findTaskStatusById(projectState, agent.taskId);
+      if (!taskStatus) {
+        return false;
+      }
+      return TERMINAL_TASK_STATUSES.has(taskStatus);
+    },
+  );
+  if (crossStoreReconciledAgents > 0) {
+    console.info(
+      `Startup: reconciled ${crossStoreReconciledAgents} stale RUNNING agent(s) with terminal task state to STOPPED.`,
+    );
+  }
 
   const usage = new UsageService(
     new CodexUsageTracker(processManager),
@@ -347,6 +398,8 @@ export async function startWebControlCenter(
       setActivePhase: (input) => control.setActivePhase(input),
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),
+      reconcileInProgressTaskToTodo: (input) =>
+        control.reconcileInProgressTaskToTodo(input),
       failTaskIfInProgress: (input) => control.failTaskIfInProgress(input),
       recordRecoveryAttempt: (input) => control.recordRecoveryAttempt(input),
       importFromTasksMarkdown: (assignee, name) =>

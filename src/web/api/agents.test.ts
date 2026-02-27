@@ -321,6 +321,170 @@ describe("agents API enrichment", () => {
     }
   });
 
+  test("POST /api/agents/:id/restart reconciles IN_PROGRESS task to TODO before restarting", async () => {
+    const reconcileCalls: Array<{ taskId: string; projectName?: string }> = [];
+    const restartCalls: string[] = [];
+
+    const deps: ApiDependencies = {
+      control: {
+        reconcileInProgressTaskToTodo: async (input: {
+          taskId: string;
+          projectName?: string;
+        }) => {
+          reconcileCalls.push(input);
+        },
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            taskId: "task-1",
+            status: "RUNNING",
+            outputTail: [],
+          },
+        ],
+        restart: (id: string) => {
+          restartCalls.push(id);
+          return { id, status: "RUNNING" };
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/restart", {
+        method: "POST",
+      }),
+      new URL("http://localhost/api/agents/agent-1/restart"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(reconcileCalls).toHaveLength(1);
+    expect(reconcileCalls[0]).toEqual({
+      taskId: "task-1",
+      projectName: "project-a",
+    });
+    expect(restartCalls).toEqual(["agent-1"]);
+  });
+
+  test("POST /api/agents/:id/restart proceeds even if reconcile throws", async () => {
+    const restartCalls: string[] = [];
+
+    const deps: ApiDependencies = {
+      control: {
+        reconcileInProgressTaskToTodo: async () => {
+          throw new Error("State engine unavailable.");
+        },
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-2",
+            name: "Worker",
+            projectName: "project-b",
+            taskId: "task-stale",
+            status: "RUNNING",
+            outputTail: [],
+          },
+        ],
+        restart: (id: string) => {
+          restartCalls.push(id);
+          return { id, status: "RUNNING" };
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-b",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-2/restart", {
+        method: "POST",
+      }),
+      new URL("http://localhost/api/agents/agent-2/restart"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(restartCalls).toEqual(["agent-2"]);
+  });
+
+  test("POST /api/agents/:id/restart skips reconcile for agents without a taskId", async () => {
+    const reconcileCalls: unknown[] = [];
+    const restartCalls: string[] = [];
+
+    const deps: ApiDependencies = {
+      control: {
+        reconcileInProgressTaskToTodo: async (input: unknown) => {
+          reconcileCalls.push(input);
+        },
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-3",
+            name: "Bare",
+            projectName: "project-a",
+            taskId: undefined,
+            status: "RUNNING",
+            outputTail: [],
+          },
+        ],
+        restart: (id: string) => {
+          restartCalls.push(id);
+          return { id, status: "RUNNING" };
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-3/restart", {
+        method: "POST",
+      }),
+      new URL("http://localhost/api/agents/agent-3/restart"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(reconcileCalls).toHaveLength(0);
+    expect(restartCalls).toEqual(["agent-3"]);
+  });
+
   test("GET /api/agents/:id/logs/stream formats runtime diagnostics for readability", async () => {
     const idleDiagnostic = formatAgentRuntimeDiagnostic(
       buildAgentIdleDiagnostic({
@@ -396,5 +560,339 @@ describe("agents API enrichment", () => {
     const payload = parseSsePayload(decoder.decode(chunk.value));
 
     expect(payload.formattedLine).toContain("[agent-runtime] Idle 2m0s");
+  });
+});
+
+describe("P26-015: log stream chatter filtering", () => {
+  /**
+   * Build deps for a STOPPED agent with the given outputTail. The SSE stream
+   * closes immediately after draining the backlog + emitting the terminal
+   * status event, so the reader loop terminates without hanging.
+   */
+  function makeStreamDeps(outputTail: string[]): ApiDependencies {
+    return {
+      control: {
+        getState: async () =>
+          ({
+            projectName: "project-a",
+            rootDir: "/tmp/a",
+            phases: [
+              {
+                id: "phase-1",
+                name: "Phase 1",
+                branchName: "phase-1",
+                status: "CODING",
+                tasks: [
+                  {
+                    id: "task-1",
+                    title: "Task One",
+                    status: "DONE",
+                    assignee: "CLAUDE_CLI",
+                    dependencies: [],
+                  },
+                ],
+              },
+            ],
+          }) as any,
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            phaseId: "phase-1",
+            taskId: "task-1",
+            // STOPPED so stream closes after backlog + terminal event (no subscribe needed).
+            status: "STOPPED",
+            lastExitCode: 0,
+            outputTail,
+          },
+        ],
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+  }
+
+  async function collectStreamLines(outputTail: string[]): Promise<string[]> {
+    const deps = makeStreamDeps(outputTail);
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/logs/stream"),
+      new URL("http://localhost/api/agents/agent-1/logs/stream"),
+      deps,
+    );
+    expect(response).not.toBeNull();
+    const reader = response!.body!.getReader();
+    const decoder = new TextDecoder();
+    const lines: string[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value).trim();
+      if (text.startsWith("data: ")) {
+        const payload = JSON.parse(text.slice("data: ".length)) as any;
+        if (payload.type === "output" && typeof payload.line === "string") {
+          lines.push(payload.line);
+        }
+      }
+    }
+    return lines;
+  }
+
+  test("suppresses file-read chatter lines from backlog", async () => {
+    const tail = [
+      "Read /src/engine/phase-runner.ts",
+      "I need to update the phase-runner logic",
+      "Writing src/new-file.ts",
+      "● Edit(file_path: 'src/types/index.ts')",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toEqual(["I need to update the phase-runner logic"]);
+  });
+
+  test("preserves error lines even if they start with a file-verb prefix", async () => {
+    const tail = [
+      "Read /src/file.ts",
+      "Error reading /src/file.ts: permission denied",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toEqual(["Error reading /src/file.ts: permission denied"]);
+  });
+
+  test("preserves ixado system diagnostic lines in backlog", async () => {
+    const tail = [
+      "Read /path/to/file.ts",
+      "[ixado][heartbeat] agent=abc elapsed=30s idle=10s",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toContain(
+      "[ixado][heartbeat] agent=abc elapsed=30s idle=10s",
+    );
+    expect(lines).not.toContain("Read /path/to/file.ts");
+  });
+
+  test("passes all lines through when none match chatter patterns", async () => {
+    const tail = [
+      "Analyzing the test failures to determine root cause",
+      "Found 3 issues in the integration test suite",
+      "Proposing fix for the reconciliation logic",
+    ];
+    const lines = await collectStreamLines(tail);
+    expect(lines).toEqual(tail);
+  });
+
+  test("terminal outcome (status) events are always sent regardless of chatter", async () => {
+    const deps: ApiDependencies = {
+      control: {
+        getState: async () =>
+          ({
+            projectName: "project-a",
+            rootDir: "/tmp/a",
+            phases: [
+              {
+                id: "phase-1",
+                name: "Phase 1",
+                branchName: "phase-1",
+                status: "CODING",
+                tasks: [
+                  {
+                    id: "task-1",
+                    title: "Task",
+                    status: "IN_PROGRESS",
+                    assignee: "CLAUDE_CLI",
+                    dependencies: [],
+                  },
+                ],
+              },
+            ],
+          }) as any,
+      } as any,
+      agents: {
+        list: () => [
+          {
+            id: "agent-1",
+            name: "Coder",
+            projectName: "project-a",
+            phaseId: "phase-1",
+            taskId: "task-1",
+            status: "RUNNING",
+            // outputTail contains only chatter — nothing should come through as
+            // output events, but the terminal status event must still be emitted.
+            outputTail: ["Read /src/file.ts", "Writing src/output.ts"],
+          },
+        ],
+        subscribe: (_id: string, listener: (event: any) => void) => {
+          setTimeout(() => {
+            listener({ type: "status", agentId: "agent-1", status: "STOPPED" });
+          }, 5);
+          return () => {};
+        },
+      } as any,
+      usage: {} as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+      availableWorkerAssignees: [] as any,
+      getRuntimeConfig: async () => ({}) as any,
+      updateRuntimeConfig: async () => ({}) as any,
+      getProjects: async () => [] as any,
+      getProjectState: async () => ({}) as any,
+      updateProjectSettings: async () => ({}) as any,
+      getGlobalSettings: async () => ({}) as any,
+      updateGlobalSettings: async () => ({}) as any,
+    };
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents/agent-1/logs/stream"),
+      new URL("http://localhost/api/agents/agent-1/logs/stream"),
+      deps,
+    );
+    expect(response).not.toBeNull();
+    const reader = response!.body!.getReader();
+    const decoder = new TextDecoder();
+    const events: any[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value).trim();
+      if (text.startsWith("data: ")) {
+        events.push(JSON.parse(text.slice("data: ".length)));
+      }
+    }
+    // No output events from the chatter-only backlog.
+    const outputEvents = events.filter((e) => e.type === "output");
+    expect(outputEvents).toHaveLength(0);
+    // Status event must still be present.
+    const statusEvents = events.filter((e) => e.type === "status");
+    expect(statusEvents.length).toBeGreaterThan(0);
+  });
+});
+
+describe("P26-014: GET /api/agents recency ordering", () => {
+  function makeDeps(agents: any[]): ApiDependencies {
+    return {
+      agents: { list: () => agents } as any,
+      projectName: "project-a",
+      defaultAgentCwd: "/tmp",
+    } as any;
+  }
+
+  test("returns agents sorted by startedAt descending (most recent first)", async () => {
+    const deps = makeDeps([
+      {
+        id: "agent-old",
+        name: "Old",
+        projectName: "project-a",
+        status: "STOPPED",
+        startedAt: "2026-02-20T10:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "agent-new",
+        name: "New",
+        projectName: "project-a",
+        status: "RUNNING",
+        startedAt: "2026-02-26T12:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "agent-mid",
+        name: "Mid",
+        projectName: "project-a",
+        status: "STOPPED",
+        startedAt: "2026-02-23T08:00:00.000Z",
+        outputTail: [],
+      },
+    ]);
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(3);
+    expect(data[0].id).toBe("agent-new");
+    expect(data[1].id).toBe("agent-mid");
+    expect(data[2].id).toBe("agent-old");
+  });
+
+  test("agents with missing startedAt sort to the end", async () => {
+    const deps = makeDeps([
+      {
+        id: "agent-no-time",
+        name: "NoTime",
+        projectName: "project-a",
+        status: "STOPPED",
+        startedAt: undefined,
+        outputTail: [],
+      },
+      {
+        id: "agent-with-time",
+        name: "WithTime",
+        projectName: "project-a",
+        status: "RUNNING",
+        startedAt: "2026-02-26T09:00:00.000Z",
+        outputTail: [],
+      },
+    ]);
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(2);
+    expect(data[0].id).toBe("agent-with-time");
+    expect(data[1].id).toBe("agent-no-time");
+  });
+
+  test("returns all agents unsorted when all have equal startedAt", async () => {
+    const ts = "2026-02-26T10:00:00.000Z";
+    const deps = makeDeps([
+      {
+        id: "a1",
+        name: "A1",
+        projectName: "p",
+        status: "RUNNING",
+        startedAt: ts,
+        outputTail: [],
+      },
+      {
+        id: "a2",
+        name: "A2",
+        projectName: "p",
+        status: "RUNNING",
+        startedAt: ts,
+        outputTail: [],
+      },
+    ]);
+
+    const response = await handleAgentsApi(
+      new Request("http://localhost/api/agents"),
+      new URL("http://localhost/api/agents"),
+      deps,
+    );
+
+    expect(response).not.toBeNull();
+    const data = await response!.json();
+    expect(data).toHaveLength(2);
+    // Both have same timestamp — order is stable, all records present.
+    expect(data.map((a: any) => a.id)).toContain("a1");
+    expect(data.map((a: any) => a.id)).toContain("a2");
   });
 });
