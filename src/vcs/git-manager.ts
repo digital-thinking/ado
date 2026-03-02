@@ -98,6 +98,19 @@ export class GitManager {
     return branchName;
   }
 
+  async localBranchExists(branchName: string, cwd: string): Promise<boolean> {
+    try {
+      await this.runner.run({
+        command: "git",
+        args: ["rev-parse", "--verify", `refs/heads/${branchName}`],
+        cwd,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async createBranch(input: CreateBranchInput): Promise<void> {
     if (!input.branchName.trim()) {
       throw new Error("branchName must not be empty.");

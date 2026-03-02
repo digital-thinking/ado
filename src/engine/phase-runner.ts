@@ -30,8 +30,13 @@ import { type ControlCenterService } from "../web";
 import { type AuthPolicy, type Role } from "../security/policy";
 import { PhasePreflightError } from "../errors";
 import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
+import {
   type CLIAdapterId,
   type Phase,
+  type PhaseFailureKind,
   type PullRequestAutomationSettings,
   type Task,
 } from "../types";
@@ -100,6 +105,8 @@ export type PhaseRunnerConfig = {
   ciBaseBranch: string;
   ciPullRequest: PullRequestAutomationSettings;
   validationMaxRetries: number;
+  ciFixMaxFanOut: number;
+  ciFixMaxDepth: number;
   projectRootDir: string;
   projectName: string;
   policy: AuthPolicy;
@@ -156,6 +163,7 @@ export class PhaseRunner {
       // Identical gate in both AUTO and MANUAL modes — deterministic execution
       // gate semantics that cannot be bypassed by exception recovery.
       this.runPreflightChecks(phase);
+      await this.checkBranchBasePreconditions(phase);
 
       await this.prepareBranch(phase);
       const completedPhase = await this.executionLoop(phase, rl);
@@ -190,27 +198,32 @@ export class PhaseRunner {
   }
 
   private resolveActivePhase(state: any): Phase {
-    if (!state.phases || state.phases.length === 0) {
-      throw new PhasePreflightError(
-        "No phases found in project state. Run 'ixado phase create' to add a phase before running.",
-      );
-    }
-
-    if (state.activePhaseId) {
-      const phase = state.phases.find(
-        (candidate: any) => candidate.id === state.activePhaseId,
-      );
-      if (!phase) {
-        throw new PhasePreflightError(
-          `Active phase ID "${state.activePhaseId}" not found in project state. ` +
-            `Run 'ixado phase list' to verify phase IDs, or 'ixado phase set-active <id>' to update.`,
-        );
+    try {
+      return resolveActivePhaseStrict(state);
+    } catch (error) {
+      if (!(error instanceof ActivePhaseResolutionError)) {
+        throw error;
       }
-      return phase;
-    }
 
-    // No activePhaseId set — fall back to the first phase (initial-run convenience).
-    return state.phases[0];
+      switch (error.code) {
+        case "NO_PHASES":
+          throw new PhasePreflightError(
+            "No phases found in project state. Run 'ixado phase create' to add a phase before running.",
+          );
+        case "ACTIVE_PHASE_ID_MISSING":
+          throw new PhasePreflightError(
+            "Active phase ID is missing from project state. " +
+              "Set one explicitly with 'ixado phase active <phaseNumber|phaseId>' before running.",
+          );
+        case "ACTIVE_PHASE_ID_NOT_FOUND":
+          throw new PhasePreflightError(
+            `Active phase ID "${error.activePhaseId}" not found in project state. ` +
+              "Run 'ixado phase list' to verify phase IDs, or 'ixado phase active <phaseNumber|phaseId>' to update.",
+          );
+        default:
+          throw error;
+      }
+    }
   }
 
   /**
@@ -246,6 +259,38 @@ export class PhaseRunner {
       throw new PhasePreflightError(
         `Phase "${phase.name}" has an empty or missing branchName. ` +
           `Update the phase with a valid git branch name before running.`,
+      );
+    }
+  }
+
+  /**
+   * Validates that the working copy is on the configured base branch before
+   * creating a new phase branch.  If the phase branch already exists locally,
+   * the check is skipped entirely — checkout will succeed regardless of HEAD.
+   *
+   * Throws PhasePreflightError (non-recoverable) with an actionable message
+   * when the branch does not yet exist and HEAD is on a branch other than
+   * `ciBaseBranch`, preventing accidental branch-from-branch drift in
+   * multi-phase workflows.
+   */
+  private async checkBranchBasePreconditions(phase: Phase): Promise<void> {
+    const branchExists = await this.git.localBranchExists(
+      phase.branchName,
+      this.config.projectRootDir,
+    );
+    if (branchExists) {
+      return; // Branch already exists; no base-branch constraint needed.
+    }
+
+    const currentBranch = await this.git.getCurrentBranch(
+      this.config.projectRootDir,
+    );
+    const allowedBase = this.config.ciBaseBranch;
+    if (currentBranch !== allowedBase) {
+      throw new PhasePreflightError(
+        `Cannot create phase branch "${phase.branchName}" from "${currentBranch}". ` +
+          `HEAD must be on the base branch "${allowedBase}" before creating a new phase branch. ` +
+          `Run: git checkout ${allowedBase}`,
       );
     }
   }
@@ -329,6 +374,7 @@ export class PhaseRunner {
           await this.control.setPhaseStatus({
             phaseId: phase.id,
             status: "CI_FAILED",
+            failureKind: "AGENT_FAILURE" as PhaseFailureKind,
             ciStatusContext: `Branching failed: ${message}
 Recovery: ${recoveryMessage}`,
           });
@@ -551,6 +597,7 @@ Recovery: ${recoveryMessage}`,
         await this.control.setPhaseStatus({
           phaseId: updatedPhase.id,
           status: "CI_FAILED",
+          failureKind: "AGENT_FAILURE" as PhaseFailureKind,
           ciStatusContext: `${failureMessage}
 Recovery: ${recoveryMessage}`,
         });
@@ -561,6 +608,7 @@ Recovery: ${recoveryMessage}`,
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "CI_FAILED",
+      failureKind: "AGENT_FAILURE" as PhaseFailureKind,
       ciStatusContext: `Execution failed after ${maxTaskRunCount} run attempts for task #${taskNumber}.`,
     });
     throw new Error(
@@ -614,6 +662,22 @@ Recovery: ${recoveryMessage}`,
         const latestPhase = latestState.phases.find(
           (p: any) => p.id === input.phaseId,
         );
+
+        // Guardrail: enforce depth cap for the fix-task chain.
+        if (!latestPhase) {
+          throw new Error(
+            `Phase not found while creating CI_FIX task: ${input.phaseId}`,
+          );
+        }
+        const depth = this.calculateTaskDepth(latestPhase, task);
+        if (depth >= this.config.ciFixMaxDepth) {
+          throw new Error(
+            `CI_FIX cascade depth cap exceeded (${this.config.ciFixMaxDepth}). ` +
+              `The fix task chain for "${task.title}" has reached the maximum allowed depth. ` +
+              `Manual intervention is required to break the failure cycle.`,
+          );
+        }
+
         const alreadyExists = latestPhase?.tasks.some(
           (t: any) =>
             t.status === "CI_FIX" &&
@@ -690,6 +754,7 @@ Recovery: ${recoveryMessage}`,
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
+        failureKind: "LOCAL_TESTER" as PhaseFailureKind,
         ciStatusContext: `${testerResult.errorMessage}
 
 ${testerResult.fixTaskDescription}`.trim(),
@@ -719,6 +784,47 @@ ${testerResult.fixTaskDescription}`.trim(),
         },
       }),
     );
+  }
+
+  private calculateTaskDepth(phase: Phase, task: Task): number {
+    const isFixTask =
+      task.status === "CI_FIX" ||
+      task.title.startsWith("CI_FIX: ") ||
+      task.title.startsWith("Fix tests after ");
+
+    if (!isFixTask) {
+      return 0;
+    }
+
+    let depth = 1;
+    let currentTask = task;
+    const visited = new Set<string>();
+
+    while (currentTask.dependencies.length > 0) {
+      if (visited.has(currentTask.id)) {
+        break; // Cycle protection
+      }
+      visited.add(currentTask.id);
+
+      const parentId = currentTask.dependencies[0];
+      const parentTask = phase.tasks.find((t) => t.id === parentId);
+      if (!parentTask) {
+        break;
+      }
+
+      const isParentFixTask =
+        parentTask.status === "CI_FIX" ||
+        parentTask.title.startsWith("CI_FIX: ") ||
+        parentTask.title.startsWith("Fix tests after ");
+
+      if (!isParentFixTask) {
+        break;
+      }
+
+      depth += 1;
+      currentTask = parentTask;
+    }
+    return depth;
   }
 
   private async handleCiIntegration(phase: Phase): Promise<void> {
@@ -901,6 +1007,60 @@ ${testerResult.fixTaskDescription}`.trim(),
         existingTasks: currentPhase.tasks,
       });
 
+      // Guardrail: enforce fan-out count cap (fail fast if too many new tasks are required)
+      if (mapping.tasksToCreate.length > this.config.ciFixMaxFanOut) {
+        const fanOutError =
+          `CI_FIX fan-out count cap exceeded (${this.config.ciFixMaxFanOut}). ` +
+          `Detected ${mapping.tasksToCreate.length} new failing CI checks, which exceeds the allowed fan-out limit. ` +
+          `Manual intervention is required to address the large number of failures.`;
+
+        await this.control.setPhaseStatus({
+          phaseId: phase.id,
+          status: "CI_FAILED",
+          failureKind: "REMOTE_CI" as PhaseFailureKind,
+          ciStatusContext: [ciDiagnostics, fanOutError].join("\n\n"),
+        });
+
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "ci-pr-lifecycle",
+            type: "ci.activity",
+            payload: {
+              stage: "failed",
+              summary: fanOutError,
+              prNumber,
+              overall: "FAILURE",
+              createdFixTaskCount: 0,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "terminal-outcome",
+            type: "terminal.outcome",
+            payload: {
+              outcome: "failure",
+              summary: fanOutError,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+
+        throw new Error(fanOutError);
+      }
+
       for (const taskInput of mapping.tasksToCreate) {
         await this.control.createTask({
           phaseId: phase.id,
@@ -925,6 +1085,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
+        failureKind: "REMOTE_CI" as PhaseFailureKind,
         ciStatusContext: ciFailureContext,
       });
 
@@ -1004,6 +1165,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
+        failureKind: "REMOTE_CI" as PhaseFailureKind,
         ciStatusContext: validationResult.pendingComments.join("\n"),
       });
       console.info(

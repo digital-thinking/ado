@@ -61,6 +61,11 @@ export type ControlCenterControl = {
       taskId: string;
     } & { projectName?: string },
   ): ReturnType<ControlCenterService["resetTaskToTodo"]>;
+  reconcileInProgressTaskToTodo(
+    input: {
+      taskId: string;
+    } & { projectName?: string },
+  ): ReturnType<ControlCenterService["reconcileInProgressTaskToTodo"]>;
   failTaskIfInProgress(
     input: {
       taskId: string;

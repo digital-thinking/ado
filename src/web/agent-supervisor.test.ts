@@ -804,3 +804,84 @@ describe("AgentSupervisor – reconcileStaleRunningAgents (P20-002)", () => {
     expect(secondCount).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P26-005: reconcileRunningAgentsWhere – cross-store consistency hook
+// ---------------------------------------------------------------------------
+
+describe("AgentSupervisor – reconcileRunningAgentsWhere (P26-005)", () => {
+  let sandboxDir: string;
+  let registryFilePath: string;
+
+  beforeEach(async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-where-"));
+    registryFilePath = join(sandboxDir, "agents.json");
+  });
+
+  afterEach(async () => {
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  test("reconciles only RUNNING agents matching predicate", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "running-match",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        taskId: "task-terminal",
+        projectName: "alpha",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "running-no-match",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        taskId: "task-open",
+        projectName: "alpha",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        name: "already-stopped",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "STOPPED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+
+    const count = supervisor.reconcileRunningAgentsWhere(
+      (agent) => agent.taskId === "task-terminal",
+    );
+
+    expect(count).toBe(1);
+    const listed = supervisor.list();
+    expect(listed.find((a) => a.name === "running-match")?.status).toBe(
+      "STOPPED",
+    );
+    expect(listed.find((a) => a.name === "running-no-match")?.status).toBe(
+      "RUNNING",
+    );
+    expect(listed.find((a) => a.name === "already-stopped")?.status).toBe(
+      "STOPPED",
+    );
+  });
+});

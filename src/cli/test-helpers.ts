@@ -17,12 +17,17 @@ export function runCli(
   cwd: string,
   globalConfigFile: string,
 ): RunCliResult {
+  const sandboxStateFile = join(cwd, ".ixado", "state.json");
+
   const result = Bun.spawnSync({
     cmd: [process.execPath, "run", resolve("src/cli/index.ts"), ...args],
     cwd,
     env: {
       ...process.env,
       IXADO_GLOBAL_CONFIG_FILE: globalConfigFile,
+      // Isolate each CLI invocation from any IXADO_STATE_FILE that may have
+      // been set by other tests in the same process.
+      IXADO_STATE_FILE: sandboxStateFile,
     },
     stdout: "pipe",
     stderr: "pipe",

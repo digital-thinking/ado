@@ -5,7 +5,7 @@ import {
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { resolveCommandForSpawn } from "../process/command-resolver";
@@ -22,7 +22,7 @@ import {
   buildAgentIdleDiagnostic,
   formatAgentRuntimeDiagnostic,
 } from "../agent-runtime-diagnostics";
-import type { CLIAdapterId } from "../types";
+import { CLIAdapterIdSchema, type CLIAdapterId } from "../types";
 import {
   createRuntimeEvent,
   type RuntimeAgentStatus,
@@ -86,6 +86,14 @@ export type AgentEvent = RuntimeEvent;
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS = 120_000;
+
+/**
+ * How long (ms) to wait before coalescing buffered agent-registry writes into
+ * a single atomic flush.  High-frequency output events (stdout/stderr lines)
+ * only dirty the in-memory buffer during this window; only terminal-state
+ * transitions and explicit `flushRegistry()` calls bypass the delay.
+ */
+const REGISTRY_FLUSH_DEBOUNCE_MS = 200;
 
 type RuntimeDiagnosticsConfig = {
   heartbeatIntervalMs: number;
@@ -198,13 +206,10 @@ function parsePersistedAgent(value: unknown): AgentView | null {
     phaseId:
       typeof candidate.phaseId === "string" ? candidate.phaseId : undefined,
     taskId: typeof candidate.taskId === "string" ? candidate.taskId : undefined,
-    adapterId:
-      candidate.adapterId === "MOCK_CLI" ||
-      candidate.adapterId === "CLAUDE_CLI" ||
-      candidate.adapterId === "GEMINI_CLI" ||
-      candidate.adapterId === "CODEX_CLI"
-        ? candidate.adapterId
-        : undefined,
+    adapterId: (() => {
+      const result = CLIAdapterIdSchema.safeParse(candidate.adapterId);
+      return result.success ? result.data : undefined;
+    })(),
     projectName:
       typeof candidate.projectName === "string"
         ? candidate.projectName
@@ -231,6 +236,14 @@ export class AgentSupervisor {
   private readonly runtimeDiagnostics: RuntimeDiagnosticsConfig;
   private readonly records = new Map<string, AgentRecord>();
   private readonly emitter = new EventEmitter();
+
+  // --- batched-flush state ------------------------------------------------
+  // Agents whose views have changed since the last registry flush.  Keyed by
+  // agent id so rapid successive updates to the same agent coalesce into one
+  // entry; only the latest snapshot is written on flush.
+  private readonly pendingRegistryWrites = new Map<string, AgentView>();
+  private registryFlushTimer: NodeJS.Timeout | undefined;
+  // -------------------------------------------------------------------------
 
   constructor(
     spawnOrOptions: SpawnFn | AgentSupervisorOptions = spawn,
@@ -321,17 +334,67 @@ export class AgentSupervisor {
     }
 
     try {
-      mkdirSync(dirname(this.registryFilePath), { recursive: true });
-      writeFileSync(
-        this.registryFilePath,
-        `${JSON.stringify(agents, null, 2)}\n`,
-        "utf8",
-      );
+      const dir = dirname(this.registryFilePath);
+      mkdirSync(dir, { recursive: true });
+      // Atomic write: write to a sibling temp file, then rename into place so
+      // a mid-write crash never leaves a partially-written registry.
+      const tmpPath = `${this.registryFilePath}.tmp`;
+      writeFileSync(tmpPath, `${JSON.stringify(agents, null, 2)}\n`, "utf8");
+      renameSync(tmpPath, this.registryFilePath);
     } catch (error) {
       console.warn(
         `Unable to write agent registry: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /**
+   * Schedule a debounced registry flush.  If a flush is already pending this
+   * is a no-op; the existing timer will coalesce all dirty records.
+   */
+  private scheduleRegistryFlush(): void {
+    if (this.registryFlushTimer !== undefined) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.doFlushRegistry();
+    }, REGISTRY_FLUSH_DEBOUNCE_MS);
+    // unref so a pending flush timer does not prevent the Node/Bun process
+    // from exiting cleanly (terminal-transition flushes are always synchronous
+    // and happen before any shutdown path).
+    timer.unref();
+    this.registryFlushTimer = timer;
+  }
+
+  /**
+   * Synchronously merge all pending registry writes and persist them.
+   * Clears the flush timer and the pending-write buffer.
+   */
+  private doFlushRegistry(): void {
+    clearTimeout(this.registryFlushTimer);
+    this.registryFlushTimer = undefined;
+
+    if (!this.registryFilePath || this.pendingRegistryWrites.size === 0) {
+      return;
+    }
+
+    // Read current on-disk state so that agents from previous sessions that
+    // are no longer in the in-memory map are preserved.
+    const current = this.readPersistedAgents();
+    const merged = new Map<string, AgentView>(current.map((a) => [a.id, a]));
+    for (const [id, view] of this.pendingRegistryWrites) {
+      merged.set(id, view);
+    }
+    this.pendingRegistryWrites.clear();
+    this.writePersistedAgents([...merged.values()]);
+  }
+
+  /**
+   * Flush any pending agent-registry writes to disk immediately.
+   * Useful for explicit shutdown paths or testing.
+   */
+  flushRegistry(): void {
+    this.doFlushRegistry();
   }
 
   private persistRecord(record: AgentRecord): void {
@@ -340,15 +403,19 @@ export class AgentSupervisor {
     }
 
     const view = toView(record);
-    const current = this.readPersistedAgents();
-    const existingIndex = current.findIndex((agent) => agent.id === view.id);
-    if (existingIndex >= 0) {
-      current[existingIndex] = view;
-    } else {
-      current.push(view);
-    }
+    this.pendingRegistryWrites.set(record.id, view);
 
-    this.writePersistedAgents(current);
+    // Terminal transitions (STOPPED / FAILED) must be written immediately so
+    // that a crash or restart sees the final status without waiting for a
+    // timer.  All other updates (output-tail growth while RUNNING) are
+    // coalesced into a debounced batch flush to reduce write amplification.
+    const isTerminal =
+      record.status === "STOPPED" || record.status === "FAILED";
+    if (isTerminal) {
+      this.doFlushRegistry();
+    } else {
+      this.scheduleRegistryFlush();
+    }
   }
 
   /**
@@ -380,6 +447,60 @@ export class AgentSupervisor {
 
     if (reconcileCount > 0) {
       this.writePersistedAgents(updated);
+    }
+
+    return reconcileCount;
+  }
+
+  /**
+   * Reconciles RUNNING agents using an external consistency predicate (for
+   * example, cross-store task-state checks at startup).
+   *
+   * Returns the number of agents transitioned from RUNNING to STOPPED.
+   */
+  reconcileRunningAgentsWhere(
+    predicate: (agent: AgentView) => boolean,
+  ): number {
+    if (!this.registryFilePath) {
+      return 0;
+    }
+
+    const stoppedAt = nowIso();
+    let reconcileCount = 0;
+    const persisted = this.readPersistedAgents();
+    const updated = persisted.map((agent) => {
+      if (agent.status !== "RUNNING") {
+        return agent;
+      }
+      if (!predicate(agent)) {
+        return agent;
+      }
+
+      reconcileCount += 1;
+      return {
+        ...agent,
+        status: "STOPPED" as AgentStatus,
+        stoppedAt,
+      };
+    });
+
+    if (reconcileCount > 0) {
+      this.writePersistedAgents(updated);
+      for (const [id, record] of this.records.entries()) {
+        if (record.status !== "RUNNING") {
+          continue;
+        }
+        const view = toView(record);
+        if (!predicate(view)) {
+          continue;
+        }
+
+        this.records.set(id, {
+          ...record,
+          status: "STOPPED",
+          stoppedAt,
+        });
+      }
     }
 
     return reconcileCount;
@@ -722,6 +843,10 @@ export class AgentSupervisor {
     this.records.set(record.id, record);
     this.persistRecord(record);
     this.spawnRecord(record);
+    // Flush the initial RUNNING entry immediately so that other supervisor
+    // instances (e.g., web-UI processes) can observe the new agent without
+    // waiting for the debounce timer.
+    this.doFlushRegistry();
 
     return toView(record);
   }

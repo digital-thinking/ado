@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
 
 import { z } from "zod";
@@ -15,11 +16,16 @@ import {
   ProcessManager,
   type ProcessRunner,
 } from "../process";
+import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
   ExceptionMetadataSchema,
   ExceptionRecoveryResultSchema,
+  PhaseFailureKindSchema,
   PhaseSchema,
   PhaseStatusSchema,
   RecoveryAttemptRecordSchema,
@@ -30,6 +36,7 @@ import {
   type ExceptionMetadata,
   type ExceptionRecoveryResult,
   type Phase,
+  type PhaseFailureKind,
   type PhaseStatus,
   type ProjectState,
   type RecoveryAttemptRecord,
@@ -44,6 +51,7 @@ const DEFAULT_TASKS_MARKDOWN_PATH = "TASKS.md";
 const TASKS_IMPORT_TIMEOUT_MS = 180_000;
 const TASK_EXECUTION_TIMEOUT_MS = 3_600_000;
 const MAX_STORED_CONTEXT_LENGTH = 4_000;
+const TRUNCATION_MARKER = "\n... [truncated]";
 
 const ImportedTaskPlanSchema = z.object({
   code: z.string().min(1),
@@ -136,6 +144,7 @@ export type SetPhaseStatusInput = {
   phaseId: string;
   status: PhaseStatus;
   ciStatusContext?: string;
+  failureKind?: PhaseFailureKind;
 };
 
 export type RecordRecoveryAttemptInput = {
@@ -179,6 +188,15 @@ type RepositoryResetRunner = () => Promise<void>;
 export type StateEngineFactory = (
   projectName: string,
 ) => StateEngine | Promise<StateEngine>;
+
+export type ControlCenterServiceOptions = {
+  stateEngine: StateEngine | StateEngineFactory;
+  tasksMarkdownFilePath?: string;
+  internalWorkRunner?: InternalWorkRunner;
+  repositoryResetRunner?: RepositoryResetRunner;
+  onStateChange?: (projectName: string, state: ProjectState) => void;
+  sideEffectProbeRunner?: ProcessRunner;
+};
 
 type ImportedTaskDraft = ImportedTaskPlan & {
   id: string;
@@ -245,23 +263,31 @@ function truncateForState(value: string): string {
     return value;
   }
 
-  return value.slice(0, MAX_STORED_CONTEXT_LENGTH);
+  return (
+    value.slice(0, MAX_STORED_CONTEXT_LENGTH - TRUNCATION_MARKER.length) +
+    TRUNCATION_MARKER
+  );
 }
 
 function resolveActivePhaseOrThrow(state: ProjectState): Phase {
-  const explicitActive = state.activePhaseId
-    ? state.phases.find((phase) => phase.id === state.activePhaseId)
-    : undefined;
-  if (explicitActive) {
-    return explicitActive;
+  try {
+    return resolveActivePhaseStrict(state);
+  } catch (error) {
+    if (!(error instanceof ActivePhaseResolutionError)) {
+      throw error;
+    }
+    if (error.code === "NO_PHASES") {
+      throw new Error("No phases found.");
+    }
+    if (error.code === "ACTIVE_PHASE_ID_MISSING") {
+      throw new Error(
+        "Active phase ID is not set. Run 'ixado phase active <phaseNumber|phaseId>'.",
+      );
+    }
+    throw new Error(
+      `Active phase ID "${error.activePhaseId}" not found in project state.`,
+    );
   }
-
-  const firstPhase = state.phases[0];
-  if (!firstPhase) {
-    throw new Error("No phases found.");
-  }
-
-  return firstPhase;
 }
 
 function resolvePhaseIdForReference(
@@ -407,18 +433,22 @@ export class ControlCenterService {
   private readonly sideEffectProbeRunner: ProcessRunner;
   private defaultProjectName?: string;
 
-  constructor(
-    stateOrFactory: StateEngine | StateEngineFactory,
-    tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
-    internalWorkRunner?: InternalWorkRunner,
-    repositoryResetRunner?: RepositoryResetRunner,
-    onStateChange?: (projectName: string, state: ProjectState) => void,
-    sideEffectProbeRunner: ProcessRunner = new ProcessManager(),
-  ) {
-    if (typeof stateOrFactory === "function") {
-      this.stateEngineFactory = stateOrFactory;
+  constructor(options: ControlCenterServiceOptions) {
+    const {
+      stateEngine,
+      tasksMarkdownFilePath = resolve(
+        process.cwd(),
+        DEFAULT_TASKS_MARKDOWN_PATH,
+      ),
+      internalWorkRunner,
+      repositoryResetRunner,
+      onStateChange,
+      sideEffectProbeRunner = new ProcessManager(),
+    } = options;
+    if (typeof stateEngine === "function") {
+      this.stateEngineFactory = stateEngine;
     } else {
-      this.stateEngineFactory = () => stateOrFactory;
+      this.stateEngineFactory = () => stateEngine;
     }
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
@@ -708,11 +738,19 @@ export class ControlCenterService {
       status === "CI_FAILED"
         ? normalizedContext || phase.ciStatusContext
         : undefined;
+    const rawFailureKind = input.failureKind
+      ? PhaseFailureKindSchema.parse(input.failureKind)
+      : undefined;
+    const failureKind =
+      status === "CI_FAILED"
+        ? (rawFailureKind ?? phase.failureKind)
+        : undefined;
     const nextPhases = [...state.phases];
     nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
       status,
       ciStatusContext,
+      failureKind,
     });
 
     const nextState = await engine.writeProjectState({
@@ -1221,6 +1259,12 @@ export class ControlCenterService {
 
     const probes: SideEffectProbeResult[] = [];
     const missingSideEffects: string[] = [];
+    const envFingerprint: Record<string, string> = {
+      hostname: hostname(),
+      platform: process.platform,
+      arch: process.arch,
+    };
+
     let adapterFailureKind: AdapterFailureKind = "unknown";
     const setFailureKind = (kind?: AdapterFailureKind) => {
       if (!kind || kind === "unknown" || adapterFailureKind !== "unknown") {
@@ -1229,6 +1273,7 @@ export class ControlCenterService {
       adapterFailureKind = kind;
     };
 
+    // 1. Tooling Probe
     const ghToolingProbe = await this.runCommandProbe(state.rootDir, "gh", [
       "--version",
     ]);
@@ -1243,6 +1288,7 @@ export class ControlCenterService {
         success: true,
         details: `Tooling available: ${versionLine}`,
       });
+      envFingerprint["gh_version"] = versionLine;
     } else {
       setFailureKind(ghToolingProbe.failureKind);
       probes.push({
@@ -1255,6 +1301,7 @@ export class ControlCenterService {
       );
     }
 
+    // 2. Auth Probe
     if (!ghToolingProbe.success) {
       probes.push({
         name: "gh auth status --hostname github.com",
@@ -1262,9 +1309,6 @@ export class ControlCenterService {
         details:
           "Skipped because GitHub CLI tooling check failed (gh is unavailable).",
       });
-      missingSideEffects.push(
-        "Auth preflight was skipped because GitHub CLI is unavailable. Install GitHub CLI, then run 'gh auth login --hostname github.com'.",
-      );
     } else {
       const ghAuthProbe = await this.runCommandProbe(state.rootDir, "gh", [
         "auth",
@@ -1278,6 +1322,12 @@ export class ControlCenterService {
           success: true,
           details: "GitHub CLI authentication is valid for github.com.",
         });
+        const userMatch = /as ([a-zA-Z0-9-]+)/.exec(
+          ghAuthProbe.stderr + ghAuthProbe.stdout,
+        );
+        if (userMatch) {
+          envFingerprint["gh_user"] = userMatch[1];
+        }
       } else {
         setFailureKind(ghAuthProbe.failureKind);
         probes.push({
@@ -1291,34 +1341,65 @@ export class ControlCenterService {
       }
     }
 
+    // 3. Git Identity Probes
+    const gitNameProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "config",
+      "user.name",
+    ]);
+    const gitEmailProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "config",
+      "user.email",
+    ]);
+    if (gitNameProbe.success && gitNameProbe.stdout.trim()) {
+      envFingerprint["git_user_name"] = gitNameProbe.stdout.trim();
+    }
+    if (gitEmailProbe.success && gitEmailProbe.stdout.trim()) {
+      envFingerprint["git_user_email"] = gitEmailProbe.stdout.trim();
+    }
+
+    // 4. Network/Access Probe (Corrected semantics: use actual remote if available)
+    const remoteProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    const remoteUrl = remoteProbe.success
+      ? remoteProbe.stdout.trim()
+      : "https://github.com/github/gitignore.git";
+
     const networkProbe = await this.runCommandProbe(state.rootDir, "git", [
       "ls-remote",
-      "https://github.com/github/gitignore.git",
+      remoteUrl,
       "HEAD",
     ]);
-    const hasGitHubResponse = networkProbe.stdout.trim().length > 0;
-    if (networkProbe.success && hasGitHubResponse) {
+
+    if (networkProbe.success && networkProbe.stdout.trim().length > 0) {
       probes.push({
-        name: "git ls-remote github.com",
+        name: `git ls-remote ${remoteUrl}`,
         success: true,
-        details: "Network reachability to github.com verified.",
+        details: `Network reachability and access to ${remoteUrl} verified.`,
       });
     } else {
       setFailureKind(networkProbe.failureKind);
+      const isAuthIssue =
+        networkProbe.stderr.includes("Permission denied") ||
+        networkProbe.stderr.includes(
+          "fatal: Could not read from remote repository",
+        );
+
       probes.push({
-        name: "git ls-remote github.com",
+        name: `git ls-remote ${remoteUrl}`,
         success: false,
         details: networkProbe.success
-          ? "git ls-remote github.com returned no output."
+          ? `git ls-remote returned no output for ${remoteUrl}.`
           : networkProbe.details,
       });
-      missingSideEffects.push(
-        `Network preflight failed: ${
-          networkProbe.success
-            ? "git ls-remote github.com returned no output."
-            : networkProbe.details
-        } Verify outbound connectivity to github.com (VPN/proxy/firewall) and retry.`,
-      );
+
+      const diagnostic = isAuthIssue
+        ? `Access denied to ${remoteUrl}. Verify your SSH keys or HTTPS credentials and repository permissions.`
+        : `Network preflight failed for ${remoteUrl}: ${networkProbe.details} Verify outbound connectivity to github.com (VPN/proxy/firewall).`;
+
+      missingSideEffects.push(diagnostic);
     }
 
     if (missingSideEffects.length === 0) {
@@ -1332,6 +1413,7 @@ export class ControlCenterService {
         status: "FAILED",
         probes,
         missingSideEffects,
+        envFingerprint,
       }),
       adapterFailureKind,
     };
@@ -1749,7 +1831,7 @@ export class ControlCenterService {
   }
 
   /**
-   * Reconciles any IN_PROGRESS tasks in the active phase back to TODO.
+   * Reconciles any IN_PROGRESS tasks across all phases back to TODO.
    *
    * Called at startup (before the phase execution loop begins) to recover from
    * a prior process crash that left tasks stuck in IN_PROGRESS. Returns the
@@ -1758,39 +1840,37 @@ export class ControlCenterService {
   async reconcileInProgressTasks(projectName?: string): Promise<number> {
     const engine = await this.getEngine(projectName);
     const state = await engine.readProjectState();
-    const activePhase = state.activePhaseId
-      ? state.phases.find((phase) => phase.id === state.activePhaseId)
-      : state.phases[0];
-    if (!activePhase) {
-      return 0;
-    }
 
     let reconcileCount = 0;
-    const nextTasks = activePhase.tasks.map((task) => {
-      if (task.status !== "IN_PROGRESS") {
-        return task;
-      }
-      reconcileCount += 1;
-      return TaskSchema.parse({
-        ...task,
-        status: "TODO",
-        resultContext: undefined,
-        errorLogs: undefined,
-        errorCategory: undefined,
-        adapterFailureKind: undefined,
-        completionVerification: undefined,
+    const nextPhases = state.phases.map((phase) => {
+      let phaseChanged = false;
+      const nextTasks = phase.tasks.map((task) => {
+        if (task.status !== "IN_PROGRESS") {
+          return task;
+        }
+        reconcileCount += 1;
+        phaseChanged = true;
+        return TaskSchema.parse({
+          ...task,
+          status: "TODO",
+          resultContext: undefined,
+          errorLogs: undefined,
+          errorCategory: undefined,
+          adapterFailureKind: undefined,
+          completionVerification: undefined,
+        });
       });
+
+      if (!phaseChanged) {
+        return phase;
+      }
+
+      return { ...phase, tasks: nextTasks };
     });
 
     if (reconcileCount === 0) {
       return 0;
     }
-
-    const phaseIndex = state.phases.findIndex(
-      (phase) => phase.id === activePhase.id,
-    );
-    const nextPhases = [...state.phases];
-    nextPhases[phaseIndex] = { ...activePhase, tasks: nextTasks };
 
     const nextState = await engine.writeProjectState({
       ...state,
@@ -1798,6 +1878,70 @@ export class ControlCenterService {
     });
     this.onStateChange?.(nextState.projectName, nextState);
     return reconcileCount;
+  }
+
+  /**
+   * Resets a single IN_PROGRESS task back to TODO by task ID.
+   *
+   * Called when a UI-initiated agent restart abandons the previous run so the
+   * task is not left permanently stuck in IN_PROGRESS. Idempotent: if the task
+   * is not found or is not IN_PROGRESS, the call is a no-op.
+   */
+  async reconcileInProgressTaskToTodo(input: {
+    taskId: string;
+    projectName?: string;
+  }): Promise<void> {
+    const taskId = input.taskId.trim();
+    if (!taskId) {
+      return;
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+
+    let phaseIndex = -1;
+    let taskIndex = -1;
+    for (let index = 0; index < state.phases.length; index += 1) {
+      const foundTaskIndex = state.phases[index].tasks.findIndex(
+        (task) => task.id === taskId,
+      );
+      if (foundTaskIndex >= 0) {
+        phaseIndex = index;
+        taskIndex = foundTaskIndex;
+        break;
+      }
+    }
+
+    if (phaseIndex < 0 || taskIndex < 0) {
+      return;
+    }
+
+    const phase = state.phases[phaseIndex];
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "IN_PROGRESS") {
+      return;
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "TODO",
+      resultContext: undefined,
+      errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      completionVerification: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = { ...phase, tasks: nextTasks };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
   }
 
   async failTaskIfInProgress(input: {

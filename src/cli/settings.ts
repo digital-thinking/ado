@@ -38,6 +38,8 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     ciEnabled: false,
     ciBaseBranch: "main",
     validationMaxRetries: 3,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
     pullRequest: {
       defaultTemplatePath: null,
       templateMappings: [],

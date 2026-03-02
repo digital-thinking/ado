@@ -1,3 +1,63 @@
+/**
+ * ixado system diagnostic prefix — lines starting with this are internal
+ * telemetry and must never be suppressed from user-facing streams.
+ */
+const IXADO_LOG_PREFIX = "[ixado][";
+
+/**
+ * Keywords that indicate terminal outcome context (errors, failures, timeouts).
+ * Lines containing these are always preserved so operators can diagnose
+ * problems even after filtering.
+ */
+const TERMINAL_CONTEXT_RE =
+  /\b(error|fail(?:ed|ure)?|exception|timeout|timed?\s*out|exit\s+code|abort|crash|unauthorized|forbidden|denied|warning)\b/i;
+
+/**
+ * File-interaction verbs commonly emitted by AI coding CLI adapters when
+ * invoking tools (Read, Write, Edit, List, Bash, etc.).  Matches lines where
+ * one of these verbs is the leading content — optionally preceded by bullet
+ * symbols or whitespace — followed by a path, a function-call open paren, or
+ * a colon (e.g. "Bash: cat file").
+ */
+const FILE_INTERACTION_LINE_RE =
+  /^[\s\W]{0,8}(read(?:ing)?|wrote|writ(?:e|ing)?|edit(?:ed|ing)?|list(?:ed|ing)?|creat(?:e|ed|ing)?|delet(?:e|ed|ing)?|remov(?:e|ed|ing)?|mov(?:e|ed|ing)?|cop(?:y|ied|ying)?|search(?:ed|ing)?|grep(?:ped|ping)?|glob(?:bed|bing)?|find(?:ing)?|ran|run(?:ning)?|exec(?:ut(?:e|ed|ing))?|bash|tool(?:\s+call)?)\s*(?:\(|\s+(?:\/|\.\/|~\/|\w+\/|\w+\.\w{2,6})|:\s)/i;
+
+/**
+ * Lines whose entire content is a file path (optional leading symbols, then a
+ * path starting with `/`, `./`, or `~/`, nothing else on the line).
+ */
+const STANDALONE_PATH_LINE_RE = /^\s*[\W]{0,4}\s*(?:\/|\.\/|~\/)\S+\s*$/;
+
+/**
+ * Returns `true` when `line` is a low-signal file-interaction chatter line
+ * that should be suppressed from user-facing agent log streams.
+ *
+ * Preserved (returns `false`):
+ *   - ixado system diagnostics (`[ixado][…`)
+ *   - Lines containing error / failure / timeout keywords
+ *   - All other text (reasoning, progress updates)
+ *
+ * Filtered (returns `true`):
+ *   - Tool-invocation lines: verb + path/call (e.g. `Read /src/file.ts`,
+ *     `● Edit(file_path: "…")`, `Bash: ls -la`)
+ *   - Standalone file-path lines (e.g. `/path/to/file.ts`)
+ */
+export function isFileInteractionChatter(line: string): boolean {
+  if (line.startsWith(IXADO_LOG_PREFIX)) {
+    return false;
+  }
+  if (TERMINAL_CONTEXT_RE.test(line)) {
+    return false;
+  }
+  if (FILE_INTERACTION_LINE_RE.test(line)) {
+    return true;
+  }
+  if (STANDALONE_PATH_LINE_RE.test(line)) {
+    return true;
+  }
+  return false;
+}
+
 export type RecoveryAttemptLike = {
   id?: string;
   attemptNumber?: number;

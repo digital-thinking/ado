@@ -1,13 +1,23 @@
 import { Bot } from "grammy";
 
-import { CLIAdapterIdSchema, type CLIAdapterId, type ProjectState } from "../types";
+import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
+import {
+  CLIAdapterIdSchema,
+  type CLIAdapterId,
+  type ProjectState,
+} from "../types";
 
 export type StateReader = () => Promise<ProjectState>;
 export type TaskStarter = (input: {
   taskNumber: number;
   assignee: CLIAdapterId;
 }) => Promise<ProjectState>;
-export type ActivePhaseSetter = (input: { phaseId: string }) => Promise<ProjectState>;
+export type ActivePhaseSetter = (input: {
+  phaseId: string;
+}) => Promise<ProjectState>;
 export type AgentListReader = () => Promise<StatusAgent[]> | StatusAgent[];
 export type LoopNextRequester = () => Promise<string> | string;
 export type LoopStopRequester = () => Promise<string> | string;
@@ -35,19 +45,27 @@ export type TelegramRuntime = {
 function formatStatus(
   state: ProjectState,
   agents: StatusAgent[],
-  availableAssignees: CLIAdapterId[]
+  availableAssignees: CLIAdapterId[],
 ): string {
-  const activePhase = state.phases.find((phase) => phase.id === state.activePhaseId);
-  const activeStatus = activePhase ? `${activePhase.name} (${activePhase.status})` : "none";
+  const activePhase = state.phases.find(
+    (phase) => phase.id === state.activePhaseId,
+  );
+  const activeStatus = activePhase
+    ? `${activePhase.name} (${activePhase.status})`
+    : "none";
   const tasksById = new Map(
     state.phases.flatMap((phase) =>
-      phase.tasks.map((task) => [task.id, `${phase.name}: ${task.title}`] as const)
-    )
+      phase.tasks.map(
+        (task) => [task.id, `${phase.name}: ${task.title}`] as const,
+      ),
+    ),
   );
   const runningAgents = agents.filter((agent) => agent.status === "RUNNING");
   const runningLines = runningAgents.length
     ? runningAgents.map((agent, index) => {
-        const taskLabel = agent.taskId ? tasksById.get(agent.taskId) ?? agent.taskId : "unassigned";
+        const taskLabel = agent.taskId
+          ? (tasksById.get(agent.taskId) ?? agent.taskId)
+          : "unassigned";
         return `${index + 1}. ${agent.name} -> ${taskLabel}`;
       })
     : ["none"];
@@ -64,7 +82,9 @@ function formatStatus(
 }
 
 function formatTasks(state: ProjectState): string {
-  const activePhase = state.phases.find((phase) => phase.id === state.activePhaseId);
+  const activePhase = state.phases.find(
+    (phase) => phase.id === state.activePhaseId,
+  );
 
   if (!activePhase) {
     return "No active phase selected.";
@@ -75,7 +95,8 @@ function formatTasks(state: ProjectState): string {
   }
 
   const lines = activePhase.tasks.map(
-    (task, index) => `${index + 1}. [${task.status}] ${task.title} (${task.assignee})`
+    (task, index) =>
+      `${index + 1}. [${task.status}] ${task.title} (${task.assignee})`,
   );
   return [`Tasks for ${activePhase.name}:`, ...lines].join("\n");
 }
@@ -89,7 +110,10 @@ function parseCommandArgs(ctx: TelegramCtx): string[] {
   return raw.split(/\s+/).slice(1);
 }
 
-async function ensureOwner(ctx: TelegramCtx, ownerId: number): Promise<boolean> {
+async function ensureOwner(
+  ctx: TelegramCtx,
+  ownerId: number,
+): Promise<boolean> {
   if (ctx.from?.id !== ownerId) {
     await ctx.reply("Unauthorized user.");
     return false;
@@ -103,20 +127,23 @@ export async function handleStatusCommand(
   ownerId: number,
   readState: StateReader,
   readAgents: AgentListReader,
-  availableAssignees: CLIAdapterId[]
+  availableAssignees: CLIAdapterId[],
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
   }
 
-  const [state, agents] = await Promise.all([readState(), Promise.resolve(readAgents())]);
+  const [state, agents] = await Promise.all([
+    readState(),
+    Promise.resolve(readAgents()),
+  ]);
   await ctx.reply(formatStatus(state, agents, availableAssignees));
 }
 
 export async function handleTasksCommand(
   ctx: TelegramCtx,
   ownerId: number,
-  readState: StateReader
+  readState: StateReader,
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
@@ -131,7 +158,7 @@ export async function handleStartTaskCommand(
   ownerId: number,
   availableAssignees: CLIAdapterId[],
   defaultAssignee: CLIAdapterId,
-  startTask: TaskStarter
+  startTask: TaskStarter,
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
@@ -141,14 +168,21 @@ export async function handleStartTaskCommand(
   const taskNumberRaw = args[0]?.trim() ?? "";
   const taskNumber = Number(taskNumberRaw);
   const assigneeRaw = args[1]?.trim();
-  const parsedAssignee = CLIAdapterIdSchema.safeParse(assigneeRaw ?? defaultAssignee);
+  const parsedAssignee = CLIAdapterIdSchema.safeParse(
+    assigneeRaw ?? defaultAssignee,
+  );
 
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
     await ctx.reply("Usage: /starttask <taskNumber> [assignee]");
     return;
   }
-  if (!parsedAssignee.success || !availableAssignees.includes(parsedAssignee.data)) {
-    await ctx.reply(`Assignee must be one of: ${availableAssignees.join(", ")}.`);
+  if (
+    !parsedAssignee.success ||
+    !availableAssignees.includes(parsedAssignee.data)
+  ) {
+    await ctx.reply(
+      `Assignee must be one of: ${availableAssignees.join(", ")}.`,
+    );
     return;
   }
 
@@ -159,15 +193,22 @@ export async function handleStartTaskCommand(
       taskNumber,
       assignee: parsedAssignee.data,
     });
-    const phase = state.phases.find((candidate) => candidate.id === state.activePhaseId) ?? state.phases[0];
-    const task = phase?.tasks[taskNumber - 1];
+    const phase = resolveActivePhaseStrict(state);
+    const task = phase.tasks[taskNumber - 1];
     if (!task) {
       throw new Error(`Task #${taskNumber} not found after execution.`);
     }
 
-    await ctx.reply(`Task #${taskNumber} ${task.title} finished with status ${task.status}.`);
+    await ctx.reply(
+      `Task #${taskNumber} ${task.title} finished with status ${task.status}.`,
+    );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof ActivePhaseResolutionError
+        ? `${error.message} Run /setactivephase <phaseNumber|phaseId> and retry.`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     await ctx.reply(`Task start failed: ${message}`);
   }
 }
@@ -175,7 +216,7 @@ export async function handleStartTaskCommand(
 export async function handleSetActivePhaseCommand(
   ctx: TelegramCtx,
   ownerId: number,
-  setActivePhase: ActivePhaseSetter
+  setActivePhase: ActivePhaseSetter,
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
@@ -190,11 +231,13 @@ export async function handleSetActivePhaseCommand(
 
   try {
     const state = await setActivePhase({ phaseId });
-    const active = state.phases.find((phase) => phase.id === state.activePhaseId);
+    const active = state.phases.find(
+      (phase) => phase.id === state.activePhaseId,
+    );
     await ctx.reply(
       active
         ? `Active phase set to ${active.name}.`
-        : `Active phase updated to ${phaseId}.`
+        : `Active phase updated to ${phaseId}.`,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -205,7 +248,7 @@ export async function handleSetActivePhaseCommand(
 export async function handleNextCommand(
   ctx: TelegramCtx,
   ownerId: number,
-  requestNextLoop?: LoopNextRequester
+  requestNextLoop?: LoopNextRequester,
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
@@ -228,7 +271,7 @@ export async function handleNextCommand(
 export async function handleStopCommand(
   ctx: TelegramCtx,
   ownerId: number,
-  requestStopLoop?: LoopStopRequester
+  requestStopLoop?: LoopStopRequester,
 ): Promise<void> {
   if (!(await ensureOwner(ctx, ownerId))) {
     return;
@@ -261,7 +304,9 @@ type CreateTelegramRuntimeInput = {
   requestStopLoop?: LoopStopRequester;
 };
 
-export function createTelegramRuntime(input: CreateTelegramRuntimeInput): TelegramRuntime {
+export function createTelegramRuntime(
+  input: CreateTelegramRuntimeInput,
+): TelegramRuntime {
   const bot = new Bot(input.token);
 
   bot.command("status", async (ctx) => {
@@ -270,7 +315,7 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
       input.ownerId,
       input.readState,
       input.listAgents,
-      input.availableAssignees
+      input.availableAssignees,
     );
   });
 
@@ -284,7 +329,7 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
       input.ownerId,
       input.availableAssignees,
       input.defaultAssignee,
-      input.startTask
+      input.startTask,
     );
   });
   bot.command("setactivephase", async (ctx) => {
@@ -308,7 +353,7 @@ export function createTelegramRuntime(input: CreateTelegramRuntimeInput): Telegr
       try {
         await bot.api.sendMessage(
           input.ownerId,
-          "IxADO is online. Send /status, /tasks, /starttask <taskNumber> [assignee], /setactivephase <phaseNumber|phaseId>, /next, or /stop. Press Ctrl+C in CLI to stop."
+          "IxADO is online. Send /status, /tasks, /starttask <taskNumber> [assignee], /setactivephase <phaseNumber|phaseId>, /next, or /stop. Press Ctrl+C in CLI to stop.",
         );
       } catch (error) {
         const err = error instanceof Error ? error.message : String(error);

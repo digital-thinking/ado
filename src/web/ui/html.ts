@@ -780,10 +780,17 @@ export function controlCenterHtml(params: {
 
     function renderState(state) {
       latestState = state;
-      const selectedPhaseId =
-        state.phases.some((phase) => phase.id === state.activePhaseId)
-          ? state.activePhaseId
-          : (state.phases[0] ? state.phases[0].id : undefined);
+      const hasValidActivePhase = state.phases.some(
+        (phase) => phase.id === state.activePhaseId,
+      );
+      const selectedPhaseId = hasValidActivePhase
+        ? state.activePhaseId
+        : undefined;
+      if (!hasValidActivePhase && state.phases.length > 0) {
+        console.warn(
+          "Active phase ID is missing or invalid. Set the active phase explicitly.",
+        );
+      }
       taskPhase.innerHTML = "";
       state.phases.forEach((phase) => {
         const option = document.createElement("option");
@@ -923,10 +930,15 @@ export function controlCenterHtml(params: {
         return "TODO";
       }
 
-      const activePhaseId =
-        state.phases.some((phase) => phase.id === state.activePhaseId)
-          ? state.activePhaseId
-          : state.phases[0].id;
+      const hasValidActivePhase = state.phases.some(
+        (phase) => phase.id === state.activePhaseId,
+      );
+      const activePhaseId = hasValidActivePhase ? state.activePhaseId : undefined;
+      if (!hasValidActivePhase) {
+        console.warn(
+          "Kanban has no valid active phase. Use Set Active to choose one.",
+        );
+      }
       const html = state.phases.map((phase) => {
         const isActive = phase.id === activePhaseId;
         if (!isActive) {
@@ -1162,30 +1174,42 @@ export function controlCenterHtml(params: {
       kanbanBoard.innerHTML = html;
     }
 
+    const AGENT_LIST_LIMIT = 5;
+
+    function renderAgentRow(agent) {
+      const projectName = agent.projectName || "-";
+      const taskName = (() => {
+        if (agent.taskTitle && Number.isInteger(agent.taskNumber)) {
+          const phaseLabel = agent.phaseName ? agent.phaseName + " " : "";
+          return phaseLabel + "#" + agent.taskNumber + " " + agent.taskTitle;
+        }
+        return agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
+      })();
+      const pid = agent.pid === undefined || agent.pid === null ? "-" : agent.pid;
+      const runtimeSummary = (() => {
+        const summary = agent.runtimeDiagnostic && typeof agent.runtimeDiagnostic.summary === "string"
+          ? agent.runtimeDiagnostic.summary
+          : "";
+        if (summary) {
+          return summary;
+        }
+        return (agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ");
+      })();
+      return { projectName, taskName, pid, runtimeSummary };
+    }
+
     function renderAgents(agents) {
       latestAgents = agents;
       agentTableBody.innerHTML = "";
       agentTopTableBody.innerHTML = "";
-      agents.forEach((agent) => {
-        const projectName = agent.projectName || "-";
-        const taskName = (() => {
-          if (agent.taskTitle && Number.isInteger(agent.taskNumber)) {
-            const phaseLabel = agent.phaseName ? agent.phaseName + " " : "";
-            return phaseLabel + "#" + agent.taskNumber + " " + agent.taskTitle;
-          }
-          return agent.taskId === undefined || agent.taskId === null ? "-" : agent.taskId;
-        })();
-        const pid = agent.pid === undefined || agent.pid === null ? "-" : agent.pid;
-        const runtimeSummary = (() => {
-          const summary = agent.runtimeDiagnostic && typeof agent.runtimeDiagnostic.summary === "string"
-            ? agent.runtimeDiagnostic.summary
-            : "";
-          if (summary) {
-            return summary;
-          }
-          return (agent.outputTail || []).slice(-3).map(truncateTailPreview).join(" | ");
-        })();
 
+      // Per-project Running Agents: filter to active project, cap to most recent 5.
+      const projectAgents = agents
+        .filter(a => (a.projectName || null) === activeProjectName)
+        .slice(0, AGENT_LIST_LIMIT);
+
+      projectAgents.forEach((agent) => {
+        const { projectName, taskName, pid, runtimeSummary } = renderAgentRow(agent);
         const row = document.createElement("tr");
         row.innerHTML = \`
           <td>\${escapeHtml(projectName)}</td>
@@ -1203,7 +1227,13 @@ export function controlCenterHtml(params: {
           <td><div class="mono small">\${escapeHtml(runtimeSummary || "-")}</div></td>
         \`;
         agentTableBody.appendChild(row);
+      });
 
+      // Global Agents: top 5 most recent across all projects (API already returns sorted by recency).
+      const globalAgents = agents.slice(0, AGENT_LIST_LIMIT);
+
+      globalAgents.forEach((agent) => {
+        const { projectName, taskName, pid, runtimeSummary } = renderAgentRow(agent);
         const topRow = document.createElement("tr");
         topRow.innerHTML = \`
           <td>\${escapeHtml(projectName)}</td>

@@ -4,6 +4,8 @@ import {
   CliSettingsSchema,
   CLIAdapterSchema,
   ExceptionRecoveryResultSchema,
+  PhaseFailureKindSchema,
+  PhaseSchema,
   TaskSchema,
   RecoveryAttemptRecordSchema,
   ProjectStateSchema,
@@ -230,5 +232,42 @@ describe("type contracts", () => {
         updatedAt: "2026-02-21T00:00:00.000Z",
       }),
     ).toThrow();
+  });
+
+  // P26-001: PhaseFailureKind type contracts
+  test("PhaseFailureKindSchema accepts all valid failure kinds", () => {
+    expect(PhaseFailureKindSchema.parse("LOCAL_TESTER")).toBe("LOCAL_TESTER");
+    expect(PhaseFailureKindSchema.parse("REMOTE_CI")).toBe("REMOTE_CI");
+    expect(PhaseFailureKindSchema.parse("AGENT_FAILURE")).toBe("AGENT_FAILURE");
+  });
+
+  test("PhaseFailureKindSchema rejects unknown values", () => {
+    expect(() => PhaseFailureKindSchema.parse("UNKNOWN_KIND")).toThrow();
+    expect(() => PhaseFailureKindSchema.parse("")).toThrow();
+    expect(() => PhaseFailureKindSchema.parse(null)).toThrow();
+  });
+
+  test("PhaseSchema persists failureKind for CI_FAILED phases", () => {
+    const phase = PhaseSchema.parse({
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Phase Alpha",
+      branchName: "phase-alpha",
+      status: "CI_FAILED",
+      tasks: [],
+      failureKind: "LOCAL_TESTER",
+    });
+    expect(phase.failureKind).toBe("LOCAL_TESTER");
+    expect(phase.status).toBe("CI_FAILED");
+  });
+
+  test("PhaseSchema allows omitting failureKind (optional field)", () => {
+    const phase = PhaseSchema.parse({
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      name: "Phase Beta",
+      branchName: "phase-beta",
+      status: "CODING",
+      tasks: [],
+    });
+    expect(phase.failureKind).toBeUndefined();
   });
 });
