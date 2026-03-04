@@ -29,7 +29,17 @@ describe("log readability helpers", () => {
         taskNumber: 4,
         taskTitle: "Improve logs",
       }),
-    ).toBe("phase: Phase 22 | task #4 Improve logs");
+    ).toBe("Phase 22 | #4 Improve logs");
+  });
+
+  test("formatPhaseTaskContext truncates long phase name and task title", () => {
+    expect(
+      formatPhaseTaskContext({
+        phaseName: "Phase 33: System Prompt Editor",
+        taskNumber: 4,
+        taskTitle: "33.4 Frontend prompt editor in Settings tab",
+      }),
+    ).toBe("Phase 33: System Prom… | #4 33.4 Frontend prompt…");
   });
 
   test("buildRecoveryTraceLinks includes task card and recovery links", () => {
@@ -221,5 +231,75 @@ describe("P26-015: isFileInteractionChatter", () => {
         "[agent-runtime] Heartbeat: elapsed 2m0s, idle 30s.",
       ),
     ).toBe(false);
+  });
+
+  // --- patch diff lines (apply_patch / unified-diff output) ---
+
+  test("filters patch addition line (+code)", () => {
+    expect(
+      isFileInteractionChatter("+    assert saved.status_code == 200"),
+    ).toBe(true);
+  });
+
+  test("filters patch addition line (+def)", () => {
+    expect(isFileInteractionChatter("+def optional_float(raw_value):")).toBe(
+      true,
+    );
+  });
+
+  test("filters bare + line (empty patch addition)", () => {
+    expect(isFileInteractionChatter("+")).toBe(true);
+  });
+
+  test("filters patch deletion line (-code without space)", () => {
+    expect(isFileInteractionChatter("-    old_line = True")).toBe(true);
+  });
+
+  test("filters patch hunk header", () => {
+    expect(isFileInteractionChatter("@@ -42,7 +42,12 @@")).toBe(true);
+  });
+
+  test("filters apply_patch Begin Patch marker", () => {
+    expect(isFileInteractionChatter("*** Begin Patch")).toBe(true);
+  });
+
+  test("filters apply_patch End Patch marker", () => {
+    expect(isFileInteractionChatter("*** End Patch")).toBe(true);
+  });
+
+  test("filters apply_patch Update File marker", () => {
+    expect(isFileInteractionChatter("*** Update File: /src/foo.ts")).toBe(true);
+  });
+
+  test("preserves markdown bullet starting with dash-space", () => {
+    expect(isFileInteractionChatter("- Added versioned storage schema")).toBe(
+      false,
+    );
+  });
+
+  test("preserves markdown bold summary header", () => {
+    expect(isFileInteractionChatter("**Summary**")).toBe(false);
+  });
+
+  // --- JSON blob lines ---
+
+  test("filters long JSON blob line", () => {
+    const blob =
+      '{"phases":[{"name":"Phase 1","tasks":[' +
+      '"x".repeat(200)'.padEnd(200, '"x"') +
+      "]}]}";
+    expect(
+      isFileInteractionChatter(
+        '{"phases":[{"name":"Phase 1","tasks":[],"extra":"' +
+          "a".repeat(180) +
+          '"}}]}',
+      ),
+    ).toBe(true);
+  });
+
+  test("preserves short JSON (structured log message)", () => {
+    expect(isFileInteractionChatter('{"event":"done","status":"ok"}')).toBe(
+      false,
+    );
   });
 });

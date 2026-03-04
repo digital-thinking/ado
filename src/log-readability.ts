@@ -29,6 +29,32 @@ const FILE_INTERACTION_LINE_RE =
 const STANDALONE_PATH_LINE_RE = /^\s*[\W]{0,4}\s*(?:\/|\.\/|~\/)\S+\s*$/;
 
 /**
+ * Patch diff lines emitted by AI adapters using `apply_patch` or similar
+ * unified-diff tools.  Matches:
+ *   - `+<code>` / `-<code>` — added/removed lines in a patch hunk.
+ *     A bare `- ` (dash-space) is a markdown bullet, NOT a patch line, so we
+ *     require that `-` is followed by a non-space or is at end-of-content.
+ *   - `@@ -N,N +N,N @@` — hunk header lines.
+ *   - `*** Begin Patch` / `*** End Patch` / `*** Update File:` etc. — the
+ *     apply_patch protocol markers used by Codex CLI.
+ */
+const PATCH_PLUS_LINE_RE = /^\+/;
+// Filters `-code` and `-    code` (patch removals) but preserves `- word`
+// (markdown bullet: dash + single space + word character).
+const PATCH_MINUS_LINE_RE = /^-(?! \w)/;
+const PATCH_HUNK_RE = /^@@\s+-\d/;
+const PATCH_MARKER_RE =
+  /^\*\*\* (?:Begin Patch|End Patch|(?:Update|Add|Delete) File:)/;
+
+/**
+ * Raw JSON object blobs — long lines starting with `{` that are clearly
+ * machine-generated state dumps rather than human-readable reasoning.
+ * We only suppress when the line is longer than 200 chars to avoid filtering
+ * short structured log messages.
+ */
+const JSON_BLOB_RE = /^\{.{200}/;
+
+/**
  * Returns `true` when `line` is a low-signal file-interaction chatter line
  * that should be suppressed from user-facing agent log streams.
  *
@@ -41,6 +67,8 @@ const STANDALONE_PATH_LINE_RE = /^\s*[\W]{0,4}\s*(?:\/|\.\/|~\/)\S+\s*$/;
  *   - Tool-invocation lines: verb + path/call (e.g. `Read /src/file.ts`,
  *     `● Edit(file_path: "…")`, `Bash: ls -la`)
  *   - Standalone file-path lines (e.g. `/path/to/file.ts`)
+ *   - Patch diff lines from apply_patch / unified-diff output
+ *   - Raw JSON state blobs (lines starting with `{` and > 200 chars)
  */
 export function isFileInteractionChatter(line: string): boolean {
   if (line.startsWith(IXADO_LOG_PREFIX)) {
@@ -53,6 +81,17 @@ export function isFileInteractionChatter(line: string): boolean {
     return true;
   }
   if (STANDALONE_PATH_LINE_RE.test(line)) {
+    return true;
+  }
+  if (
+    PATCH_PLUS_LINE_RE.test(line) ||
+    PATCH_MINUS_LINE_RE.test(line) ||
+    PATCH_HUNK_RE.test(line) ||
+    PATCH_MARKER_RE.test(line)
+  ) {
+    return true;
+  }
+  if (JSON_BLOB_RE.test(line)) {
     return true;
   }
   return false;
@@ -117,22 +156,33 @@ export function summarizeFailure(
   return `${preferred.slice(0, MAX_SUMMARY_LENGTH - 3)}...`;
 }
 
+const MAX_CONTEXT_SEGMENT_LEN = 22;
+
+function truncateSegment(value: string): string {
+  if (value.length <= MAX_CONTEXT_SEGMENT_LEN) {
+    return value;
+  }
+  return `${value.slice(0, MAX_CONTEXT_SEGMENT_LEN - 1).trimEnd()}\u2026`;
+}
+
 export function formatPhaseTaskContext(context: LogTaskContext): string | null {
   const segments: string[] = [];
 
   if (context.phaseName) {
-    segments.push(`phase: ${context.phaseName}`);
+    segments.push(truncateSegment(context.phaseName));
   } else if (context.phaseId) {
-    segments.push(`phase: ${context.phaseId}`);
+    segments.push(truncateSegment(context.phaseId));
   }
 
   if (typeof context.taskNumber === "number") {
-    const title = context.taskTitle ? ` ${context.taskTitle}` : "";
-    segments.push(`task #${context.taskNumber}${title}`);
+    const title = context.taskTitle
+      ? ` ${truncateSegment(context.taskTitle)}`
+      : "";
+    segments.push(`#${context.taskNumber}${title}`);
   } else if (context.taskTitle) {
-    segments.push(`task: ${context.taskTitle}`);
+    segments.push(truncateSegment(context.taskTitle));
   } else if (context.taskId) {
-    segments.push(`task: ${context.taskId}`);
+    segments.push(truncateSegment(context.taskId));
   }
 
   if (segments.length === 0) {

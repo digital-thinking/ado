@@ -286,7 +286,7 @@ describe("agents API enrichment", () => {
     const payload1 = decoder.decode(chunk1.value);
     expect(payload1).toContain('"line":"line one"');
     expect(payload1).toContain(
-      '"formattedLine":"[phase: Phase 1 | task #1 Task One] line one"',
+      '"formattedLine":"[Phase 1 | #1 Task One] line one"',
     );
     const parsed1 = parseSsePayload(payload1);
     const runtimeEvent1 = RuntimeEventSchema.parse(parsed1.runtimeEvent);

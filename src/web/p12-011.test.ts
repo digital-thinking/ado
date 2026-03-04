@@ -186,8 +186,6 @@ describe("P12-011: API-level tests", () => {
     const data = JSON.parse(decoded.replace(/^data: /, "").trim());
     expect(data.type).toBe("output");
     expect(data.line).toBe("hello sse");
-    expect(data.formattedLine).toBe(
-      "[phase: phase-1 | task: task-1] hello sse",
-    );
+    expect(data.formattedLine).toBe("[phase-1 | task-1] hello sse");
   });
 });

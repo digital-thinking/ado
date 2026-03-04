@@ -67,9 +67,7 @@ describe("task logs readability", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Task #1: P22-004 [FAILED]");
-    expect(result.stdout).toContain(
-      "Context: phase: Phase 22 | task #1 P22-004",
-    );
+    expect(result.stdout).toContain("Context: Phase 22 | #1 P22-004");
     expect(result.stdout).toContain(
       "Failure summary: Error: adapter command failed with exit code 2",
     );

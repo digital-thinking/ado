@@ -858,7 +858,7 @@ describe("multi-project api", () => {
     expect(decodedChunk1).toContain('"runtimeEvent":{"version":1');
     expect(decodedChunk1).toContain('"type":"adapter.output"');
     expect(decodedChunk1).toContain(
-      '"formattedLine":"[phase: phase-1 | task: task-1] line 1"',
+      '"formattedLine":"[phase-1 | task-1] line 1"',
     );
 
     // New output
@@ -877,7 +877,7 @@ describe("multi-project api", () => {
     expect(decodedChunk2).toContain('"runtimeEvent":{"version":1');
     expect(decodedChunk2).toContain('"type":"adapter.output"');
     expect(decodedChunk2).toContain(
-      '"formattedLine":"[phase: phase-1 | task: task-1] line 2"',
+      '"formattedLine":"[phase-1 | task-1] line 2"',
     );
 
     // Terminal status
