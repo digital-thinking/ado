@@ -234,15 +234,6 @@ export function controlCenterHtml(params: {
     .tab-settings {
       margin-left: auto;
     }
-    .sticky-top-bar {
-      position: sticky;
-      top: 10px;
-      z-index: 100;
-      background: var(--surface);
-      margin-bottom: 20px;
-      border: 1px solid var(--line);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    }
     .compact-table { font-size: 0.82rem; }
     .compact-table th, .compact-table td { padding: 4px 8px; }
     .hidden { display: none !important; }
@@ -317,7 +308,7 @@ export function controlCenterHtml(params: {
       <div class="small">Web log: <span id="webLogPath" class="mono"></span> | CLI log: <span id="cliLogPath" class="mono"></span></div>
     </section>
 
-    <section id="agentTopBar" class="card wide sticky-top-bar">
+    <section id="agentTopBar" class="card wide">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
         <h2 style="margin: 0; font-size: 1rem;">Global Agents</h2>
         <div id="topBarAgentError" class="error small"></div>

@@ -1088,7 +1088,6 @@ describe("agent top bar frontend (P12-007)", () => {
   test("HTML contains sticky agent top bar container", async () => {
     const html = await getHtml();
     expect(html).toContain('id="agentTopBar"');
-    expect(html).toContain("sticky-top-bar");
   });
 
   test("HTML contains agent top bar table with required columns", async () => {
