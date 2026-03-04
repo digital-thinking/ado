@@ -946,16 +946,36 @@ export class AgentSupervisor {
     });
   }
 
+  /**
+   * Restores a persisted agent from disk into the in-memory registry.
+   * Used as a fallback when an agent is visible via `list()` (which reads disk)
+   * but is absent from `this.records` (e.g., after a process restart).
+   */
+  private restoreRecordFromDisk(agentId: string): AgentRecord | undefined {
+    const persisted = this.readPersistedAgents().find((a) => a.id === agentId);
+    if (!persisted) {
+      return undefined;
+    }
+    const record: AgentRecord = {
+      ...persisted,
+      runToken: 0,
+      stopRequested: false,
+    };
+    this.records.set(record.id, record);
+    return record;
+  }
+
   kill(agentId: string): AgentView {
-    const record = this.records.get(agentId);
+    const record =
+      this.records.get(agentId) ?? this.restoreRecordFromDisk(agentId);
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    if (record.status === "RUNNING" && record.child) {
+    if (record.status === "RUNNING") {
       record.stopRequested = true;
       const lines = tailPush(record.outputTail, "Agent kill requested.");
-      record.child.kill();
+      record.child?.kill();
       record.status = "STOPPED";
       record.lastExitCode = -1;
       record.stoppedAt = nowIso();
@@ -973,7 +993,8 @@ export class AgentSupervisor {
   }
 
   restart(agentId: string): AgentView {
-    const record = this.records.get(agentId);
+    const record =
+      this.records.get(agentId) ?? this.restoreRecordFromDisk(agentId);
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
     }
@@ -1011,7 +1032,8 @@ export class AgentSupervisor {
   }
 
   assign(agentId: string, input: AssignAgentInput): AgentView {
-    const record = this.records.get(agentId);
+    const record =
+      this.records.get(agentId) ?? this.restoreRecordFromDisk(agentId);
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
     }
