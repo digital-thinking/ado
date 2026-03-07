@@ -507,7 +507,7 @@ function summarizeCapabilityPreflightFailure(
 export class ControlCenterService {
   private readonly stateEngineFactory: StateEngineFactory;
   private readonly projectStateEngines = new Map<string, StateEngine>();
-  private readonly tasksMarkdownFilePath: string;
+  private readonly tasksMarkdownFilePath: string | undefined;
   private readonly internalWorkRunner?: InternalWorkRunner;
   private readonly repositoryResetRunner?: RepositoryResetRunner;
   private readonly runningTaskExecutions = new Map<string, Promise<void>>();
@@ -521,10 +521,7 @@ export class ControlCenterService {
   constructor(options: ControlCenterServiceOptions) {
     const {
       stateEngine,
-      tasksMarkdownFilePath = resolve(
-        process.cwd(),
-        DEFAULT_TASKS_MARKDOWN_PATH,
-      ),
+      tasksMarkdownFilePath,
       internalWorkRunner,
       repositoryResetRunner,
       onStateChange,
@@ -540,6 +537,13 @@ export class ControlCenterService {
     this.repositoryResetRunner = repositoryResetRunner;
     this.onStateChange = onStateChange;
     this.sideEffectProbeRunner = sideEffectProbeRunner;
+  }
+
+  private resolveTasksMdPath(rootDir: string): string {
+    return (
+      this.tasksMarkdownFilePath ??
+      resolve(rootDir, DEFAULT_TASKS_MARKDOWN_PATH)
+    );
   }
 
   private async getEngine(projectName?: string): Promise<StateEngine> {
@@ -1165,7 +1169,12 @@ export class ControlCenterService {
     projectName?: string,
   ): Promise<ImportTasksMarkdownResult> {
     const validAssignee = CLIAdapterIdSchema.parse(assignee);
-    const markdown = await readFile(this.tasksMarkdownFilePath, "utf8");
+
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
+    const tasksMdPath = this.resolveTasksMdPath(state.rootDir);
+
+    const markdown = await readFile(tasksMdPath, "utf8");
     const prompt = buildTasksMarkdownImportPrompt(markdown);
     const internalResult = await this.runInternalWork({
       assignee: validAssignee,
@@ -1186,9 +1195,6 @@ export class ControlCenterService {
         taskCodeToId.set(draftTask.code, draftTask.id);
       }
     }
-
-    const engine = await this.getEngine(projectName);
-    const state = await engine.readProjectState();
     let importedPhaseCount = 0;
     let importedTaskCount = 0;
     let lastImportedPhaseId: string | undefined;
@@ -1235,7 +1241,7 @@ export class ControlCenterService {
       state: nextState,
       importedPhaseCount,
       importedTaskCount,
-      sourceFilePath: this.tasksMarkdownFilePath,
+      sourceFilePath: tasksMdPath,
       assignee: validAssignee,
     };
   }
@@ -1243,11 +1249,12 @@ export class ControlCenterService {
   async syncFromTasksMarkdown(
     projectName?: string,
   ): Promise<SyncTasksMarkdownResult> {
-    const markdown = await readFile(this.tasksMarkdownFilePath, "utf8");
-    const plan = parseTasksMarkdown(markdown);
-
     const engine = await this.getEngine(projectName);
     const state = await engine.readProjectState();
+    const tasksMdPath = this.resolveTasksMdPath(state.rootDir);
+
+    const markdown = await readFile(tasksMdPath, "utf8");
+    const plan = parseTasksMarkdown(markdown);
 
     // Build code→id map for all tasks currently in state
     const existingCodeToId = new Map<string, string>();
@@ -1362,7 +1369,7 @@ export class ControlCenterService {
       addedPhases,
       addedTasks,
       updatedTasks,
-      sourceFilePath: this.tasksMarkdownFilePath,
+      sourceFilePath: tasksMdPath,
     };
   }
 

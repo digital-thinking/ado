@@ -196,7 +196,6 @@ export async function startWebControlCenter(
         throw new Error(`Project not found: ${projectName}`);
       })();
     },
-    tasksMarkdownFilePath: resolve(input.cwd, "TASKS.md"),
     internalWorkRunner: async (workInput) => {
       const assigneeSettings = input.agentSettings[workInput.assignee];
       if (!assigneeSettings.enabled) {
