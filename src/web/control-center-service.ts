@@ -124,6 +124,14 @@ export type ImportTasksMarkdownResult = {
   assignee: CLIAdapterId;
 };
 
+export type SyncTasksMarkdownResult = {
+  state: ProjectState;
+  addedPhases: number;
+  addedTasks: number;
+  updatedTasks: number;
+  sourceFilePath: string;
+};
+
 export type StartTaskInput = {
   phaseId: string;
   taskId: string;
@@ -206,6 +214,83 @@ type ImportedPhaseDraft = Omit<ImportedPhasePlan, "tasks"> & {
   id: string;
   tasks: ImportedTaskDraft[];
 };
+
+type ParsedTaskPlan = {
+  code: string;
+  title: string;
+  description: string;
+  status: "TODO" | "DONE";
+  dependencies: string[];
+};
+
+type ParsedPhasePlan = {
+  name: string;
+  branchName: string;
+  tasks: ParsedTaskPlan[];
+};
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function extractTaskCode(title: string): string | undefined {
+  return /^(P\d+-\d+)\s/.exec(title)?.[1];
+}
+
+function parseTasksMarkdown(markdown: string): { phases: ParsedPhasePlan[] } {
+  const phases: ParsedPhasePlan[] = [];
+  let currentPhase: ParsedPhasePlan | null = null;
+
+  for (const line of markdown.split("\n")) {
+    const phaseMatch = /^#{2,3}\s+(Phase \d+:\s*.+)$/.exec(line);
+    if (phaseMatch) {
+      const rawName = phaseMatch[1]
+        .trim()
+        .replace(/\s*\(.*\)\s*$/, "")
+        .trim();
+      currentPhase = { name: rawName, branchName: slugify(rawName), tasks: [] };
+      phases.push(currentPhase);
+      continue;
+    }
+
+    if (!currentPhase) continue;
+
+    const taskMatch = /^-\s+\[([x ])\]\s+`?(P\d+-\d+)`?\s+(.+)$/.exec(line);
+    if (!taskMatch) continue;
+
+    const status = taskMatch[1] === "x" ? "DONE" : ("TODO" as const);
+    const code = taskMatch[2];
+    const rest = taskMatch[3];
+
+    const depsIdx = rest.search(/\.?\s+Deps?:\s+/i);
+    const taskText = (depsIdx >= 0 ? rest.slice(0, depsIdx) : rest).replace(
+      /\.$/,
+      "",
+    );
+    const depsRaw = depsIdx >= 0 ? rest.slice(depsIdx) : "";
+
+    const dependencies: string[] = [];
+    const depCodeRe = /`(P\d+-\d+)`/g;
+    let m: RegExpExecArray | null;
+    while ((m = depCodeRe.exec(depsRaw)) !== null) {
+      dependencies.push(m[1]);
+    }
+
+    currentPhase.tasks.push({
+      code,
+      title: `${code} ${taskText}`,
+      description: taskText,
+      status,
+      dependencies,
+    });
+  }
+
+  return { phases };
+}
 
 function buildTasksMarkdownImportPrompt(markdown: string): string {
   return [
@@ -1107,12 +1192,14 @@ export class ControlCenterService {
     let importedPhaseCount = 0;
     let importedTaskCount = 0;
     let lastImportedPhaseId: string | undefined;
-    const nextPhases = [...state.phases];
+    // Reset: start from a clean slate so reimport is idempotent
+    const nextPhases: typeof state.phases = [];
 
     for (const draftPhase of draftPhases) {
       const mappedTasks = draftPhase.tasks.map((draftTask) =>
         TaskSchema.parse({
           id: draftTask.id,
+          code: draftTask.code,
           title: draftTask.title,
           description: draftTask.description,
           status: draftTask.status,
@@ -1123,48 +1210,24 @@ export class ControlCenterService {
         }),
       );
 
-      const existingPhaseIndex = nextPhases.findIndex(
-        (phase) => phase.name === draftPhase.name,
-      );
-      if (existingPhaseIndex < 0) {
-        const createdPhase = PhaseSchema.parse({
-          id: draftPhase.id,
-          name: draftPhase.name,
-          branchName: draftPhase.branchName,
-          status: "PLANNING",
-          tasks: mappedTasks,
-        });
+      const createdPhase = PhaseSchema.parse({
+        id: draftPhase.id,
+        name: draftPhase.name,
+        branchName: draftPhase.branchName,
+        status: "PLANNING",
+        tasks: mappedTasks,
+      });
 
-        nextPhases.push(createdPhase);
-        importedPhaseCount += 1;
-        importedTaskCount += mappedTasks.length;
-        lastImportedPhaseId = createdPhase.id;
-        continue;
-      }
-
-      const existingPhase = nextPhases[existingPhaseIndex];
-      const existingTaskTitles = new Set(
-        existingPhase.tasks.map((task) => task.title),
-      );
-      const tasksToAppend = mappedTasks.filter(
-        (task) => !existingTaskTitles.has(task.title),
-      );
-      if (tasksToAppend.length === 0) {
-        continue;
-      }
-
-      nextPhases[existingPhaseIndex] = {
-        ...existingPhase,
-        tasks: [...existingPhase.tasks, ...tasksToAppend],
-      };
-      importedTaskCount += tasksToAppend.length;
-      lastImportedPhaseId = existingPhase.id;
+      nextPhases.push(createdPhase);
+      importedPhaseCount += 1;
+      importedTaskCount += mappedTasks.length;
+      lastImportedPhaseId = createdPhase.id;
     }
 
     const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
-      activePhaseId: state.activePhaseId ?? lastImportedPhaseId,
+      activePhaseId: lastImportedPhaseId,
     });
     this.onStateChange?.(nextState.projectName, nextState);
 
@@ -1174,6 +1237,132 @@ export class ControlCenterService {
       importedTaskCount,
       sourceFilePath: this.tasksMarkdownFilePath,
       assignee: validAssignee,
+    };
+  }
+
+  async syncFromTasksMarkdown(
+    projectName?: string,
+  ): Promise<SyncTasksMarkdownResult> {
+    const markdown = await readFile(this.tasksMarkdownFilePath, "utf8");
+    const plan = parseTasksMarkdown(markdown);
+
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
+
+    // Build code→id map for all tasks currently in state
+    const existingCodeToId = new Map<string, string>();
+    for (const phase of state.phases) {
+      for (const task of phase.tasks) {
+        const code = task.code ?? extractTaskCode(task.title);
+        if (code) existingCodeToId.set(code, task.id);
+      }
+    }
+
+    // Assign IDs to new tasks not yet in state
+    const allCodeToId = new Map<string, string>(existingCodeToId);
+    for (const parsedPhase of plan.phases) {
+      for (const pt of parsedPhase.tasks) {
+        if (!allCodeToId.has(pt.code)) {
+          allCodeToId.set(pt.code, randomUUID());
+        }
+      }
+    }
+
+    let addedPhases = 0;
+    let addedTasks = 0;
+    let updatedTasks = 0;
+    const nextPhases = [...state.phases];
+
+    for (const parsedPhase of plan.phases) {
+      const resolvedTasks = parsedPhase.tasks.map((pt) => ({
+        ...pt,
+        id: allCodeToId.get(pt.code)!,
+        resolvedDeps: pt.dependencies
+          .map((code) => allCodeToId.get(code))
+          .filter((id): id is string => typeof id === "string"),
+      }));
+
+      const existingPhaseIndex = nextPhases.findIndex(
+        (p) => p.branchName === parsedPhase.branchName,
+      );
+
+      if (existingPhaseIndex < 0) {
+        nextPhases.push(
+          PhaseSchema.parse({
+            id: randomUUID(),
+            name: parsedPhase.name,
+            branchName: parsedPhase.branchName,
+            status: "PLANNING",
+            tasks: resolvedTasks.map((t) =>
+              TaskSchema.parse({
+                id: t.id,
+                code: t.code,
+                title: t.title,
+                description: t.description,
+                status: t.status,
+                dependencies: t.resolvedDeps,
+              }),
+            ),
+          }),
+        );
+        addedPhases += 1;
+        addedTasks += resolvedTasks.length;
+        continue;
+      }
+
+      const existingPhase = nextPhases[existingPhaseIndex];
+      const existingByCode = new Map<string, Task>();
+      for (const task of existingPhase.tasks) {
+        const code = task.code ?? extractTaskCode(task.title);
+        if (code) existingByCode.set(code, task);
+      }
+
+      const nextTasks = [...existingPhase.tasks];
+      for (const resolved of resolvedTasks) {
+        const existing = existingByCode.get(resolved.code);
+        if (!existing) {
+          nextTasks.push(
+            TaskSchema.parse({
+              id: resolved.id,
+              code: resolved.code,
+              title: resolved.title,
+              description: resolved.description,
+              status: resolved.status,
+              dependencies: resolved.resolvedDeps,
+            }),
+          );
+          addedTasks += 1;
+        } else {
+          const idx = nextTasks.findIndex((t) => t.id === existing.id);
+          if (idx >= 0) {
+            nextTasks[idx] = {
+              ...existing,
+              code: resolved.code,
+              title: resolved.title,
+              description: resolved.description,
+              status: resolved.status,
+              dependencies: resolved.resolvedDeps,
+            };
+            updatedTasks += 1;
+          }
+        }
+      }
+
+      nextPhases[existingPhaseIndex] = { ...existingPhase, tasks: nextTasks };
+    }
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+
+    return {
+      state: nextState,
+      addedPhases,
+      addedTasks,
+      updatedTasks,
+      sourceFilePath: this.tasksMarkdownFilePath,
     };
   }
 

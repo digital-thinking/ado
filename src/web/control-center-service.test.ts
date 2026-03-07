@@ -240,10 +240,11 @@ describe("ControlCenterService", () => {
     expect(phase2.tasks).toHaveLength(1);
     expect(phase2.tasks[0].dependencies).toEqual([phase1.tasks[1].id]);
 
+    // Import resets state and reimports from scratch every time
     const secondImport =
       await serviceWithRunner.importFromTasksMarkdown("MOCK_CLI");
-    expect(secondImport.importedPhaseCount).toBe(0);
-    expect(secondImport.importedTaskCount).toBe(0);
+    expect(secondImport.importedPhaseCount).toBe(2);
+    expect(secondImport.importedTaskCount).toBe(3);
   });
 
   test("fails fast when internal work runner is not configured", async () => {

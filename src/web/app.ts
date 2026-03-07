@@ -9,6 +9,7 @@ import type {
   CreatePhaseInput,
   CreateTaskInput,
   ImportTasksMarkdownResult,
+  SyncTasksMarkdownResult,
   RunInternalWorkInput,
   RunInternalWorkResult,
   RecordRecoveryAttemptInput,
@@ -79,6 +80,7 @@ export type ControlCenterControl = {
     assignee: CLIAdapterId,
     projectName?: string,
   ): Promise<ImportTasksMarkdownResult>;
+  syncFromTasksMarkdown(projectName?: string): Promise<SyncTasksMarkdownResult>;
   runInternalWork(input: RunInternalWorkInput): Promise<RunInternalWorkResult>;
 };
 

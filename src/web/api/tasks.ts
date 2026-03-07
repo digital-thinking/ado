@@ -110,5 +110,15 @@ export async function handleTasksApi(
     );
   }
 
+  if (request.method === "POST" && url.pathname === "/api/sync/tasks-md") {
+    const body = await readJson(request);
+    return json(
+      await deps.control.syncFromTasksMarkdown(
+        asString(body.projectName) ?? undefined,
+      ),
+      200,
+    );
+  }
+
   return null;
 }

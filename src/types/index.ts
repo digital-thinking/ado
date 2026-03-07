@@ -465,6 +465,7 @@ export type TaskCompletionVerification = z.infer<
 // 6. A Single Coding Task
 export const TaskSchema = z.object({
   id: z.string().uuid(),
+  code: z.string().optional(),
   title: z.string(),
   description: z.string(),
   status: TaskStatusSchema.default("TODO"),

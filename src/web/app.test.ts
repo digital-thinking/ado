@@ -181,11 +181,8 @@ describe("web app api", () => {
           _name?: string,
         ) => {
           expect(assignee).toBe("CODEX_CLI");
-          const existingPhase = state.phases.find(
-            (phase) => phase.id === "import-phase-1",
-          );
-          if (!existingPhase) {
-            state.phases.push({
+          state.phases = [
+            {
               id: "import-phase-1",
               name: "Phase 1: Foundation",
               branchName: "phase-1-foundation",
@@ -197,19 +194,27 @@ describe("web app api", () => {
                   description: "Initialize project",
                   status: "DONE",
                   assignee: "UNASSIGNED",
+                  dependencies: [],
                 },
               ],
-            });
-          }
-
+            },
+          ];
           return {
             state,
-            importedPhaseCount: existingPhase ? 0 : 1,
-            importedTaskCount: existingPhase ? 0 : 1,
+            importedPhaseCount: 1,
+            importedTaskCount: 1,
             sourceFilePath: "C:/repo/TASKS.md",
             assignee: "CODEX_CLI",
           } as never;
         },
+        syncFromTasksMarkdown: async (_name?: string) =>
+          ({
+            state,
+            addedPhases: 0,
+            addedTasks: 0,
+            updatedTasks: 0,
+            sourceFilePath: "C:/repo/TASKS.md",
+          }) as never,
         runInternalWork: async (input: RunInternalWorkInput) => {
           expect(input.assignee).toBe("CODEX_CLI");
           expect(input.prompt).toBe("do internal work");
@@ -627,6 +632,7 @@ describe("multi-project api", () => {
         recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async (_assignee: unknown, _name?: string) =>
           ({}) as never,
+        syncFromTasksMarkdown: async (_name?: unknown) => ({}) as never,
         runInternalWork: async (_input: unknown) => ({}) as never,
       } as never,
       agents: {
@@ -917,6 +923,7 @@ describe("project tabs frontend (P12-006)", () => {
         failTaskIfInProgress: async () => ({}) as never,
         recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
+        syncFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
       agents: {
@@ -1050,6 +1057,7 @@ describe("agent top bar frontend (P12-007)", () => {
         failTaskIfInProgress: async () => ({}) as never,
         recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
+        syncFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
       agents: {

@@ -374,14 +374,24 @@ export function controlCenterHtml(params: {
       </section>
 
       <section class="card wide">
-        <h2>Import TASKS.md</h2>
-        <div class="small">Create missing phases and tasks from <span class="mono">TASKS.md</span>.</div>
-        <div class="small">If import hangs, check logs shown above.</div>
-        <div class="row" style="margin-top: 10px;">
+        <h2>Import / Sync TASKS.md</h2>
+        <div class="small"><strong>Import</strong>: AI-assisted full reset — deletes all phases and tasks, then reimports from <span class="mono">TASKS.md</span>.</div>
+        <div class="small"><strong>Sync</strong>: Fast deterministic update — adds and updates tasks from <span class="mono">TASKS.md</span> without resetting state.</div>
+        <div class="row" style="margin-top: 10px; gap: 8px;">
           <button id="importTasksButton" class="secondary" type="button">Import</button>
+          <button id="syncTasksButton" class="secondary" type="button">Sync</button>
+        </div>
+        <div id="importTasksConfirm" style="margin-top: 8px; display: none;">
+          <div class="small"><strong>This will delete all existing phases and tasks and reimport from scratch. Are you sure?</strong></div>
+          <div class="row" style="margin-top: 6px; gap: 8px;">
+            <button id="importTasksConfirmYes" class="secondary" type="button">Yes, delete and reimport</button>
+            <button id="importTasksConfirmNo" type="button">Cancel</button>
+          </div>
         </div>
         <div id="importTasksStatus" class="small" style="margin-top: 8px;"></div>
         <div id="importTasksError" class="error"></div>
+        <div id="syncTasksStatus" class="small" style="margin-top: 8px;"></div>
+        <div id="syncTasksError" class="error"></div>
       </section>
     </div>
 
@@ -488,6 +498,11 @@ export function controlCenterHtml(params: {
     const agentTableBody = document.querySelector("#agentTable tbody");
     const importTasksStatus = document.getElementById("importTasksStatus");
     const importTasksButton = document.getElementById("importTasksButton");
+    const importTasksConfirm = document.getElementById("importTasksConfirm");
+    const importTasksConfirmYes = document.getElementById("importTasksConfirmYes");
+    const importTasksConfirmNo = document.getElementById("importTasksConfirmNo");
+    const syncTasksButton = document.getElementById("syncTasksButton");
+    const syncTasksStatus = document.getElementById("syncTasksStatus");
     const tabStrip = document.getElementById("tabStrip");
     const projectContent = document.getElementById("projectContent");
     const settingsContent = document.getElementById("settingsContent");
@@ -1371,9 +1386,22 @@ export function controlCenterHtml(params: {
       renderTaskDependenciesOptions();
     });
 
-    importTasksButton.addEventListener("click", async () => {
+    importTasksButton.addEventListener("click", () => {
       setError("importTasksError", "");
+      importTasksStatus.textContent = "";
+      importTasksConfirm.style.display = "block";
       importTasksButton.disabled = true;
+      syncTasksButton.disabled = true;
+    });
+
+    importTasksConfirmNo.addEventListener("click", () => {
+      importTasksConfirm.style.display = "none";
+      importTasksButton.disabled = false;
+      syncTasksButton.disabled = false;
+    });
+
+    importTasksConfirmYes.addEventListener("click", async () => {
+      importTasksConfirm.style.display = "none";
       const startedAt = Date.now();
       importTasksStatus.textContent = "Importing... 0s";
       await globalRefresh().catch(handleRefreshError);
@@ -1410,6 +1438,38 @@ export function controlCenterHtml(params: {
       } finally {
         clearInterval(ticker);
         clearInterval(agentTicker);
+        importTasksButton.disabled = false;
+        syncTasksButton.disabled = false;
+      }
+    });
+
+    syncTasksButton.addEventListener("click", async () => {
+      setError("syncTasksError", "");
+      syncTasksStatus.textContent = "Syncing...";
+      syncTasksButton.disabled = true;
+      importTasksButton.disabled = true;
+      try {
+        const result = await api("/api/sync/tasks-md", {
+          method: "POST",
+          body: JSON.stringify({ projectName: activeProjectName }),
+        });
+        syncTasksStatus.textContent =
+          "Synced from " +
+          result.sourceFilePath +
+          ": +" +
+          result.addedPhases +
+          " phases, +" +
+          result.addedTasks +
+          " tasks, " +
+          result.updatedTasks +
+          " updated.";
+        await refreshActiveProject();
+        await globalRefresh();
+      } catch (error) {
+        syncTasksStatus.textContent = "";
+        setError("syncTasksError", error instanceof Error ? error.message : String(error));
+      } finally {
+        syncTasksButton.disabled = false;
         importTasksButton.disabled = false;
       }
     });

@@ -404,6 +404,7 @@ export async function startWebControlCenter(
       recordRecoveryAttempt: (input) => control.recordRecoveryAttempt(input),
       importFromTasksMarkdown: (assignee, name) =>
         control.importFromTasksMarkdown(assignee, name),
+      syncFromTasksMarkdown: (name) => control.syncFromTasksMarkdown(name),
       runInternalWork: (input) => control.runInternalWork(input),
     },
     agents: {
