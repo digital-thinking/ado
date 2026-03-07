@@ -9,59 +9,35 @@ Done/completed history is tracked in `TASKS.md`.
 - Derive executable implementation backlog in `TASKS.md`.
 - Track defects and evidence in `BUGS.md`.
 
-## Major Item 1: Execution Reliability
+## Major Item 1: Reliability & Traceability Enhancements
 
-Goal: Make phase/task execution deterministic and trustworthy across adapters and loop modes.
+Goal: Harden failure handling and improve end-to-end traceability of orchestrated work.
 
-- Fix phase-run assignee routing so task-level assignee is always honored.
-- Fix phase-run countdown argument handling (`0` and validation/help consistency).
-- Eliminate avoidable tester churn on non-Node projects via better default behavior.
-- Tighten branch/worktree preflight consistency and failure semantics in loop execution.
+- Dead-letter queue for tasks that exhaust all recovery attempts: surface them explicitly for manual review instead of silent failure.
+- Circuit breaker per adapter: auto-pause an adapter after a configurable failure threshold and route to fallback, resuming after a cooldown window.
+- Inject git trailers (`Originated-By: <phase-id>/<task-id>`, `Executed-By: <adapter>`) into commits for full traceability from commit history back to the orchestration context.
 
-## Major Item 2: Configuration and UX Consistency
+## Major Item 2: Deliberation Mode
 
-Goal: Make CLI behavior predictable and self-explanatory for operators.
+Goal: Prevent costly mistakes on high-risk tasks by requiring multi-pass review before implementation.
 
-- Normalize command usage/help output and argument validation across commands.
-- Unify config precedence/resolution messaging (global vs project-level settings).
-- Improve runtime error messages with direct remediation hints.
-- Ensure command outcomes are explicit (`what happened`, `what changed`, `what next`).
+- Add an opt-in council mode that runs propose → critique → refine → implement passes using configurable adapter pairings.
+- Allow tasks to be tagged `deliberate: true` to trigger council automatically.
+- Surface deliberation summary in PR description and Telegram notifications so reviewers see the reasoning, not just the diff.
 
-## Major Item 3: Agent Adapter Health and Observability
+## Major Item 3: Autonomous Task Discovery
 
-Goal: Improve diagnosis and recovery speed for adapter/runtime issues.
+Goal: Reduce manual backlog grooming by surfacing actionable work automatically.
 
-- Strengthen startup health diagnostics and early-failure surfacing.
-- Introduce a structured runtime event contract shared across CLI, Web, and Telegram surfaces.
-- Improve timeout and no-output handling with actionable telemetry.
-- Standardize adapter failure taxonomy for clearer recovery decisions.
-- Improve per-agent logs for fast root-cause identification.
+- Scheduled/nightly scan of TODO/FIXME comments and open issues, producing ranked task candidates.
+- Dry-run mode: preview discovered tasks and their priority scores before any queuing.
+- Configurable priority weights (recency, frequency, tag filters) so noise stays low.
 
-## Major Item 4: Integrations Expansion (Approved Scope)
+## Major Item 4: Semantic Task Routing
 
-### 4.1 GitHub PR Automation
+Goal: Route tasks to the best-fit adapter automatically based on their nature, reducing manual assignee decisions.
 
-- Improve PR creation controls: templates, labels, assignees, draft/ready transitions.
-- Ensure PR metadata is derived consistently from phase/task context.
-
-### 4.2 CI Integration Depth
-
-- Parse failed checks and map them to targeted fix tasks.
-- Improve CI signal handling in the loop (check-state transitions and retries).
-- Surface clearer CI diagnostics in CLI/web outputs.
-
-### 4.3 Notifications (Telegram Only)
-
-- Expand Telegram notifications for key lifecycle events:
-  - phase start/finish,
-  - task failure/recovery outcome,
-  - CI failed/green transitions,
-  - PR created/ready status.
-- Keep notification noise controlled with concise, high-signal messages.
-
-## Major Item 5: Extensibility Hooks
-
-Goal: Enable safe customization without forking core orchestration logic.
-
-- Add lifecycle extension hooks (`before_task_start`, `after_task_done`, `on_recovery`, `on_ci_failed`) with strict contracts.
-- Keep hook execution fail-fast and isolated so core phase-run determinism is preserved.
+- Define a task-type taxonomy (e.g., `implementation`, `code-review`, `test-writing`, `security-audit`, `documentation`) with configurable adapter affinities per type.
+- Classify tasks at creation time using local heuristics (title/description keywords, tags) with zero extra agent calls.
+- Allow per-project affinity overrides and learn from outcomes to refine routing over time.
+- Fall back to the default assignee when no affinity match is found, preserving existing behavior.

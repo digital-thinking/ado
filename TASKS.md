@@ -64,6 +64,45 @@ Status markers:
 - [x] `P26-017` Add regression/integration tests for new Phase 26 agent UX + preflight tasks (top-5 agent truncation, reasoning-only log stream filter, and GitHub preflight parity diagnostics). Deps: `P26-014`, `P26-015`, `P26-016`.
 - [x] `P26-013` Create PR Task: open Phase 26 PR after coding tasks are done. Deps: `P26-012`, `P26-017`.
 
+### Phase 27: Semantic Task Routing
+
+- [ ] `P27-001` Add optional `taskType` field (enum: `implementation | code-review | test-writing | security-audit | documentation`) to `TaskSchema` in `src/types/index.ts`. Default absent (unclassified). Update Zod schema and derived types.
+- [ ] `P27-002` Add `adapterAffinities` config to `CliAgentSettingsSchema`: map of `taskType → CLIAdapterId`. Validate that referenced adapters exist in the enabled set. Deps: `P27-001`.
+- [ ] `P27-003` Implement a local heuristic classifier in `src/engine/` that inspects task `title` + `description` keywords to infer `taskType` with zero API calls (e.g. "test" → `test-writing`, "review" → `code-review`, "security" → `security-audit`, "doc" → `documentation`). Deps: `P27-001`.
+- [ ] `P27-004` Wire affinity routing into `PhaseRunner`: when a task has a `taskType` and a matching affinity mapping exists, use the mapped adapter instead of `activeAssignee`; fall back to `activeAssignee` with a logged reason when no mapping found. Store `resolvedAssignee` and `routingReason` (`"affinity" | "fallback"`) in task metadata. Deps: `P27-002`, `P27-003`.
+- [ ] `P27-005` Auto-classify tasks at creation time using the heuristic classifier; allow manual override via `task create --type <taskType>`. Deps: `P27-003`.
+- [ ] `P27-006` Add regression/integration tests for Phase 27: `taskType` schema validation, heuristic classifier keyword coverage, affinity routing in phase runner, fallback behavior, and task-creation type inference. Deps: `P27-004`, `P27-005`.
+- [ ] `P27-007` Create PR Task: open Phase 27 PR after coding tasks are done. Deps: `P27-006`.
+
+### Phase 28: Reliability & Traceability Enhancements
+
+- [ ] `P28-001` Add `DEAD_LETTER` to `TaskStatusSchema` in `src/types/index.ts`. Transition tasks from `FAILED` → `DEAD_LETTER` in `PhaseRunner` when recovery attempts are exhausted and result is `unfixable`. Surface dead-letter tasks in CLI and web with distinct treatment and remediation hint.
+- [ ] `P28-002` Implement `AdapterCircuitBreaker` in `src/adapters/`: tracks consecutive failures per adapter, opens circuit after a configurable `failureThreshold`, auto-closes after a `cooldownMs` window. Expose as a shared singleton per phase-runner lifetime.
+- [ ] `P28-003` Add `circuitBreaker` sub-config to `CliAgentSettingsItemSchema`: `failureThreshold: number` (default 3), `cooldownMs: number` (default 300000). Deps: `P28-002`.
+- [ ] `P28-004` Wire circuit breaker into `PhaseRunner`: before dispatching to an adapter, check its circuit state; if open, route to the next enabled adapter (ordered fallback chain); emit a `RuntimeEvent` when a breaker opens or closes. Deps: `P28-002`, `P28-003`.
+- [ ] `P28-005` Inject git trailers into IxADO-orchestrated commits via `GitManager`: `Originated-By: <phase-id>/<task-id>` and `Executed-By: <adapter-id>`. Identify all commit call sites in `src/vcs/` and `src/engine/` and thread the metadata through.
+- [ ] `P28-006` Add regression/integration tests for Phase 28: dead-letter transition and CLI/web surfacing, circuit breaker open/close/cooldown cycles, fallback routing, and git trailer presence in commit messages. Deps: `P28-001`..`P28-005`.
+- [ ] `P28-007` Create PR Task: open Phase 28 PR after coding tasks are done. Deps: `P28-006`.
+
+### Phase 29: Deliberation Mode
+
+- [ ] `P29-001` Add optional `deliberate: boolean` flag to `TaskSchema`. When `true`, the task requires a council review pass before implementation. Deps: `P27-001` (task schema is extended in 27).
+- [ ] `P29-002` Add `deliberation` section to `ExecutionLoopSettingsSchema`: `reviewerAdapter: CLIAdapterId`, `maxRefinePasses: number` (default 1). Validate reviewer adapter is enabled. Deps: `P29-001`.
+- [ ] `P29-003` Implement `runDeliberationPass` in `src/engine/`: propose (implementer adapter) → critique (reviewer adapter) → refine (implementer) loop producing a structured deliberation summary. Deps: `P29-002`.
+- [ ] `P29-004` Wire deliberation into `PhaseRunner`: when a task has `deliberate: true`, run the deliberation pass first, then hand the refined prompt to the standard execution path. Store the deliberation summary in task `resultContext`. Deps: `P29-003`.
+- [ ] `P29-005` Surface deliberation summary in PR body (collapsible section) and Telegram notification for the task. Deps: `P29-004`.
+- [ ] `P29-006` Add regression/integration tests for Phase 29: deliberation pass execution, refined-prompt handoff to execution, summary in PR body and Telegram, graceful fallback when reviewer adapter is unavailable. Deps: `P29-001`..`P29-005`.
+- [ ] `P29-007` Create PR Task: open Phase 29 PR after coding tasks are done. Deps: `P29-006`.
+
+### Phase 30: Autonomous Task Discovery
+
+- [ ] `P30-001` Implement a TODO/FIXME scanner in `src/engine/`: recursively scans project files respecting configurable include/exclude patterns, extracts comment text + file/line context, computes a priority score (recency, frequency, tag weight).
+- [ ] `P30-002` Integrate with GitHub issues via `src/vcs/github-manager.ts`: fetch open issues, parse title/body into ranked task candidates and merge with TODO scan results. Deps: `P30-001`.
+- [ ] `P30-003` Add `ixado discover` CLI command: `--dry-run` flag prints ranked candidates without queuing; `--queue` flag adds approved candidates to the active phase as TODO tasks. Deps: `P30-001`, `P30-002`.
+- [ ] `P30-004` Add `discovery` config section to `CliSettingsSchema`: `includePatterns`, `excludePatterns`, `priorityWeights` (`recency`, `frequency`, `tags`), `maxCandidates`. Deps: `P30-001`.
+- [ ] `P30-005` Add regression/integration tests for Phase 30: scanner extraction, issue mapping, priority ranking, dry-run output correctness, task queuing, and config validation. Deps: `P30-001`..`P30-004`.
+- [ ] `P30-006` Create PR Task: open Phase 30 PR after coding tasks are done. Deps: `P30-005`.
+
 ## Deferred / Later
 
 ### Phase 9: Shell Integration (deferred for later)
