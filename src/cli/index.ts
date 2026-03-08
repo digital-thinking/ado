@@ -52,7 +52,7 @@ import {
 } from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
-import { GitHubManager } from "../vcs";
+import { GitHubManager, GitManager, WorktreeManager } from "../vcs";
 import { initializeCliLogging } from "./logging";
 import { CommandRegistry, type CommandActionContext } from "./command-registry";
 import { ValidationError } from "./validation";
@@ -410,6 +410,17 @@ function createServices(
     projectName,
   );
   return { control, agents };
+}
+
+function createWorktreeManager(
+  projectRootDir: string,
+  baseDir: string,
+): WorktreeManager {
+  return new WorktreeManager({
+    git: new GitManager(new ProcessManager()),
+    projectRootDir,
+    baseDir,
+  });
 }
 
 async function runDefaultCommand(): Promise<void> {
@@ -1786,6 +1797,83 @@ async function runPhaseActiveCommand({
   );
 }
 
+async function runWorktreeListCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  if (args.length > 0) {
+    throw new ValidationError(`Unexpected argument: '${args[0]}'.`, {
+      usage: "ixado worktree list",
+      hint: "This command does not accept additional arguments.",
+    });
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const manager = createWorktreeManager(
+    projectRootDir,
+    settings.worktrees.baseDir,
+  );
+  const active = await manager.listActive();
+
+  if (active.length === 0) {
+    console.info("No active managed worktrees found.");
+    return;
+  }
+
+  console.info(`Active managed worktrees (${active.length}):`);
+  for (const worktree of active) {
+    console.info(
+      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${worktree.path}`,
+    );
+  }
+}
+
+async function runWorktreePruneCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  if (args.length > 0) {
+    throw new ValidationError(`Unexpected argument: '${args[0]}'.`, {
+      usage: "ixado worktree prune",
+      hint: "This command does not accept additional arguments.",
+    });
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const state = await control.getState();
+  const manager = createWorktreeManager(
+    projectRootDir,
+    settings.worktrees.baseDir,
+  );
+  const pruned = await manager.pruneOrphaned({
+    phases: state.phases.map((phase) => ({
+      id: phase.id,
+      status: phase.status,
+    })),
+  });
+
+  if (pruned.length === 0) {
+    console.info("No orphaned worktrees found.");
+    return;
+  }
+
+  console.info(`Pruned orphaned worktrees (${pruned.length}):`);
+  for (const worktree of pruned) {
+    console.info(`${worktree.phaseId} ${worktree.path}`);
+  }
+}
+
 async function runPhaseCreateCommand({
   args,
 }: CommandActionContext): Promise<void> {
@@ -2331,6 +2419,22 @@ async function runCli(args: string[]): Promise<void> {
           description: "Enable/disable codexbar usage telemetry",
           usage: "usage <on|off>",
           action: runConfigUsageCommand,
+        },
+      ],
+    },
+    {
+      name: "worktree",
+      description: "Manage phase worktrees",
+      subcommands: [
+        {
+          name: "list",
+          description: "List active managed worktrees",
+          action: runWorktreeListCommand,
+        },
+        {
+          name: "prune",
+          description: "Prune orphaned/terminal managed worktrees",
+          action: runWorktreePruneCommand,
         },
       ],
     },

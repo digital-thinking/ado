@@ -25,6 +25,8 @@ Usage:
   ixado config assignee <CLI_ADAPTER>                                                   Set default coding CLI
   ixado config recovery <maxAttempts:0-10>                                              Set exception recovery max attempts
   ixado config usage <on|off>                                                           Enable/disable codexbar usage telemetry
+  ixado worktree list                                                                   List active managed worktrees
+  ixado worktree prune                                                                  Prune orphaned/terminal managed worktrees
   ixado web start [port]                                                                Start local web control center in background
   ixado web stop                                                                        Stop local web control center
   ixado help                                                                            Show this help

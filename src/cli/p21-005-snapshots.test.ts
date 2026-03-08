@@ -138,6 +138,20 @@ describe("P21-005 Snapshot Tests", () => {
       ],
     },
     {
+      name: "worktree",
+      description: "Manage phase worktrees",
+      subcommands: [
+        {
+          name: "list",
+          description: "List active managed worktrees",
+        },
+        {
+          name: "prune",
+          description: "Prune orphaned/terminal managed worktrees",
+        },
+      ],
+    },
+    {
       name: "web",
       description: "Manage web control center",
       subcommands: [

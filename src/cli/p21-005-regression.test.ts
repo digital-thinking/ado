@@ -65,6 +65,8 @@ describe("P21-005 global help text", () => {
       "phase active",
       "phase run",
       "config",
+      "worktree list",
+      "worktree prune",
       "web start",
       "web stop",
       "help",
@@ -98,6 +100,8 @@ describe("P21-005 global help text", () => {
       "Create phase and set it active",
       "Set active phase",
       "Run TODO/CI_FIX tasks in active phase sequentially",
+      "List active managed worktrees",
+      "Prune orphaned/terminal managed worktrees",
       "Start local web control center in background",
       "Stop local web control center",
     ]) {
@@ -266,6 +270,32 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("ixado web stop");
   });
 
+  test("ixado worktree help: header and all subcommand usages", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-help-worktree-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["worktree", "help"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const out = result.stdout;
+    expect(out).toContain("Worktree commands:");
+    expect(out).toContain("ixado worktree list");
+    expect(out).toContain("ixado worktree prune");
+  });
+
+  test("ixado worktree help: all descriptions are stable", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-help-worktree-d-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["worktree", "help"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+    expect(out).toContain("List active managed worktrees");
+    expect(out).toContain("Prune orphaned/terminal managed worktrees");
+  });
+
   test("ixado web help: all descriptions are stable", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-help-web-d-");
     sandboxes.push(sandbox);
@@ -280,7 +310,40 @@ describe("P21-005 per-group help text", () => {
   });
 });
 
-// ── 3. Config command outcome summaries (P21-004) ────────────────────────────
+// ── 3. Worktree command outcomes ──────────────────────────────────────────────
+
+describe("P21-005 worktree command outcomes", () => {
+  const sandboxes: TestSandbox[] = [];
+
+  afterEach(async () => {
+    await Promise.all(sandboxes.map((s) => s.cleanup()));
+    sandboxes.length = 0;
+  });
+
+  test("worktree list: empty managed worktrees message is stable", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-worktree-list-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["worktree", "list"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("No active managed worktrees found.");
+  });
+
+  test("worktree prune: empty orphaned worktrees message is stable", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-worktree-prune-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["worktree", "prune"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("No orphaned worktrees found.");
+  });
+});
+
+// ── 4. Config command outcome summaries (P21-004) ────────────────────────────
 
 describe("P21-005 config command outcome summaries", () => {
   const sandboxes: TestSandbox[] = [];
@@ -440,7 +503,7 @@ describe("P21-005 config command outcome summaries", () => {
   });
 });
 
-// ── 4. Phase and task command outcome summaries (P21-004) ────────────────────
+// ── 5. Phase and task command outcome summaries (P21-004) ────────────────────
 
 describe("P21-005 phase and task command outcome summaries", () => {
   const sandboxes: TestSandbox[] = [];
@@ -554,7 +617,7 @@ describe("P21-005 phase and task command outcome summaries", () => {
   });
 });
 
-// ── 5. Project management outcome summaries (P21-004) ────────────────────────
+// ── 6. Project management outcome summaries (P21-004) ────────────────────────
 
 describe("P21-005 project management outcome summaries", () => {
   const sandboxes: TestSandbox[] = [];
