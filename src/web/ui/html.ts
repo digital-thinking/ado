@@ -1000,7 +1000,8 @@ export function controlCenterHtml(params: {
                   "<h3>" + escapeHtml(phase.name) + " <span class='phase-expand-arrow'>▶</span></h3>" +
                   '<div class="small mono muted">' + summary + "</div>" +
                 "</div>" +
-                '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>' +
+                (phase.status === "DONE" || phase.status === "READY_FOR_REVIEW" ? "" :
+                  '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>') +
               "</div>" +
               '<div class="phase-expand-tasks">' + (taskPills || '<span class="small muted">No tasks</span>') + '</div>' +
             "</section>"
