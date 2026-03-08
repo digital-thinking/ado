@@ -33,7 +33,18 @@ Goal: Reduce manual backlog grooming by surfacing actionable work automatically.
 - Dry-run mode: preview discovered tasks and their priority scores before any queuing.
 - Configurable priority weights (recency, frequency, tag filters) so noise stays low.
 
-## Major Item 4: Semantic Task Routing
+## Major Item 4: Parallel Phase Execution via Worktrees
+
+Goal: Allow multiple phases to run concurrently, each isolated in its own git worktree, without interfering with the main working tree or each other.
+
+- Provision a dedicated git worktree per phase under `.ixado/worktrees/<phase-id>/` and execute all phase tasks inside it.
+- Make the execution run lock per-phase (not global) so multiple `PhaseRunner` instances can coexist.
+- Guard `StateEngine` writes against concurrent writers from parallel phase processes.
+- Expand `activePhaseId` to `activePhaseIds` (set) in project state, with CLI support to add/remove phases from the active set.
+- Add `ixado worktree list|prune` for operator visibility and orphan cleanup.
+- Tear down worktrees automatically on phase completion or terminal failure.
+
+## Major Item 5: Semantic Task Routing
 
 Goal: Route tasks to the best-fit adapter automatically based on their nature, reducing manual assignee decisions.
 
