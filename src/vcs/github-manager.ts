@@ -153,6 +153,31 @@ export class GitHubManager {
   }
 
   async createPullRequest(input: CreatePullRequestInput): Promise<string> {
+    // Check if a PR already exists for this branch first.
+    const existing = await this.runner
+      .run({
+        command: "gh",
+        args: [
+          "pr",
+          "list",
+          "--head",
+          input.head,
+          "--json",
+          "url",
+          "--jq",
+          ".[0].url",
+        ],
+        cwd: input.cwd,
+      })
+      .catch(() => null);
+    const existingUrl = existing?.stdout?.trim();
+    if (
+      existingUrl &&
+      /^https:\/\/github\.com\/.+\/pull\/\d+/.test(existingUrl)
+    ) {
+      return existingUrl;
+    }
+
     const args = [
       "pr",
       "create",
