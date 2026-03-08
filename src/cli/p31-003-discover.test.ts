@@ -175,4 +175,59 @@ describe("P31-003 discover command", () => {
       activePhase?.tasks.some((task) => task.title.startsWith("[Issue #27]")),
     ).toBe(true);
   });
+
+  test("queue mode respects discovery.maxCandidates from config", async () => {
+    const sandbox = await TestSandbox.create("ixado-p31-003-max-candidates-");
+    sandboxes.push(sandbox);
+
+    await Bun.write(
+      sandbox.globalConfigFile,
+      JSON.stringify({
+        discovery: {
+          maxCandidates: 1,
+        },
+      }),
+    );
+
+    await mkdir(join(sandbox.projectDir, "src"), { recursive: true });
+    await writeFile(
+      join(sandbox.projectDir, "src", "todo.ts"),
+      "// TODO: candidate one\n// TODO: candidate two\n",
+      "utf8",
+    );
+
+    const ghBinDir = await installGhStub(sandbox, [
+      {
+        number: 31,
+        title: "Discovery issue candidate",
+        body: "One issue candidate.",
+        url: "https://github.com/org/repo/issues/31",
+        labels: [{ name: "enhancement" }],
+        createdAt: "2026-03-03T00:00:00.000Z",
+        updatedAt: "2026-03-08T00:00:00.000Z",
+      },
+    ]);
+
+    const createPhase = runIxadoWithPath(
+      ["phase", "create", "Phase 31", "phase-31-autodiscovery"],
+      sandbox,
+      ghBinDir,
+    );
+    expect(createPhase.exitCode).toBe(0);
+
+    const discover = runIxadoWithPath(
+      ["discover", "--queue"],
+      sandbox,
+      ghBinDir,
+    );
+    expect(discover.exitCode).toBe(0);
+    expect(discover.stdout).toContain("Queued 1 discovery candidate(s)");
+
+    const state = await sandbox.readProjectState();
+    const activePhase = state.phases.find(
+      (phase) => phase.id === state.activePhaseId,
+    );
+    expect(activePhase).toBeDefined();
+    expect(activePhase?.tasks).toHaveLength(1);
+  });
 });

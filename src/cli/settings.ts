@@ -53,6 +53,22 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
       markReadyOnApproval: false,
     },
   },
+  discovery: {
+    includePatterns: ["**/*"],
+    excludePatterns: [
+      ".git/**",
+      ".ixado/**",
+      "node_modules/**",
+      "dist/**",
+      "coverage/**",
+    ],
+    priorityWeights: {
+      recency: 0.4,
+      frequency: 0.3,
+      tags: 0.3,
+    },
+    maxCandidates: 25,
+  },
   exceptionRecovery: {
     maxAttempts: 1,
   },
@@ -186,6 +202,7 @@ function mergeCliSettings(
   override: CliSettingsOverride,
 ): CliSettings {
   const executionLoopOverride = override.executionLoop;
+  const discoveryOverride = override.discovery;
   const activeProject = override.activeProject ?? base.activeProject;
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
@@ -212,6 +229,14 @@ function mergeCliSettings(
       pullRequest: {
         ...base.executionLoop.pullRequest,
         ...executionLoopOverride?.pullRequest,
+      },
+    },
+    discovery: {
+      ...base.discovery,
+      ...discoveryOverride,
+      priorityWeights: {
+        ...base.discovery.priorityWeights,
+        ...discoveryOverride?.priorityWeights,
       },
     },
     exceptionRecovery: {
@@ -586,6 +611,7 @@ export async function runOnboard(
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        discovery: existingSettings.discovery,
         exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
@@ -605,6 +631,7 @@ export async function runOnboard(
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        discovery: existingSettings.discovery,
         exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
@@ -667,6 +694,7 @@ export async function runOnboard(
         assignee: internalWorkAssignee,
       },
       executionLoop: existingSettings.executionLoop,
+      discovery: existingSettings.discovery,
       exceptionRecovery: existingSettings.exceptionRecovery,
       usage: existingSettings.usage,
       agents: configuredAgents,

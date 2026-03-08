@@ -86,6 +86,22 @@ const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
 const DEFAULT_USAGE_SETTINGS = {
   codexbarEnabled: true,
 };
+const DEFAULT_DISCOVERY_SETTINGS = {
+  includePatterns: ["**/*"],
+  excludePatterns: [
+    ".git/**",
+    ".ixado/**",
+    "node_modules/**",
+    "dist/**",
+    "coverage/**",
+  ],
+  priorityWeights: {
+    recency: 0.4,
+    frequency: 0.3,
+    tags: 0.3,
+  },
+  maxCandidates: 25,
+};
 const DEFAULT_TELEGRAM_NOTIFICATIONS = {
   level: "all" as const,
   suppressDuplicates: true,
@@ -184,6 +200,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -202,6 +219,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -368,6 +386,39 @@ describe("cli settings", () => {
     });
   });
 
+  test("deep-merges discovery overrides in a single config file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        discovery: {
+          includePatterns: ["src/**/*.ts"],
+          priorityWeights: {
+            tags: 0.9,
+          },
+          maxCandidates: 12,
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.discovery).toEqual({
+      includePatterns: ["src/**/*.ts"],
+      excludePatterns: [
+        ".git/**",
+        ".ixado/**",
+        "node_modules/**",
+        "dist/**",
+        "coverage/**",
+      ],
+      priorityWeights: {
+        recency: 0.4,
+        frequency: 0.3,
+        tags: 0.9,
+      },
+      maxCandidates: 12,
+    });
+  });
+
   test("fails for invalid settings json", async () => {
     await Bun.write(settingsFilePath, "{invalid");
     await expect(loadCliSettings(settingsFilePath)).rejects.toThrow(
@@ -423,6 +474,7 @@ describe("cli settings", () => {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
@@ -517,6 +569,7 @@ describe("cli settings", () => {
       },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
@@ -604,6 +657,7 @@ describe("cli settings", () => {
         assignee: "MOCK_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
@@ -664,6 +718,7 @@ describe("cli settings", () => {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -692,6 +747,7 @@ describe("cli settings", () => {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -744,6 +800,7 @@ describe("cli settings", () => {
         assignee: "CODEX_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,

@@ -1048,6 +1048,11 @@ async function runDiscoverCommand({
   const candidates = await discoverTaskCandidates({
     rootDir: projectRootDir,
     githubManager,
+    includePatterns: settings.discovery.includePatterns,
+    excludePatterns: settings.discovery.excludePatterns,
+    priorityWeights: settings.discovery.priorityWeights,
+    issueLimit: settings.discovery.maxCandidates,
+    maxCandidates: settings.discovery.maxCandidates,
   });
 
   console.info(`Discovered ${candidates.length} candidate(s).`);

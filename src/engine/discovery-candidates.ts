@@ -53,6 +53,7 @@ export type DiscoverTaskCandidatesInput = {
   maxFileSizeBytes?: number;
   issueLimit?: number;
   issueLabels?: string[];
+  maxCandidates?: number;
 };
 
 const DEFAULT_PRIORITY_WEIGHTS: TodoFixmePriorityWeights = {
@@ -334,6 +335,13 @@ export function mergeDiscoveryCandidates(
 export async function discoverTaskCandidates(
   input: DiscoverTaskCandidatesInput,
 ): Promise<DiscoveryCandidate[]> {
+  if (
+    input.maxCandidates !== undefined &&
+    (!Number.isInteger(input.maxCandidates) || input.maxCandidates <= 0)
+  ) {
+    throw new Error("maxCandidates must be a positive integer.");
+  }
+
   const [todoFindings, openIssues] = await Promise.all([
     scanTodoFixmeComments({
       rootDir: input.rootDir,
@@ -350,9 +358,15 @@ export async function discoverTaskCandidates(
     }),
   ]);
 
-  return mergeDiscoveryCandidates({
+  const merged = mergeDiscoveryCandidates({
     todoFindings,
     openIssues,
     priorityWeights: input.priorityWeights,
   });
+
+  if (input.maxCandidates === undefined) {
+    return merged;
+  }
+
+  return merged.slice(0, input.maxCandidates);
 }

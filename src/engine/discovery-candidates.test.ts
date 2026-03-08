@@ -144,6 +144,7 @@ describe("discovery-candidates", () => {
       includePatterns: ["src/**/*.ts"],
       issueLimit: 15,
       issueLabels: ["bug", "discovery"],
+      maxCandidates: 1,
     });
 
     expect(calls).toEqual([
@@ -153,14 +154,19 @@ describe("discovery-candidates", () => {
         labels: ["bug", "discovery"],
       },
     ]);
-    expect(
-      discovered.some((candidate) => candidate.source === "TODO_COMMENT"),
-    ).toBe(true);
-    expect(
-      discovered.some(
-        (candidate) =>
-          candidate.source === "GITHUB_ISSUE" && candidate.issueNumber === 7,
-      ),
-    ).toBe(true);
+    expect(discovered).toHaveLength(1);
+  });
+
+  test("fails fast for invalid maxCandidates", async () => {
+    await writeTextFile(join(sandboxDir, "src", "main.ts"), "// TODO: x\n");
+    await expect(
+      discoverTaskCandidates({
+        rootDir: sandboxDir,
+        githubManager: {
+          listOpenIssues: async () => [],
+        },
+        maxCandidates: 0,
+      }),
+    ).rejects.toThrow("maxCandidates must be a positive integer");
   });
 });

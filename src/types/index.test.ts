@@ -68,6 +68,20 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.pullRequest.assignees).toEqual([]);
     expect(parsed.executionLoop.pullRequest.createAsDraft).toBe(false);
     expect(parsed.executionLoop.pullRequest.markReadyOnApproval).toBe(false);
+    expect(parsed.discovery.includePatterns).toEqual(["**/*"]);
+    expect(parsed.discovery.excludePatterns).toEqual([
+      ".git/**",
+      ".ixado/**",
+      "node_modules/**",
+      "dist/**",
+      "coverage/**",
+    ]);
+    expect(parsed.discovery.priorityWeights).toEqual({
+      recency: 0.4,
+      frequency: 0.3,
+      tags: 0.3,
+    });
+    expect(parsed.discovery.maxCandidates).toBe(25);
     expect(parsed.exceptionRecovery.maxAttempts).toBe(1);
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
@@ -409,5 +423,22 @@ describe("type contracts", () => {
       tasks: [],
     });
     expect(phase.failureKind).toBeUndefined();
+  });
+
+  test("rejects discovery priorityWeights with non-positive total", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: {
+          enabled: false,
+        },
+        discovery: {
+          priorityWeights: {
+            recency: 0,
+            frequency: 0,
+            tags: 0,
+          },
+        },
+      }),
+    ).toThrow("discovery.priorityWeights");
   });
 });
