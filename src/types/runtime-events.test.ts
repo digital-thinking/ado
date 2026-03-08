@@ -178,6 +178,26 @@ describe("runtime event contract", () => {
     expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(false);
   });
 
+  test("notifies DEAD_LETTER task completion at critical Telegram level", () => {
+    const event = createRuntimeEvent({
+      family: "task-lifecycle",
+      type: "task.lifecycle.finish",
+      payload: {
+        status: "DEAD_LETTER",
+        message: "Task moved to DEAD_LETTER.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-1",
+      },
+    });
+
+    expect(shouldNotifyRuntimeEventForTelegram(event, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(event, "important")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(true);
+  });
+
   test("formats agent runtime diagnostics for CLI adapter output", () => {
     const line = formatAgentRuntimeDiagnostic(
       buildAgentHeartbeatDiagnostic({

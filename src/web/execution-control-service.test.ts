@@ -3,7 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { ExecutionControlService } from "./execution-control-service";
 import type { CLIAdapterId, ProjectState } from "../types";
 
-function createState(taskStatus: "TODO" | "IN_PROGRESS" | "DONE" | "FAILED") {
+function createState(
+  taskStatus: "TODO" | "IN_PROGRESS" | "DONE" | "FAILED" | "DEAD_LETTER",
+) {
   const now = new Date().toISOString();
   return {
     projectName: "alpha",
@@ -137,5 +139,42 @@ describe("ExecutionControlService", () => {
     );
     expect(service.getStatus("alpha").running).toBe(false);
     expect(state.phases[0].tasks[0].status).toBe("TODO");
+  });
+
+  test("auto mode stops with remediation hint when task is DEAD_LETTER", async () => {
+    let state = createState("TODO");
+
+    const service = new ExecutionControlService({
+      control: {
+        getState: async () => state,
+        startTaskAndWait: async () => {
+          state = createState("DEAD_LETTER");
+          return state;
+        },
+      } as never,
+      agents: {
+        list: () => [],
+        kill: () => {
+          throw new Error("unexpected kill");
+        },
+      },
+      projectRootDir: "/tmp/alpha",
+      projectName: "alpha",
+      resolveDefaultAssignee: async () => "CODEX_CLI",
+    });
+
+    await service.startAuto({ projectName: "alpha" });
+    for (let retry = 0; retry < 20; retry += 1) {
+      const status = service.getStatus("alpha");
+      if (!status.running) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const finalStatus = service.getStatus("alpha");
+    expect(finalStatus.running).toBe(false);
+    expect(finalStatus.message).toContain("DEAD_LETTER");
+    expect(finalStatus.message).toContain("Reset it to TODO");
   });
 });

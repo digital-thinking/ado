@@ -15,6 +15,7 @@ export {
   type ImportTasksMarkdownResult,
   type SetActivePhaseInput,
   type ResetTaskInput,
+  type MarkTaskDeadLetterInput,
   type StartActiveTaskInput,
   type StartTaskInput,
   type RunInternalWorkInput,

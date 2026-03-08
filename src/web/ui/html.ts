@@ -355,7 +355,7 @@ export function controlCenterHtml(params: {
 
       <section class="card wide">
         <h2>Phase Kanban</h2>
-        <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED). Dependencies are shown on each task.</div>
+        <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED, DEAD_LETTER). Dependencies are shown on each task.</div>
         <div id="kanbanBoard" class="kanban"></div>
         <div id="kanbanError" class="error"></div>
       </section>
@@ -920,7 +920,7 @@ export function controlCenterHtml(params: {
     }
 
     function renderKanban(state) {
-      const KANBAN_STATUSES = ["TODO", "IN_PROGRESS", "DONE", "FAILED"];
+      const KANBAN_STATUSES = ["TODO", "IN_PROGRESS", "DONE", "FAILED", "DEAD_LETTER"];
       const taskById = new Map();
       state.phases.forEach((phase) => {
         phase.tasks.forEach((task) => {
@@ -1117,6 +1117,21 @@ export function controlCenterHtml(params: {
                       (!retryAssignee
                         ? '<div class="small" style="color:#7a2618;">Cannot retry without previous assignee. Reset to TODO and assign an agent.</div>'
                         : "") +
+                      '<div class="error task-run-error"></div>'
+                    );
+                  }
+
+                  if (task.status === "DEAD_LETTER") {
+                    return (
+                      '<div class="small">Dead-lettered after unfixable recovery.</div>' +
+                      '<div class="small">Remediation: <span class="mono">' +
+                        escapeHtml(task.resultContext || "Manual remediation required. Reset to TODO once fixed.") +
+                      "</span></div>" +
+                      '<div class="small">Failure summary: <span class="mono">' + escapeHtml(failureSummary) + "</span></div>" +
+                      '<div class="row">' +
+                        '<button type="button" class="secondary task-reset-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '">Reset TODO</button>' +
+                      "</div>" +
+                      '<details><summary class="small">Failure logs</summary><pre class="mono small">' + escapeHtml(task.errorLogs || "No logs available.") + "</pre></details>" +
                       '<div class="error task-run-error"></div>'
                     );
                   }

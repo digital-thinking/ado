@@ -67,7 +67,7 @@ Web SSE keeps legacy `output`/`status` fields for compatibility while attaching 
 ### 7) Exception Recovery (`src/engine/exception-recovery.ts`)
 
 - Handles recoverable task/phase exceptions with structured recovery prompts.
-- Parses strict recovery results (`fixed`/`unfixable`) and feeds decisions back to the phase loop.
+- Parses strict recovery results (`fixed`/`unfixable`) and feeds decisions back to the phase loop (`unfixable` exhaustion dead-letters tasks).
 - Emits audit-visible recovery events for traceability.
 
 ## Configuration Model

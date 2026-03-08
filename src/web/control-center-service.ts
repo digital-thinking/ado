@@ -184,6 +184,12 @@ export type ResetTaskInput = {
   taskId: string;
 };
 
+export type MarkTaskDeadLetterInput = {
+  phaseId: string;
+  taskId: string;
+  reason: string;
+};
+
 export type ActivePhaseTaskItem = {
   number: number;
   title: string;
@@ -2277,9 +2283,9 @@ export class ControlCenterService {
       throw new Error(`Task not found: ${taskId}`);
     }
     const task = phase.tasks[taskIndex];
-    if (task.status !== "FAILED") {
+    if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
       throw new Error(
-        `Task must be FAILED before reset. Current status: ${task.status}`,
+        `Task must be FAILED or DEAD_LETTER before reset. Current status: ${task.status}`,
       );
     }
 
@@ -2294,6 +2300,69 @@ export class ControlCenterService {
       errorCategory: undefined,
       adapterFailureKind: undefined,
       completionVerification: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async markTaskDeadLetter(
+    input: MarkTaskDeadLetterInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const reason = input.reason.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!reason) {
+      throw new Error("reason must not be empty.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot mark a running task as DEAD_LETTER.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "FAILED") {
+      throw new Error(
+        `Task must be FAILED before dead-lettering. Current status: ${task.status}`,
+      );
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "DEAD_LETTER",
+      resultContext: reason,
     });
 
     const nextPhases = [...state.phases];

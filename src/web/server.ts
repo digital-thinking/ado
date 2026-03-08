@@ -52,7 +52,7 @@ export type WebControlCenterRuntime = {
 
 const WEB_SERVER_HOST = "127.0.0.1";
 const WEB_SERVER_IDLE_TIMEOUT_SECONDS = 255;
-const TERMINAL_TASK_STATUSES = new Set(["DONE", "FAILED"]);
+const TERMINAL_TASK_STATUSES = new Set(["DONE", "FAILED", "DEAD_LETTER"]);
 
 function findTaskStatusById(
   state: ProjectState,
