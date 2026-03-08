@@ -1701,13 +1701,13 @@ export class ControlCenterService {
         try {
           const ghProbe = await this.runCommandProbe(state.rootDir, "gh", [
             "pr",
-            "view",
+            "list",
             "--head",
             phase.branchName,
             "--json",
             "url",
             "--jq",
-            ".url",
+            ".[0].url",
           ]);
           if (ghProbe.success && ghProbe.stdout.trim().startsWith("http")) {
             prUrl = ghProbe.stdout.trim();

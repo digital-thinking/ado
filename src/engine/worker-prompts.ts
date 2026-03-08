@@ -41,7 +41,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
     ? [
         `- This is a pull-request creation task. Do NOT modify any source files.`,
         `- Run exactly: gh pr create --base main --head ${input.phase.branchName} --title "${input.phase.name}" --body "Phase implementation complete."`,
-        `- If a PR already exists for this branch, run: gh pr view --head ${input.phase.branchName} --json url to confirm it and report the URL.`,
+        `- If a PR already exists for this branch, run: gh pr list --head ${input.phase.branchName} --json url --jq '.[0].url' to confirm it and report the URL.`,
         "- Return the PR URL in your summary.",
       ]
     : [
