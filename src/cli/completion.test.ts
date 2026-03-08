@@ -25,6 +25,8 @@ describe("completion scripts", () => {
     expect(script).toContain("complete -F _ixado_completion ixado");
     expect(script).toContain("completion");
     expect(script).toContain("bash zsh fish");
+    expect(script).not.toContain("_init_completion");
+    expect(script).not.toContain(";;&");
   });
 
   test("generates zsh completion with key commands", () => {
@@ -32,6 +34,7 @@ describe("completion scripts", () => {
     expect(script).toContain("#compdef ixado");
     expect(script).toContain("completion:Generate shell completion script");
     expect(script).toContain("_values 'shell' bash zsh fish");
+    expect(script).not.toContain(";;&");
   });
 
   test("generates fish completion with key commands", () => {
