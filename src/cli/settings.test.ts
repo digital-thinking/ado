@@ -250,6 +250,26 @@ describe("cli settings", () => {
     expect(settings.agents.CODEX_CLI.timeoutMs).toBe(7000);
   });
 
+  test("loads adapter affinities from settings file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        agents: {
+          adapterAffinities: {
+            documentation: "CLAUDE_CLI",
+            "code-review": "GEMINI_CLI",
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.agents.adapterAffinities).toEqual({
+      documentation: "CLAUDE_CLI",
+      "code-review": "GEMINI_CLI",
+    });
+  });
+
   test("reads codexbar usage telemetry from the provided file only", async () => {
     await Bun.write(
       sandbox.globalConfigFile,

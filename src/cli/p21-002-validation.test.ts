@@ -216,7 +216,7 @@ describe("P21-002 CLI argument validation", () => {
       "Error: Missing required arguments: <title> and <description>.",
     );
     expect(result.stderr).toContain(
-      "  Usage: ixado task create <title> <description> [assignee]",
+      "  Usage: ixado task create <title> <description> [assignee] [--type <taskType>]",
     );
     expect(result.stderr).toContain("  Hint:");
   });
@@ -240,10 +240,58 @@ describe("P21-002 CLI argument validation", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: Invalid assignee: 'BAD_CLI'.");
     expect(result.stderr).toContain(
-      "  Usage: ixado task create <title> <description> [assignee]",
+      "  Usage: ixado task create <title> <description> [assignee] [--type <taskType>]",
     );
     expect(result.stderr).toContain("  Hint:");
     expect(result.stderr).toContain("assignee must be one of");
+  });
+
+  test("task create: invalid --type exits 1 with Usage + hint", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-task-create-type-");
+    sandboxes.push(sandbox);
+
+    const phaseResult = runIxado(
+      ["phase", "create", "Phase X", "branch-x"],
+      sandbox,
+    );
+    expect(phaseResult.exitCode).toBe(0);
+
+    const result = runIxado(
+      ["task", "create", "My Task", "Some description", "--type", "refactor"],
+      sandbox,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Error: Invalid task type: 'refactor'.");
+    expect(result.stderr).toContain(
+      "  Usage: ixado task create <title> <description> [assignee] [--type <taskType>]",
+    );
+    expect(result.stderr).toContain("taskType must be one of");
+  });
+
+  test("task create: missing --type value exits 1 with Usage + hint", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p21-task-create-type-missing-",
+    );
+    sandboxes.push(sandbox);
+
+    const phaseResult = runIxado(
+      ["phase", "create", "Phase X", "branch-x"],
+      sandbox,
+    );
+    expect(phaseResult.exitCode).toBe(0);
+
+    const result = runIxado(
+      ["task", "create", "My Task", "Some description", "--type"],
+      sandbox,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Error: Missing value for --type.");
+    expect(result.stderr).toContain(
+      "  Usage: ixado task create <title> <description> [assignee] [--type <taskType>]",
+    );
+    expect(result.stderr).toContain("Provide one task type");
   });
 
   // ── phase commands ───────────────────────────────────────────────────────

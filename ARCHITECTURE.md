@@ -74,6 +74,7 @@ Web SSE keeps legacy `output`/`status` fields for compatibility while attaching 
 
 - Global project registry and defaults (multi-project support).
 - Project-level runtime settings (loop mode, default assignee, adapter settings).
+- Optional semantic routing hints (`agents.adapterAffinities`) map task types to preferred adapters.
 - Policy/security controls for privileged operations.
 
 ## Planning and Governance Artifacts

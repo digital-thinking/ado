@@ -507,6 +507,15 @@ export async function startWebControlCenter(
             ...current.agents.MOCK_CLI,
             ...(validatedPatch.agents?.MOCK_CLI ?? {}),
           },
+          ...(current.agents.adapterAffinities ||
+          validatedPatch.agents?.adapterAffinities
+            ? {
+                adapterAffinities: {
+                  ...(current.agents.adapterAffinities ?? {}),
+                  ...(validatedPatch.agents?.adapterAffinities ?? {}),
+                },
+              }
+            : {}),
         },
       };
 

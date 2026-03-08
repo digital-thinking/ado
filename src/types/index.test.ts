@@ -9,6 +9,8 @@ import {
   TaskSchema,
   RecoveryAttemptRecordSchema,
   ProjectStateSchema,
+  TaskTypeSchema,
+  TaskRoutingReasonSchema,
   TaskStatusSchema,
   WorkerArchetypeSchema,
   WorkerAssigneeSchema,
@@ -130,6 +132,52 @@ describe("type contracts", () => {
 
     expect(parsed.completionVerification?.contracts).toEqual(["PR_CREATION"]);
     expect(parsed.completionVerification?.status).toBe("FAILED");
+    expect(parsed.taskType).toBeUndefined();
+  });
+
+  test("supports optional task type classification", () => {
+    expect(TaskTypeSchema.parse("implementation")).toBe("implementation");
+    expect(TaskTypeSchema.parse("code-review")).toBe("code-review");
+    expect(TaskTypeSchema.parse("test-writing")).toBe("test-writing");
+    expect(TaskTypeSchema.parse("security-audit")).toBe("security-audit");
+    expect(TaskTypeSchema.parse("documentation")).toBe("documentation");
+
+    const parsedTask = TaskSchema.parse({
+      id: "44444444-4444-4444-8444-444444444444",
+      title: "Write docs",
+      description: "Document new CLI command",
+      taskType: "documentation",
+    });
+
+    expect(parsedTask.taskType).toBe("documentation");
+  });
+
+  test("rejects invalid task type classification", () => {
+    expect(() => TaskTypeSchema.parse("refactor")).toThrow();
+    expect(() =>
+      TaskSchema.parse({
+        id: "55555555-5555-4555-8555-555555555555",
+        title: "Invalid type task",
+        description: "Should fail",
+        taskType: "refactor",
+      }),
+    ).toThrow();
+  });
+
+  test("supports routing metadata for resolved assignee", () => {
+    expect(TaskRoutingReasonSchema.parse("affinity")).toBe("affinity");
+    expect(TaskRoutingReasonSchema.parse("fallback")).toBe("fallback");
+
+    const parsedTask = TaskSchema.parse({
+      id: "77777777-7777-4777-8777-777777777777",
+      title: "Route this task",
+      description: "Ensure metadata is persisted",
+      resolvedAssignee: "CLAUDE_CLI",
+      routingReason: "affinity",
+    });
+
+    expect(parsedTask.resolvedAssignee).toBe("CLAUDE_CLI");
+    expect(parsedTask.routingReason).toBe("affinity");
   });
 
   test("supports optional per-project execution settings", () => {
@@ -172,6 +220,61 @@ describe("type contracts", () => {
         },
       }),
     ).toThrow("must be enabled");
+  });
+
+  test("accepts adapter affinities that target enabled adapters", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 1_000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+        adapterAffinities: {
+          documentation: "CLAUDE_CLI",
+          "code-review": "GEMINI_CLI",
+        },
+      },
+    });
+
+    expect(parsed.agents.adapterAffinities).toEqual({
+      documentation: "CLAUDE_CLI",
+      "code-review": "GEMINI_CLI",
+    });
+  });
+
+  test("rejects adapter affinities with unknown task type keys", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: { enabled: false },
+        agents: {
+          CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: true, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+          adapterAffinities: {
+            refactor: "CODEX_CLI",
+          },
+        },
+      }),
+    ).toThrow("Invalid key in record");
+  });
+
+  test("rejects adapter affinities that target disabled adapters", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: { enabled: false },
+        agents: {
+          CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: false, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+          adapterAffinities: {
+            documentation: "CLAUDE_CLI",
+          },
+        },
+      }),
+    ).toThrow("adapter is disabled");
   });
 
   test("rejects markReadyOnApproval when draft creation is disabled", () => {

@@ -49,6 +49,7 @@ describe("phase13 CLI create commands", () => {
     expect(state.phases[0]?.tasks).toHaveLength(1);
     expect(state.phases[0]?.tasks[0]?.title).toBe("P13-002");
     expect(state.phases[0]?.tasks[0]?.assignee).toBe("MOCK_CLI");
+    expect(state.phases[0]?.tasks[0]?.taskType).toBe("implementation");
 
     const invalidUsageResult = runIxado(
       ["task", "create", "missing-description-only"],
@@ -56,7 +57,7 @@ describe("phase13 CLI create commands", () => {
     );
     expect(invalidUsageResult.exitCode).toBe(1);
     expect(invalidUsageResult.stderr).toContain(
-      "Usage: ixado task create <title> <description> [assignee]",
+      "Usage: ixado task create <title> <description> [assignee] [--type <taskType>]",
     );
 
     const invalidAssigneeResult = runIxado(
@@ -71,5 +72,60 @@ describe("phase13 CLI create commands", () => {
     );
     expect(invalidAssigneeResult.exitCode).toBe(1);
     expect(invalidAssigneeResult.stderr).toContain("assignee must be one of");
+  });
+
+  test("task create supports --type override", async () => {
+    const sandbox = await TestSandbox.create("ixado-p13-task-create-type-");
+    sandboxes.push(sandbox);
+
+    const phaseCreateResult = runIxado(
+      ["phase", "create", "Phase 13", "phase-13-post-release-bugfixes"],
+      sandbox,
+    );
+    expect(phaseCreateResult.exitCode).toBe(0);
+
+    const taskCreateResult = runIxado(
+      [
+        "task",
+        "create",
+        "Security hardening",
+        "Audit auth and fix vulnerabilities",
+        "--type",
+        "documentation",
+      ],
+      sandbox,
+    );
+    expect(taskCreateResult.exitCode).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    expect(state.phases[0]?.tasks[0]?.taskType).toBe("documentation");
+  });
+
+  test("task create supports assignee plus --type override", async () => {
+    const sandbox = await TestSandbox.create("ixado-p13-task-create-mixed-");
+    sandboxes.push(sandbox);
+
+    const phaseCreateResult = runIxado(
+      ["phase", "create", "Phase 13", "phase-13-post-release-bugfixes"],
+      sandbox,
+    );
+    expect(phaseCreateResult.exitCode).toBe(0);
+
+    const taskCreateResult = runIxado(
+      [
+        "task",
+        "create",
+        "Review release checklist",
+        "Perform peer review and checklist validation",
+        "MOCK_CLI",
+        "--type=code-review",
+      ],
+      sandbox,
+    );
+    expect(taskCreateResult.exitCode).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    expect(state.phases[0]?.tasks[0]?.assignee).toBe("MOCK_CLI");
+    expect(state.phases[0]?.tasks[0]?.taskType).toBe("code-review");
   });
 });

@@ -9,6 +9,7 @@ import {
   classifyAdapterFailure,
   type AdapterFailureKind,
 } from "../adapters/failure-taxonomy";
+import { inferTaskType } from "../engine/task-type-classifier";
 import { buildWorkerPrompt } from "../engine/worker-prompts";
 import { parseJsonFromModelOutput } from "../engine/json-parser";
 import {
@@ -42,7 +43,9 @@ import {
   type RecoveryAttemptRecord,
   type SideEffectContract,
   type Task,
+  type TaskType,
   type TaskCompletionVerification,
+  type TaskRoutingReason,
   type WorkerAssignee,
 } from "../types";
 import { parsePullRequestNumberFromUrl } from "../vcs";
@@ -86,6 +89,7 @@ export type CreateTaskInput = {
   title: string;
   description: string;
   assignee?: WorkerAssignee;
+  taskType?: TaskType;
   dependencies?: string[];
   status?: Task["status"];
 };
@@ -138,6 +142,8 @@ export type StartTaskInput = {
   phaseId: string;
   taskId: string;
   assignee: CLIAdapterId;
+  resolvedAssignee?: CLIAdapterId;
+  routingReason?: TaskRoutingReason;
   resume?: boolean;
 };
 
@@ -168,6 +174,8 @@ export type RecordRecoveryAttemptInput = {
 export type StartActiveTaskInput = {
   taskNumber: number;
   assignee: CLIAdapterId;
+  resolvedAssignee?: CLIAdapterId;
+  routingReason?: TaskRoutingReason;
   resume?: boolean;
 };
 
@@ -640,10 +648,15 @@ export class ControlCenterService {
       throw new Error(`Phase not found: ${input.phaseId}`);
     }
 
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const taskType = input.taskType ?? inferTaskType({ title, description });
+
     const task = TaskSchema.parse({
       id: randomUUID(),
-      title: input.title.trim(),
-      description: input.description.trim(),
+      title,
+      description,
+      taskType,
       assignee: input.assignee ?? "UNASSIGNED",
       dependencies: input.dependencies ?? [],
       status: input.status ?? "TODO",
@@ -959,6 +972,8 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resolvedAssignee: input.resolvedAssignee,
+      routingReason: input.routingReason,
       resume: input.resume,
       projectName: input.projectName,
     });
@@ -986,6 +1001,8 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resolvedAssignee: input.resolvedAssignee,
+      routingReason: input.routingReason,
       resume: input.resume,
       projectName: input.projectName,
     });
@@ -997,6 +1014,10 @@ export class ControlCenterService {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
+    const resolvedAssignee = input.resolvedAssignee
+      ? CLIAdapterIdSchema.parse(input.resolvedAssignee)
+      : undefined;
+    const routingReason = input.routingReason;
     if (!phaseId) {
       throw new Error("phaseId must not be empty.");
     }
@@ -1005,6 +1026,21 @@ export class ControlCenterService {
     }
     if (!this.internalWorkRunner) {
       throw new Error("Internal work runner is not configured.");
+    }
+    if (!resolvedAssignee && routingReason) {
+      throw new Error(
+        "routingReason requires resolvedAssignee in task start input.",
+      );
+    }
+    if (resolvedAssignee && !routingReason) {
+      throw new Error(
+        "resolvedAssignee requires routingReason in task start input.",
+      );
+    }
+    if (resolvedAssignee && resolvedAssignee !== assignee) {
+      throw new Error(
+        `resolvedAssignee must match assignee. Received ${resolvedAssignee} and ${assignee}.`,
+      );
     }
 
     const runKey = taskExecutionKey(phaseId, taskId);
@@ -1081,6 +1117,8 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       assignee,
+      resolvedAssignee,
+      routingReason,
       status: "IN_PROGRESS",
       resultContext: undefined,
       errorLogs: undefined,

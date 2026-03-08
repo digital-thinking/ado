@@ -723,7 +723,15 @@ export function controlCenterHtml(params: {
         // Adapters
         const adaptersList = document.getElementById("adaptersSettingsList");
         adaptersList.innerHTML = "";
-        const agentIds = Object.keys(settings.agents || {});
+        const agentIds = Object.keys(settings.agents || {}).filter((id) => {
+          const config = settings.agents[id];
+          return (
+            config &&
+            typeof config === "object" &&
+            typeof config.enabled === "boolean" &&
+            typeof config.timeoutMs === "number"
+          );
+        });
         agentIds.forEach(id => {
           const config = settings.agents[id];
           const div = document.createElement("div");

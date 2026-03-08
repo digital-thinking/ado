@@ -139,6 +139,24 @@ So project settings win over global defaults for overlapping keys. Use `ixado co
 - `templateMappings` are matched deterministically by longest `branchPrefix`.
 - `markReadyOnApproval` requires `createAsDraft: true`.
 
+### Task-Type adapter affinities
+
+`agents.adapterAffinities` lets you map semantic task types to preferred adapters:
+
+```json
+{
+  "agents": {
+    "adapterAffinities": {
+      "documentation": "CLAUDE_CLI",
+      "code-review": "GEMINI_CLI"
+    }
+  }
+}
+```
+
+Affinity targets must reference enabled adapters in `settings.agents`.
+New tasks are auto-classified from title/description heuristics; override with `ixado task create "Title" "Description" [assignee] --type <taskType>`.
+
 ### Windows
 
 IxADO is packaged as a single compiled executable at `dist/ixado.exe`.

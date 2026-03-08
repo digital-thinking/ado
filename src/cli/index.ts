@@ -33,9 +33,12 @@ import {
 } from "../log-readability";
 import {
   CLIAdapterIdSchema,
+  TaskTypeSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
   type PhaseFailureKind,
+  type TaskType,
+  type WorkerAssignee,
 } from "../types";
 import {
   createTelegramNotificationEvaluator,
@@ -931,25 +934,79 @@ async function runTaskStartCommand({
 async function runTaskCreateCommand({
   args,
 }: CommandActionContext): Promise<void> {
+  const TASK_CREATE_USAGE =
+    "ixado task create <title> <description> [assignee] [--type <taskType>]";
   const title = args[0]?.trim() ?? "";
   const description = args[1]?.trim() ?? "";
   if (!title || !description) {
     throw new ValidationError(
       "Missing required arguments: <title> and <description>.",
       {
-        usage: "ixado task create <title> <description> [assignee]",
+        usage: TASK_CREATE_USAGE,
         hint: "Enclose multi-word values in quotes.",
       },
     );
   }
 
-  const rawAssignee = args[2]?.trim();
+  const parseTaskType = (rawTaskType: string): TaskType => {
+    const parsedTaskType = TaskTypeSchema.safeParse(rawTaskType);
+    if (!parsedTaskType.success) {
+      throw new ValidationError(`Invalid task type: '${rawTaskType}'.`, {
+        usage: TASK_CREATE_USAGE,
+        hint: "taskType must be one of: implementation, code-review, test-writing, security-audit, documentation",
+      });
+    }
+    return parsedTaskType.data;
+  };
+
+  let rawAssignee: string | undefined;
+  let taskType: TaskType | undefined;
+  for (let index = 2; index < args.length; index += 1) {
+    const token = args[index]?.trim() ?? "";
+    if (token === "--type") {
+      const rawTaskType = args[index + 1]?.trim() ?? "";
+      if (!rawTaskType) {
+        throw new ValidationError("Missing value for --type.", {
+          usage: TASK_CREATE_USAGE,
+          hint: "Provide one task type: implementation, code-review, test-writing, security-audit, documentation.",
+        });
+      }
+      taskType = parseTaskType(rawTaskType);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--type=")) {
+      const rawTaskType = token.slice("--type=".length).trim();
+      if (!rawTaskType) {
+        throw new ValidationError("Missing value for --type.", {
+          usage: TASK_CREATE_USAGE,
+          hint: "Provide one task type: implementation, code-review, test-writing, security-audit, documentation.",
+        });
+      }
+      taskType = parseTaskType(rawTaskType);
+      continue;
+    }
+    if (token.startsWith("--")) {
+      throw new ValidationError(`Unknown option: '${token}'.`, {
+        usage: TASK_CREATE_USAGE,
+        hint: "Supported option: --type <taskType>.",
+      });
+    }
+    if (rawAssignee !== undefined) {
+      throw new ValidationError(`Unexpected argument: '${token}'.`, {
+        usage: TASK_CREATE_USAGE,
+        hint: "Provide at most one assignee and optional --type <taskType>.",
+      });
+    }
+    rawAssignee = token;
+  }
+
   const parsedAssignee = rawAssignee
     ? WorkerAssigneeSchema.safeParse(rawAssignee)
-    : { success: true as const, data: "UNASSIGNED" as const };
+    : { success: true as const, data: "UNASSIGNED" as WorkerAssignee };
   if (!parsedAssignee.success) {
     throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
-      usage: "ixado task create <title> <description> [assignee]",
+      usage: TASK_CREATE_USAGE,
       hint: "assignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
     });
   }
@@ -973,6 +1030,7 @@ async function runTaskCreateCommand({
     title,
     description,
     assignee,
+    taskType,
   });
   const refreshedPhase =
     updated.phases.find((phase) => phase.id === activePhase.id) ?? activePhase;
@@ -1300,6 +1358,7 @@ async function runPhaseRunCommand({
       mode,
       countdownSeconds,
       activeAssignee,
+      adapterAffinities: settings.agents.adapterAffinities,
       maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
@@ -1815,7 +1874,7 @@ async function runCli(args: string[]): Promise<void> {
         {
           name: "create",
           description: "Create task in active phase",
-          usage: "create <title> <description> [assignee]",
+          usage: "create <title> <description> [assignee] [--type <taskType>]",
           action: runTaskCreateCommand,
         },
         {

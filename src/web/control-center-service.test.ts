@@ -61,6 +61,56 @@ describe("ControlCenterService", () => {
     expect(afterTask.phases[0].tasks).toHaveLength(1);
     expect(afterTask.phases[0].tasks[0].title).toBe("Build dashboard");
     expect(afterTask.phases[0].tasks[0].assignee).toBe("CODEX_CLI");
+    expect(afterTask.phases[0].tasks[0].taskType).toBe("implementation");
+  });
+
+  test("auto-classifies task type from title and description", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Write regression tests for task routing",
+      description: "Add integration test coverage for affinity selection.",
+    });
+
+    expect(taskState.phases[0].tasks[0].taskType).toBe("test-writing");
+  });
+
+  test("respects explicit task type override on createTask", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Security hardening for API auth",
+      description: "Audit all threat vectors and patch vulnerabilities.",
+      taskType: "documentation",
+    });
+
+    expect(taskState.phases[0].tasks[0].taskType).toBe("documentation");
+  });
+
+  test("infers code-review task type at creation when no explicit type is provided", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Release readiness pass",
+      description: "Perform peer review and provide LGTM findings.",
+    });
+
+    expect(taskState.phases[0].tasks[0].taskType).toBe("code-review");
   });
 
   test("updates task title, description, and dependencies", async () => {
@@ -1223,6 +1273,44 @@ describe("ControlCenterService", () => {
     expect(phase.status).toBe("CI_FAILED");
     expect(phase.ciStatusContext).toBe("Still failing");
     expect(phase.tasks[0].status).toBe("DONE");
+  });
+
+  test("persists resolvedAssignee and routingReason on task execution", async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
+        command: "claude",
+        args: ["run"],
+        stdout: "done",
+        stderr: "",
+        durationMs: 5,
+      }),
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Routing",
+      branchName: "phase-routing",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "Document API",
+      description: "Write docs",
+      assignee: "UNASSIGNED",
+      status: "TODO",
+    });
+
+    const finished = await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 1,
+      assignee: "CLAUDE_CLI",
+      resolvedAssignee: "CLAUDE_CLI",
+      routingReason: "affinity",
+    });
+
+    expect(finished.phases[0].tasks[0].status).toBe("DONE");
+    expect(finished.phases[0].tasks[0].resolvedAssignee).toBe("CLAUDE_CLI");
+    expect(finished.phases[0].tasks[0].routingReason).toBe("affinity");
   });
 
   test("lists active phase tasks with 1-based numbers", async () => {
