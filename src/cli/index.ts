@@ -1605,9 +1605,12 @@ async function runPhaseRunCommand({
     },
   );
 
+  const lockState = await control.getState();
+  const lockPhaseId = lockState.activePhaseId?.trim() || "no-active-phase";
   const runLock = new ExecutionRunLock({
     projectRootDir,
     projectName,
+    phaseId: lockPhaseId,
     owner: "CLI_PHASE_RUN",
   });
   await runLock.acquire();

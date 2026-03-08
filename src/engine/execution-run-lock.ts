@@ -5,6 +5,7 @@ type ExecutionRunLockRecord = {
   pid: number;
   owner: "CLI_PHASE_RUN" | "WEB_AUTO_MODE";
   projectName: string;
+  phaseId: string;
   acquiredAt: string;
 };
 
@@ -44,6 +45,8 @@ function parseLockRecord(raw: string): ExecutionRunLockRecord | null {
       candidate.owner !== "WEB_AUTO_MODE") ||
     typeof candidate.projectName !== "string" ||
     !candidate.projectName.trim() ||
+    typeof candidate.phaseId !== "string" ||
+    !candidate.phaseId.trim() ||
     typeof candidate.acquiredAt !== "string" ||
     !candidate.acquiredAt.trim()
   ) {
@@ -71,7 +74,7 @@ async function readLockRecord(
 
 function buildAlreadyRunningError(record: ExecutionRunLockRecord): Error {
   return new Error(
-    `Execution is already running for project '${record.projectName}' (owner: ${record.owner}, pid: ${record.pid}, acquiredAt: ${record.acquiredAt}).`,
+    `Execution is already running for project '${record.projectName}', phase '${record.phaseId}' (owner: ${record.owner}, pid: ${record.pid}, acquiredAt: ${record.acquiredAt}).`,
   );
 }
 
@@ -79,11 +82,13 @@ export class ExecutionRunLock {
   private readonly lockFilePath: string;
   private readonly owner: "CLI_PHASE_RUN" | "WEB_AUTO_MODE";
   private readonly projectName: string;
+  private readonly phaseId: string;
   private acquired = false;
 
   constructor(input: {
     projectRootDir: string;
     projectName: string;
+    phaseId: string;
     owner: "CLI_PHASE_RUN" | "WEB_AUTO_MODE";
   }) {
     if (!input.projectRootDir.trim()) {
@@ -92,13 +97,17 @@ export class ExecutionRunLock {
     if (!input.projectName.trim()) {
       throw new Error("projectName must not be empty.");
     }
+    if (!input.phaseId.trim()) {
+      throw new Error("phaseId must not be empty.");
+    }
 
     this.lockFilePath = resolve(
       input.projectRootDir,
       ".ixado",
-      "execution-run.lock.json",
+      `execution-run-${input.phaseId.trim()}.lock.json`,
     );
     this.projectName = input.projectName.trim();
+    this.phaseId = input.phaseId.trim();
     this.owner = input.owner;
   }
 
@@ -112,6 +121,7 @@ export class ExecutionRunLock {
       pid: process.pid,
       owner: this.owner,
       projectName: this.projectName,
+      phaseId: this.phaseId,
       acquiredAt: new Date().toISOString(),
     };
 
@@ -159,7 +169,8 @@ export class ExecutionRunLock {
       !existing ||
       (existing.pid === process.pid &&
         existing.owner === this.owner &&
-        existing.projectName === this.projectName)
+        existing.projectName === this.projectName &&
+        existing.phaseId === this.phaseId)
     ) {
       await rm(this.lockFilePath, { force: true });
     }

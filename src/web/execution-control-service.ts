@@ -117,9 +117,12 @@ export class ExecutionControlService {
       throw new Error("projectName must not be empty.");
     }
 
+    const lockState = await this.control.getState(projectName);
+    const lockPhaseId = lockState.activePhaseId?.trim() || "no-active-phase";
     const runLock = new ExecutionRunLock({
       projectRootDir: this.projectRootDir,
       projectName,
+      phaseId: lockPhaseId,
       owner: "WEB_AUTO_MODE",
     });
     await runLock.acquire();
