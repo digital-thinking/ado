@@ -115,7 +115,7 @@ Status markers:
 - [x] `P31-002` Integrate with GitHub issues via `src/vcs/github-manager.ts`: fetch open issues, parse title/body into ranked task candidates and merge with TODO scan results. Deps: `P31-001`.
 - [x] `P31-003` Add `ixado discover` CLI command: `--dry-run` flag prints ranked candidates without queuing; `--queue` flag adds approved candidates to the active phase as TODO tasks. Deps: `P31-001`, `P31-002`.
 - [x] `P31-004` Add `discovery` config section to `CliSettingsSchema`: `includePatterns`, `excludePatterns`, `priorityWeights` (`recency`, `frequency`, `tags`), `maxCandidates`. Deps: `P31-001`.
-- [ ] `P31-005` Add regression/integration tests for Phase 31: scanner extraction, issue mapping, priority ranking, dry-run output correctness, task queuing, and config validation. Deps: `P31-001`..`P31-004`.
+- [x] `P31-005` Add regression/integration tests for Phase 31: scanner extraction, issue mapping, priority ranking, dry-run output correctness, task queuing, and config validation. Deps: `P31-001`..`P31-004`.
 - [ ] `P31-006` Create PR Task: open Phase 31 PR after coding tasks are done. Deps: `P31-005`.
 
 ### Phase 32: Telegram Natural Language Assistant

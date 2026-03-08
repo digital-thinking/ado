@@ -230,4 +230,30 @@ describe("P31-003 discover command", () => {
     expect(activePhase).toBeDefined();
     expect(activePhase?.tasks).toHaveLength(1);
   });
+
+  test("fails fast when discovery config is invalid", async () => {
+    const sandbox = await TestSandbox.create("ixado-p31-003-invalid-config-");
+    sandboxes.push(sandbox);
+
+    await Bun.write(
+      sandbox.globalConfigFile,
+      JSON.stringify({
+        discovery: {
+          priorityWeights: {
+            recency: 0,
+            frequency: 0,
+            tags: 0,
+          },
+        },
+      }),
+    );
+
+    const discover = runIxadoWithPath(
+      ["discover", "--dry-run"],
+      sandbox,
+      sandbox.projectDir,
+    );
+    expect(discover.exitCode).toBe(1);
+    expect(discover.stderr).toContain("discovery.priorityWeights");
+  });
 });
