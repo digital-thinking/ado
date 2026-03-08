@@ -1,6 +1,15 @@
 export { ClaudeAdapter } from "./claude-adapter";
 export { CodexAdapter } from "./codex-adapter";
 export {
+  AdapterCircuitBreaker,
+  getAdapterCircuitBreakerSingleton,
+  type AdapterCircuitBreakerConfig,
+  type AdapterCircuitDecision,
+  type AdapterCircuitSnapshot,
+  type AdapterCircuitState,
+  type AdapterCircuitTransition,
+} from "./adapter-circuit-breaker";
+export {
   buildAdapterExecutionPlan,
   type AdapterExecutionPlan,
 } from "./execution-plan";

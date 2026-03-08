@@ -33,6 +33,7 @@ With shared services:
 ### 3) Adapter Execution (`src/adapters/`, `src/web/agent-supervisor.ts`)
 
 - Adapter-specific command builders normalize Codex/Claude/Gemini/Mock invocation.
+- Adapter circuit breaker tracks per-adapter consecutive failures with cooldown-based auto-close for resilience controls in phase execution.
 - Agent supervisor runs tasks to completion, captures output tails, and tracks runtime metadata.
 - Supports adapter safety flags, timeout settings, and startup diagnostics.
 
