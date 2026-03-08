@@ -20,6 +20,10 @@ import { createTelegramRuntime } from "../bot";
 import { ExecutionRunLock } from "../engine/execution-run-lock";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { PhaseRunner } from "../engine/phase-runner";
+import {
+  discoverTaskCandidates,
+  type DiscoveryCandidate,
+} from "../engine/discovery-candidates";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
@@ -47,6 +51,7 @@ import {
 } from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
+import { GitHubManager } from "../vcs";
 import { initializeCliLogging } from "./logging";
 import { CommandRegistry, type CommandActionContext } from "./command-registry";
 import { ValidationError } from "./validation";
@@ -749,6 +754,7 @@ function resolvePhaseFailureGuidance(
 }
 
 type PhaseRunMode = "AUTO" | "MANUAL";
+type DiscoverCommandMode = "DRY_RUN" | "QUEUE";
 
 function resolveActivePhaseFromState(
   state: Awaited<ReturnType<ControlCenterService["getState"]>>,
@@ -936,6 +942,170 @@ async function runTaskStartCommand({
       `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
     );
   }
+}
+
+function parseDiscoverCommandMode(args: string[]): DiscoverCommandMode {
+  const DISCOVER_USAGE = "ixado discover [--dry-run|--queue]";
+  let mode: DiscoverCommandMode | undefined;
+
+  for (const rawToken of args) {
+    const token = rawToken.trim();
+    if (!token) {
+      continue;
+    }
+
+    if (token === "--dry-run") {
+      if (mode && mode !== "DRY_RUN") {
+        throw new ValidationError(
+          "Options --dry-run and --queue are mutually exclusive.",
+          {
+            usage: DISCOVER_USAGE,
+            hint: "Use --dry-run to preview, or --queue to create TODO tasks.",
+          },
+        );
+      }
+      mode = "DRY_RUN";
+      continue;
+    }
+
+    if (token === "--queue") {
+      if (mode && mode !== "QUEUE") {
+        throw new ValidationError(
+          "Options --dry-run and --queue are mutually exclusive.",
+          {
+            usage: DISCOVER_USAGE,
+            hint: "Use --dry-run to preview, or --queue to create TODO tasks.",
+          },
+        );
+      }
+      mode = "QUEUE";
+      continue;
+    }
+
+    throw new ValidationError(`Unknown option: '${token}'.`, {
+      usage: DISCOVER_USAGE,
+      hint: "Supported options: --dry-run, --queue.",
+    });
+  }
+
+  return mode ?? "DRY_RUN";
+}
+
+function formatDiscoverCandidateLine(
+  candidate: DiscoveryCandidate,
+  index: number,
+): string {
+  if (candidate.source === "TODO_COMMENT") {
+    return `${index + 1}. [TODO ${candidate.tag}] ${candidate.filePath}:${candidate.line} ${candidate.title} (score=${candidate.priorityScore.toFixed(3)})`;
+  }
+
+  return `${index + 1}. [ISSUE #${candidate.issueNumber}] ${candidate.title} (score=${candidate.priorityScore.toFixed(3)})`;
+}
+
+function buildDiscoverTaskInput(candidate: DiscoveryCandidate): {
+  title: string;
+  description: string;
+} {
+  if (candidate.source === "TODO_COMMENT") {
+    return {
+      title: `Resolve ${candidate.tag}: ${candidate.title}`,
+      description: [
+        candidate.description,
+        `Source: ${candidate.filePath}:${candidate.line}`,
+        `Discovery score: ${candidate.priorityScore.toFixed(3)} (recency=${candidate.recencyScore.toFixed(3)}, frequency=${candidate.frequencyScore.toFixed(3)}, tags=${candidate.tagScore.toFixed(3)}).`,
+      ].join("\n"),
+    };
+  }
+
+  return {
+    title: `[Issue #${candidate.issueNumber}] ${candidate.title}`,
+    description: [
+      candidate.description,
+      `Source: ${candidate.issueUrl}`,
+      `Discovery score: ${candidate.priorityScore.toFixed(3)} (recency=${candidate.recencyScore.toFixed(3)}, frequency=${candidate.frequencyScore.toFixed(3)}, tags=${candidate.tagScore.toFixed(3)}).`,
+    ].join("\n"),
+  };
+}
+
+async function runDiscoverCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const mode = parseDiscoverCommandMode(args);
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+
+  const githubManager = new GitHubManager(new ProcessManager());
+  const candidates = await discoverTaskCandidates({
+    rootDir: projectRootDir,
+    githubManager,
+    includePatterns: settings.discovery.includePatterns,
+    excludePatterns: settings.discovery.excludePatterns,
+    priorityWeights: settings.discovery.priorityWeights,
+    issueLimit: settings.discovery.maxCandidates,
+    maxCandidates: settings.discovery.maxCandidates,
+  });
+
+  console.info(`Discovered ${candidates.length} candidate(s).`);
+  if (candidates.length === 0) {
+    if (mode === "DRY_RUN") {
+      console.info("Dry run only. No tasks were queued.");
+      console.info(
+        "Next:    Add TODO/FIXME comments or open GitHub issues, then run 'ixado discover --queue'.",
+      );
+      return;
+    }
+
+    console.info("Queued 0 discovery candidate(s).");
+    console.info(
+      "Next:    Add TODO/FIXME comments or open GitHub issues, then rerun 'ixado discover --queue'.",
+    );
+    return;
+  }
+
+  for (const [index, candidate] of candidates.entries()) {
+    console.info(formatDiscoverCandidateLine(candidate, index));
+  }
+
+  if (mode === "DRY_RUN") {
+    console.info("Dry run only. No tasks were queued.");
+    console.info(
+      "Next:    Run 'ixado discover --queue' to add these candidates as TODO tasks in the active phase.",
+    );
+    return;
+  }
+
+  const state = await control.getState();
+  const activePhase = resolveActivePhaseFromState(state);
+
+  for (const candidate of candidates) {
+    const taskInput = buildDiscoverTaskInput(candidate);
+    await control.createTask({
+      phaseId: activePhase.id,
+      title: taskInput.title,
+      description: taskInput.description,
+      assignee: "UNASSIGNED",
+      status: "TODO",
+    });
+  }
+
+  const refreshedState = await control.getState();
+  const refreshedPhase = resolveActivePhaseFromState(refreshedState);
+  console.info(
+    `Queued ${candidates.length} discovery candidate(s) as TODO tasks in ${refreshedPhase.name}.`,
+  );
+  console.info(
+    `Next:    Run 'ixado task list' to review queued tasks or 'ixado phase run' to execute them.`,
+  );
 }
 
 async function runTaskCreateCommand({
@@ -1926,6 +2096,12 @@ async function runCli(args: string[]): Promise<void> {
       name: "onboard",
       description: "Configure global CLI settings",
       action: runOnboardCommand,
+    },
+    {
+      name: "discover",
+      description: "Discover ranked task candidates from TODO/FIXME and issues",
+      usage: "discover [--dry-run|--queue]",
+      action: runDiscoverCommand,
     },
     {
       name: "task",

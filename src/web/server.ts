@@ -486,6 +486,14 @@ export async function startWebControlCenter(
             ...(validatedPatch.executionLoop?.pullRequest ?? {}),
           },
         },
+        discovery: {
+          ...current.discovery,
+          ...(validatedPatch.discovery ?? {}),
+          priorityWeights: {
+            ...current.discovery.priorityWeights,
+            ...(validatedPatch.discovery?.priorityWeights ?? {}),
+          },
+        },
         exceptionRecovery: {
           ...current.exceptionRecovery,
           ...(validatedPatch.exceptionRecovery ?? {}),

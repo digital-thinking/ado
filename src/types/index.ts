@@ -190,6 +190,49 @@ export const ExecutionLoopSettingsSchema = z.object({
 });
 export type ExecutionLoopSettings = z.infer<typeof ExecutionLoopSettingsSchema>;
 
+export const DiscoveryPriorityWeightsSchema = z.object({
+  recency: z.number().min(0).default(0.4),
+  frequency: z.number().min(0).default(0.3),
+  tags: z.number().min(0).default(0.3),
+});
+export type DiscoveryPriorityWeights = z.infer<
+  typeof DiscoveryPriorityWeightsSchema
+>;
+
+export const DiscoverySettingsSchema = z
+  .object({
+    includePatterns: z.array(z.string().min(1)).min(1).default(["**/*"]),
+    excludePatterns: z
+      .array(z.string().min(1))
+      .default([
+        ".git/**",
+        ".ixado/**",
+        "node_modules/**",
+        "dist/**",
+        "coverage/**",
+      ]),
+    priorityWeights: DiscoveryPriorityWeightsSchema.default({
+      recency: 0.4,
+      frequency: 0.3,
+      tags: 0.3,
+    }),
+    maxCandidates: z.number().int().min(1).max(1000).default(25),
+  })
+  .superRefine((value, context) => {
+    const totalWeight =
+      value.priorityWeights.recency +
+      value.priorityWeights.frequency +
+      value.priorityWeights.tags;
+    if (totalWeight <= 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "discovery.priorityWeights must have a positive total weight.",
+        path: ["priorityWeights"],
+      });
+    }
+  });
+export type DiscoverySettings = z.infer<typeof DiscoverySettingsSchema>;
+
 export const ExceptionRecoverySettingsSchema = z.object({
   maxAttempts: z.number().int().min(0).max(10).default(1),
 });
@@ -275,6 +318,22 @@ export const CliSettingsSchema = z
         createAsDraft: false,
         markReadyOnApproval: false,
       },
+    }),
+    discovery: DiscoverySettingsSchema.default({
+      includePatterns: ["**/*"],
+      excludePatterns: [
+        ".git/**",
+        ".ixado/**",
+        "node_modules/**",
+        "dist/**",
+        "coverage/**",
+      ],
+      priorityWeights: {
+        recency: 0.4,
+        frequency: 0.3,
+        tags: 0.3,
+      },
+      maxCandidates: 25,
     }),
     exceptionRecovery: ExceptionRecoverySettingsSchema.default({
       maxAttempts: 1,
@@ -412,6 +471,45 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   pullRequest: PullRequestAutomationSettingsOverrideSchema.optional(),
 });
 
+const DiscoverySettingsOverrideSchema = z
+  .object({
+    includePatterns: z.array(z.string().min(1)).min(1).optional(),
+    excludePatterns: z.array(z.string().min(1)).optional(),
+    priorityWeights: z
+      .object({
+        recency: z.number().min(0).optional(),
+        frequency: z.number().min(0).optional(),
+        tags: z.number().min(0).optional(),
+      })
+      .optional(),
+    maxCandidates: z.number().int().min(1).max(1000).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.priorityWeights) {
+      return;
+    }
+
+    const allWeightsDefined =
+      value.priorityWeights.recency !== undefined &&
+      value.priorityWeights.frequency !== undefined &&
+      value.priorityWeights.tags !== undefined;
+    if (!allWeightsDefined) {
+      return;
+    }
+
+    const totalWeight =
+      (value.priorityWeights.recency ?? 0) +
+      (value.priorityWeights.frequency ?? 0) +
+      (value.priorityWeights.tags ?? 0);
+    if (totalWeight <= 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "discovery.priorityWeights must have a positive total weight.",
+        path: ["priorityWeights"],
+      });
+    }
+  });
+
 const ExceptionRecoverySettingsOverrideSchema = z.object({
   maxAttempts: z.number().int().min(0).max(10).optional(),
 });
@@ -438,6 +536,7 @@ export const CliSettingsOverrideSchema = z.object({
     })
     .optional(),
   executionLoop: ExecutionLoopSettingsOverrideSchema.optional(),
+  discovery: DiscoverySettingsOverrideSchema.optional(),
   exceptionRecovery: ExceptionRecoverySettingsOverrideSchema.optional(),
   usage: z
     .object({

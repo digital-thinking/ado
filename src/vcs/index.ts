@@ -16,6 +16,8 @@ export type {
   CiStatusSummary,
   CreatePullRequestInput,
   CiPollTransition,
+  GitHubIssue,
+  ListOpenIssuesInput,
   MarkPullRequestReadyInput,
   MergePullRequestInput,
   PollCiStatusInput,

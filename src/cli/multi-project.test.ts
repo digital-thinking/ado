@@ -83,8 +83,25 @@ const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
 const DEFAULT_USAGE_SETTINGS = {
   codexbarEnabled: true,
 };
+const DEFAULT_DISCOVERY_SETTINGS = {
+  includePatterns: ["**/*"],
+  excludePatterns: [
+    ".git/**",
+    ".ixado/**",
+    "node_modules/**",
+    "dist/**",
+    "coverage/**",
+  ],
+  priorityWeights: {
+    recency: 0.4,
+    frequency: 0.3,
+    tags: 0.3,
+  },
+  maxCandidates: 25,
+};
 
 function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
+  const discoveryOverride = overrides.discovery;
   return {
     projects: [],
     telegram: {
@@ -100,6 +117,14 @@ function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
     usage: DEFAULT_USAGE_SETTINGS,
     agents: DEFAULT_AGENT_SETTINGS,
     ...overrides,
+    discovery: {
+      ...DEFAULT_DISCOVERY_SETTINGS,
+      ...(discoveryOverride ?? {}),
+      priorityWeights: {
+        ...DEFAULT_DISCOVERY_SETTINGS.priorityWeights,
+        ...(discoveryOverride?.priorityWeights ?? {}),
+      },
+    },
   };
 }
 
