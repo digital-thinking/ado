@@ -970,8 +970,12 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     refinedPrompt: string;
     summary: DeliberationSummary;
   }> {
-    const reviewerAssignee =
-      this.config.deliberation?.reviewerAdapter ?? this.config.activeAssignee;
+    const reviewerAssignee = await this.resolveDeliberationReviewerAssignee({
+      phase: input.phase,
+      task: input.task,
+      taskNumber: input.taskNumber,
+      implementerAssignee: input.implementerAssignee,
+    });
     const maxRefinePasses = this.config.deliberation?.maxRefinePasses ?? 1;
     console.info(
       `Execution loop: running deliberation for task #${input.taskNumber} ${input.task.title} with implementer=${input.implementerAssignee} reviewer=${reviewerAssignee}.`,
@@ -1014,6 +1018,79 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       refinedPrompt: result.refinedPrompt,
       summary: result.summary,
     };
+  }
+
+  private async resolveDeliberationReviewerAssignee(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    implementerAssignee: CLIAdapterId;
+  }): Promise<CLIAdapterId> {
+    const preferredReviewer =
+      this.config.deliberation?.reviewerAdapter ?? this.config.activeAssignee;
+    const enabledAdapters = new Set(this.enabledAdapters);
+    const candidates: CLIAdapterId[] = [];
+
+    for (const candidate of [
+      preferredReviewer,
+      input.implementerAssignee,
+      ...this.enabledAdapters,
+    ]) {
+      if (!candidates.includes(candidate)) {
+        candidates.push(candidate);
+      }
+    }
+
+    const openCandidates: CLIAdapterId[] = [];
+    for (const candidate of candidates) {
+      if (!enabledAdapters.has(candidate)) {
+        continue;
+      }
+
+      const decision = this.getAdapterBreaker(candidate).check(candidate);
+      await this.maybeEmitCircuitTransition({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        decision,
+      });
+
+      if (!decision.canExecute) {
+        openCandidates.push(candidate);
+        continue;
+      }
+
+      if (candidate !== preferredReviewer) {
+        const reason = enabledAdapters.has(preferredReviewer)
+          ? `circuit open for ${preferredReviewer}`
+          : `${preferredReviewer} is unavailable`;
+        const message = `Deliberation reviewer fallback for task #${input.taskNumber} (${input.task.title}): ${reason}; using ${candidate}.`;
+        console.info(message);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "task-lifecycle",
+            type: "task.lifecycle.progress",
+            payload: { message },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: input.phase.id,
+              phaseName: input.phase.name,
+              taskId: input.task.id,
+              taskTitle: input.task.title,
+              taskNumber: input.taskNumber,
+              adapterId: candidate,
+            },
+          }),
+        );
+      }
+
+      return candidate;
+    }
+
+    throw new Error(
+      `No deliberation reviewer available for task #${input.taskNumber} ${input.task.title}. Open circuits: ${openCandidates.join(", ")}.`,
+    );
   }
 
   private async runTesterStep(
