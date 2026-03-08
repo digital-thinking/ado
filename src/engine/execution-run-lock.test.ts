@@ -90,6 +90,19 @@ describe("ExecutionRunLock", () => {
     await expect(first.acquire()).resolves.toBeUndefined();
     await expect(second.acquire()).resolves.toBeUndefined();
 
+    await expect(
+      readFile(
+        join(sandboxDir, ".ixado", "execution-run-phase-1.lock.json"),
+        "utf8",
+      ),
+    ).resolves.toContain('"phaseId": "phase-1"');
+    await expect(
+      readFile(
+        join(sandboxDir, ".ixado", "execution-run-phase-2.lock.json"),
+        "utf8",
+      ),
+    ).resolves.toContain('"phaseId": "phase-2"');
+
     await first.release();
     await second.release();
   });

@@ -46,18 +46,26 @@ async function createRepoRoot(): Promise<string> {
   return repoRoot;
 }
 
+async function createLinkedRepoRoot(): Promise<{
+  repoRoot: string;
+  gitDirPath: string;
+}> {
+  const repoRoot = await mkdtemp(join(tmpdir(), "ixado-worktree-manager-"));
+  const gitDirPath = resolve(repoRoot, ".git-data");
+  await mkdir(gitDirPath, { recursive: true });
+  await writeFile(resolve(repoRoot, ".git"), `gitdir: ${gitDirPath}\n`);
+  return { repoRoot, gitDirPath };
+}
+
 async function writeWorktreeMetadata(input: {
   repoRoot: string;
+  gitDirPath?: string;
   metadataName: string;
   worktreePath: string;
   branchName?: string;
 }): Promise<void> {
-  const metadataDir = resolve(
-    input.repoRoot,
-    ".git",
-    "worktrees",
-    input.metadataName,
-  );
+  const gitDirPath = input.gitDirPath ?? resolve(input.repoRoot, ".git");
+  const metadataDir = resolve(gitDirPath, "worktrees", input.metadataName);
   await mkdir(metadataDir, { recursive: true });
   await writeFile(
     resolve(metadataDir, "gitdir"),
@@ -175,6 +183,38 @@ describe("WorktreeManager", () => {
       });
 
       await expect(manager.listActive()).resolves.toEqual([]);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("lists active managed worktrees when .git is a gitdir pointer file", async () => {
+    const { repoRoot, gitDirPath } = await createLinkedRepoRoot();
+    const fakeGit = createFakeGit();
+    try {
+      const managedPath = resolve(repoRoot, ".ixado/worktrees", "phase-27-d");
+      await writeWorktreeMetadata({
+        repoRoot,
+        gitDirPath,
+        metadataName: "managed",
+        worktreePath: managedPath,
+        branchName: "phase-27-d",
+      });
+
+      const manager = new WorktreeManager({
+        git: fakeGit.api,
+        projectRootDir: repoRoot,
+        baseDir: ".ixado/worktrees",
+      });
+      const active = await manager.listActive();
+
+      expect(active).toEqual([
+        {
+          phaseId: "phase-27-d",
+          path: managedPath,
+          branchName: "phase-27-d",
+        },
+      ]);
     } finally {
       await rm(repoRoot, { recursive: true, force: true });
     }

@@ -98,4 +98,67 @@ describe("phase19 CLI phase run argument parsing", () => {
       "Error: Phase '1' is not active and cannot be run with --phase.",
     );
   });
+
+  test("phase run --phase accepts active target phase number", async () => {
+    const sandbox = await TestSandbox.create("ixado-p19-run-phase-active-num-");
+    sandboxes.push(sandbox);
+
+    expect(
+      runIxado(["phase", "create", "Phase One", "phase-one"], sandbox).exitCode,
+    ).toBe(0);
+    expect(
+      runIxado(["phase", "create", "Phase Two", "phase-two"], sandbox).exitCode,
+    ).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    const phaseOneId = state.phases[0]?.id;
+    const phaseTwoId = state.phases[1]?.id;
+    if (!phaseOneId || !phaseTwoId) {
+      throw new Error("Expected two phases in test fixture.");
+    }
+    state.activePhaseIds = [phaseOneId, phaseTwoId];
+    await sandbox.writeProjectState(state);
+
+    const result = runIxado(["phase", "run", "--phase", "1"], sandbox);
+
+    // In sandbox (no git repo), routing should succeed and fail later in git preflight.
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("git branch --show-current");
+    expect(result.stderr).not.toContain(
+      "is not active and cannot be run with --phase",
+    );
+  });
+
+  test("phase run --phase accepts active target phase id", async () => {
+    const sandbox = await TestSandbox.create("ixado-p19-run-phase-active-id-");
+    sandboxes.push(sandbox);
+
+    expect(
+      runIxado(["phase", "create", "Phase One", "phase-one"], sandbox).exitCode,
+    ).toBe(0);
+    expect(
+      runIxado(["phase", "create", "Phase Two", "phase-two"], sandbox).exitCode,
+    ).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    const phaseOneId = state.phases[0]?.id;
+    const phaseTwoId = state.phases[1]?.id;
+    if (!phaseOneId) {
+      throw new Error("Expected Phase One ID in test fixture.");
+    }
+    if (!phaseTwoId) {
+      throw new Error("Expected Phase Two ID in test fixture.");
+    }
+    state.activePhaseIds = [phaseOneId, phaseTwoId];
+    await sandbox.writeProjectState(state);
+
+    const result = runIxado(["phase", "run", "--phase", phaseOneId], sandbox);
+
+    // In sandbox (no git repo), routing should succeed and fail later in git preflight.
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("git branch --show-current");
+    expect(result.stderr).not.toContain(
+      "is not active and cannot be run with --phase",
+    );
+  });
 });

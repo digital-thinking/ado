@@ -172,6 +172,69 @@ describe("StateEngine", () => {
     expect(phaseB?.tasks[0]?.id).toBe(taskBId);
   });
 
+  test("serializes concurrent writeTasks for three phases without dropping updates", async () => {
+    const firstEngine = new StateEngine(stateFilePath);
+    const secondEngine = new StateEngine(stateFilePath);
+    const thirdEngine = new StateEngine(stateFilePath);
+    const phaseIds = [randomUUID(), randomUUID(), randomUUID()];
+    const taskIds = [randomUUID(), randomUUID(), randomUUID()];
+
+    await firstEngine.writeProjectState({
+      projectName: "IxADO",
+      rootDir: "C:/Users/chris/scm/ado",
+      phases: phaseIds.map((phaseId, index) => ({
+        id: phaseId,
+        name: `Phase ${index + 1}`,
+        branchName: `phase-${index + 1}`,
+        status: "CODING",
+        tasks: [],
+      })),
+      activePhaseIds: [phaseIds[0]],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await Promise.all([
+      firstEngine.writeTasks(phaseIds[0], [
+        {
+          id: taskIds[0],
+          title: "Task A",
+          description: "Update phase A",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+      secondEngine.writeTasks(phaseIds[1], [
+        {
+          id: taskIds[1],
+          title: "Task B",
+          description: "Update phase B",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+      thirdEngine.writeTasks(phaseIds[2], [
+        {
+          id: taskIds[2],
+          title: "Task C",
+          description: "Update phase C",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+    ]);
+
+    const loaded = await firstEngine.readProjectState();
+    for (const [index, phaseId] of phaseIds.entries()) {
+      const phase = loaded.phases.find((candidate) => candidate.id === phaseId);
+      expect(phase?.tasks).toHaveLength(1);
+      expect(phase?.tasks[0]?.id).toBe(taskIds[index]);
+    }
+  });
+
   test("fails fast when state file is missing", async () => {
     const engine = new StateEngine(stateFilePath);
 
