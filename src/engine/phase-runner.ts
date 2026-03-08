@@ -22,6 +22,7 @@ import {
   runDeliberationPass,
   type DeliberationSummary,
 } from "./deliberation-pass";
+import { formatDeliberationSummaryForResultContext } from "./deliberation-summary";
 import {
   AdapterCircuitBreaker,
   type AdapterCircuitBreakerConfig,
@@ -550,6 +551,7 @@ Recovery: ${recoveryMessage}`,
     });
     let taskDescriptionOverride: string | undefined;
     let resultContextPrefix: string | undefined;
+    let deliberationSummary: DeliberationSummary | undefined;
     if (task.deliberate === true) {
       const deliberation = await this.runDeliberationForTask({
         phase,
@@ -558,7 +560,8 @@ Recovery: ${recoveryMessage}`,
         implementerAssignee: effectiveAssignee,
       });
       taskDescriptionOverride = deliberation.refinedPrompt;
-      resultContextPrefix = this.formatDeliberationSummary(
+      deliberationSummary = deliberation.summary;
+      resultContextPrefix = formatDeliberationSummaryForResultContext(
         deliberation.summary,
       );
     }
@@ -633,6 +636,14 @@ Recovery: ${recoveryMessage}`,
           payload: {
             status: resultTask.status,
             message: `${nextTaskLabel} finished with status ${resultTask.status}.`,
+            deliberation: deliberationSummary
+              ? {
+                  finalVerdict: deliberationSummary.finalVerdict,
+                  rounds: deliberationSummary.rounds.length,
+                  refinePassesUsed: deliberationSummary.refinePassesUsed,
+                  pendingComments: deliberationSummary.pendingComments.length,
+                }
+              : undefined,
           },
           context: {
             source: "PHASE_RUNNER",
@@ -1003,12 +1014,6 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       refinedPrompt: result.refinedPrompt,
       summary: result.summary,
     };
-  }
-
-  private formatDeliberationSummary(summary: DeliberationSummary): string {
-    return ["Deliberation summary:", JSON.stringify(summary, null, 2)].join(
-      "\n",
-    );
   }
 
   private async runTesterStep(

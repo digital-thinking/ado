@@ -154,6 +154,7 @@ describe("PhaseRunner", () => {
     };
 
     const startInputs: any[] = [];
+    const runtimeEvents: Array<{ type: string; payload: any }> = [];
     const mockControl = {
       reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
@@ -222,7 +223,9 @@ describe("PhaseRunner", () => {
         },
       },
       undefined,
-      undefined,
+      async (event) => {
+        runtimeEvents.push({ type: event.type, payload: event.payload });
+      },
       mockRunner,
     );
     await runner.run();
@@ -241,6 +244,16 @@ describe("PhaseRunner", () => {
     expect(startInputs[0]?.resultContextPrefix).toContain(
       '"taskTitle": "Deliberate Task"',
     );
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task.lifecycle.finish" &&
+          event.payload.deliberation?.finalVerdict === "APPROVED" &&
+          event.payload.deliberation?.rounds === 1 &&
+          event.payload.deliberation?.refinePassesUsed === 0 &&
+          event.payload.deliberation?.pendingComments === 0,
+      ),
+    ).toBe(true);
   });
 
   test("creates draft PR and marks it ready after validation approval when configured", async () => {

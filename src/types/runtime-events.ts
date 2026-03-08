@@ -87,6 +87,14 @@ export const TaskLifecycleFinishEventSchema = RuntimeEventBaseSchema.extend({
   payload: z.object({
     status: TaskStatusSchema,
     message: z.string().min(1),
+    deliberation: z
+      .object({
+        finalVerdict: z.enum(["APPROVED", "CHANGES_REQUESTED"]),
+        rounds: z.number().int().min(0),
+        refinePassesUsed: z.number().int().min(0),
+        pendingComments: z.number().int().min(0),
+      })
+      .optional(),
   }),
 });
 
@@ -293,7 +301,14 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
     case "task.lifecycle.phase-update":
       return `Phase update: ${event.phaseName ?? event.phaseId ?? "unknown"} -> ${event.payload.status}.`;
     case "task.lifecycle.finish":
-      return `Task update: #${event.taskNumber ?? "?"} ${event.taskTitle ?? event.taskId ?? "unknown"} -> ${event.payload.status}.`;
+      return [
+        `Task update: #${event.taskNumber ?? "?"} ${event.taskTitle ?? event.taskId ?? "unknown"} -> ${event.payload.status}.`,
+        event.payload.deliberation
+          ? `Deliberation: ${event.payload.deliberation.finalVerdict} (rounds=${event.payload.deliberation.rounds}, refinePasses=${event.payload.deliberation.refinePassesUsed}, pendingComments=${event.payload.deliberation.pendingComments}).`
+          : undefined,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n");
     case "tester.activity":
       return `Tester: ${event.payload.summary}`;
     case "recovery.activity":

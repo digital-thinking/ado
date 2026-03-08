@@ -67,6 +67,29 @@ describe("derivePullRequestMetadata", () => {
     expect(body).toContain("_No tasks recorded._");
   });
 
+  test("adds deliberation summaries in a collapsible section", () => {
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        title: "Deliberate task",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+        resultContext: [
+          "Deliberation summary:",
+          '{"taskId":"t1","taskTitle":"Deliberate task","implementerAssignee":"CODEX_CLI","reviewerAssignee":"CLAUDE_CLI","maxRefinePasses":2,"refinePassesUsed":1,"finalVerdict":"APPROVED","rounds":[{"round":1,"proposal":"p1","verdict":"CHANGES_REQUESTED","comments":["c1"]},{"round":2,"proposal":"p2","verdict":"APPROVED","comments":[]}],"pendingComments":[]}',
+          "",
+          "Implementation complete.",
+        ].join("\n"),
+      },
+    ];
+
+    const { body } = derivePullRequestMetadata("Phase 30", tasks);
+    expect(body).toContain("<summary>Deliberation Summary</summary>");
+    expect(body).toContain("| Deliberate task | APPROVED | 2 | 1/2 | 0 |");
+  });
+
   test("truncates long title but keeps full name in body", () => {
     const longName = "A".repeat(300);
     const tasks: Task[] = [
