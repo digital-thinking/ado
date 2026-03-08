@@ -60,6 +60,29 @@ function buildState(): ProjectState {
   };
 }
 
+function buildMultiActiveState(): ProjectState {
+  const state = buildState();
+  const secondPhase: ProjectState["phases"][number] = {
+    id: "33333333-3333-3333-3333-333333333333",
+    name: "Phase 4",
+    branchName: "phase-4-parallel-runner",
+    status: "READY_FOR_REVIEW",
+    tasks: [
+      {
+        id: "44444444-4444-4444-4444-444444444444",
+        title: "Review integration output",
+        description: "Summarize changes",
+        status: "TODO",
+        assignee: "CLAUDE_CLI",
+        dependencies: [],
+      },
+    ],
+  };
+  state.phases.push(secondPhase);
+  state.activePhaseIds = [state.phases[0].id, secondPhase.id];
+  return state;
+}
+
 describe("telegram command handlers", () => {
   test("formats structured runtime outcomes for Telegram notifications", () => {
     const event = createRuntimeEvent({
@@ -117,10 +140,27 @@ describe("telegram command handlers", () => {
 
     expect(ctx.replies).toHaveLength(1);
     expect(ctx.replies[0]).toContain("Project: IxADO");
-    expect(ctx.replies[0]).toContain("Active: Phase 3 (CODING)");
+    expect(ctx.replies[0]).toContain("Active Phases: Phase 3 (CODING)");
     expect(ctx.replies[0]).toContain("Available Agents: CODEX_CLI, CLAUDE_CLI");
     expect(ctx.replies[0]).toContain("Running Agents (1):");
     expect(ctx.replies[0]).toContain("Phase 3: Implement Telegram adapter");
+  });
+
+  test("returns all active phases in status output", async () => {
+    const ctx = createCtx(123);
+
+    await handleStatusCommand(
+      ctx,
+      123,
+      async () => buildMultiActiveState(),
+      () => [],
+      ["CODEX_CLI", "CLAUDE_CLI"],
+    );
+
+    expect(ctx.replies).toHaveLength(1);
+    expect(ctx.replies[0]).toContain(
+      "Active Phases: Phase 3 (CODING) | Phase 4 (READY_FOR_REVIEW)",
+    );
   });
 
   test("returns tasks list for authorized user", async () => {
@@ -142,7 +182,20 @@ describe("telegram command handlers", () => {
 
     await handleTasksCommand(ctx, 123, async () => state);
 
-    expect(ctx.replies).toEqual(["No active phase selected."]);
+    expect(ctx.replies).toEqual(["No active phases selected."]);
+  });
+
+  test("returns tasks for all active phases", async () => {
+    const ctx = createCtx(123);
+
+    await handleTasksCommand(ctx, 123, async () => buildMultiActiveState());
+
+    expect(ctx.replies).toHaveLength(1);
+    expect(ctx.replies[0]).toContain("Tasks for Phase 3:");
+    expect(ctx.replies[0]).toContain("Tasks for Phase 4:");
+    expect(ctx.replies[0]).toContain(
+      "1. [TODO] Review integration output (CLAUDE_CLI)",
+    );
   });
 
   test("returns unauthorized for tasks when owner id does not match", async () => {
