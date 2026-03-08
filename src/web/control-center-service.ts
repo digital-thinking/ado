@@ -9,6 +9,7 @@ import {
   classifyAdapterFailure,
   type AdapterFailureKind,
 } from "../adapters/failure-taxonomy";
+import { inferTaskType } from "../engine/task-type-classifier";
 import { buildWorkerPrompt } from "../engine/worker-prompts";
 import { parseJsonFromModelOutput } from "../engine/json-parser";
 import {
@@ -42,6 +43,7 @@ import {
   type RecoveryAttemptRecord,
   type SideEffectContract,
   type Task,
+  type TaskType,
   type TaskCompletionVerification,
   type TaskRoutingReason,
   type WorkerAssignee,
@@ -87,6 +89,7 @@ export type CreateTaskInput = {
   title: string;
   description: string;
   assignee?: WorkerAssignee;
+  taskType?: TaskType;
   dependencies?: string[];
   status?: Task["status"];
 };
@@ -645,10 +648,15 @@ export class ControlCenterService {
       throw new Error(`Phase not found: ${input.phaseId}`);
     }
 
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const taskType = input.taskType ?? inferTaskType({ title, description });
+
     const task = TaskSchema.parse({
       id: randomUUID(),
-      title: input.title.trim(),
-      description: input.description.trim(),
+      title,
+      description,
+      taskType,
       assignee: input.assignee ?? "UNASSIGNED",
       dependencies: input.dependencies ?? [],
       status: input.status ?? "TODO",

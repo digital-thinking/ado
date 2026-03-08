@@ -61,6 +61,40 @@ describe("ControlCenterService", () => {
     expect(afterTask.phases[0].tasks).toHaveLength(1);
     expect(afterTask.phases[0].tasks[0].title).toBe("Build dashboard");
     expect(afterTask.phases[0].tasks[0].assignee).toBe("CODEX_CLI");
+    expect(afterTask.phases[0].tasks[0].taskType).toBe("implementation");
+  });
+
+  test("auto-classifies task type from title and description", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Write regression tests for task routing",
+      description: "Add integration test coverage for affinity selection.",
+    });
+
+    expect(taskState.phases[0].tasks[0].taskType).toBe("test-writing");
+  });
+
+  test("respects explicit task type override on createTask", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Security hardening for API auth",
+      description: "Audit all threat vectors and patch vulnerabilities.",
+      taskType: "documentation",
+    });
+
+    expect(taskState.phases[0].tasks[0].taskType).toBe("documentation");
   });
 
   test("updates task title, description, and dependencies", async () => {

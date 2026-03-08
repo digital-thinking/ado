@@ -155,6 +155,7 @@ So project settings win over global defaults for overlapping keys. Use `ixado co
 ```
 
 Affinity targets must reference enabled adapters in `settings.agents`.
+New tasks are auto-classified from title/description heuristics; override with `ixado task create "Title" "Description" [assignee] --type <taskType>`.
 
 ### Windows
 

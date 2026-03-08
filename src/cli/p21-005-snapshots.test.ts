@@ -55,7 +55,7 @@ describe("P21-005 Snapshot Tests", () => {
         {
           name: "create",
           description: "Create task in active phase",
-          usage: "create <title> <description> [assignee]",
+          usage: "create <title> <description> [assignee] [--type <taskType>]",
         },
         {
           name: "start",

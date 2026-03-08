@@ -114,7 +114,9 @@ describe("P21-005 global help text", () => {
 
     // Key argument placeholders that must appear verbatim in the help table.
     expect(out).toContain("switch <project-name>");
-    expect(out).toContain("task create <title> <description> [assignee]");
+    expect(out).toContain(
+      "task create <title> <description> [assignee] [--type <taskType>]",
+    );
     expect(out).toContain("task start <taskNumber> [assignee]");
     expect(out).toContain("task retry <taskNumber>");
     expect(out).toContain("task logs <taskNumber>");
@@ -158,7 +160,9 @@ describe("P21-005 per-group help text", () => {
     const out = result.stdout;
     expect(out).toContain("Task commands:");
     expect(out).toContain("ixado task list");
-    expect(out).toContain("ixado task create <title> <description> [assignee]");
+    expect(out).toContain(
+      "ixado task create <title> <description> [assignee] [--type <taskType>]",
+    );
     expect(out).toContain("ixado task start <taskNumber> [assignee]");
     expect(out).toContain("ixado task retry <taskNumber>");
     expect(out).toContain("ixado task logs <taskNumber>");
