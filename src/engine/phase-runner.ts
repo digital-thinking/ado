@@ -32,6 +32,7 @@ import { ProcessManager, type ProcessRunner } from "../process";
 import {
   GitHubManager,
   GitManager,
+  WorktreeManager,
   type CiPollTransition,
   parsePullRequestNumberFromUrl,
   PrivilegedGitActions,
@@ -135,6 +136,10 @@ export type PhaseRunnerConfig = {
     maxRefinePasses: number;
   };
   projectRootDir: string;
+  worktrees?: {
+    enabled: boolean;
+    baseDir: string;
+  };
   projectName: string;
   policy: AuthPolicy;
   role: Role | null;
@@ -156,6 +161,8 @@ export class PhaseRunner {
   private git: GitManager;
   private github: GitHubManager;
   private privilegedGit: PrivilegedGitActions;
+  private worktreeManager: WorktreeManager | null;
+  private executionCwd: string;
   private adapterBreakers = new Map<CLIAdapterId, AdapterCircuitBreaker>();
   private enabledAdapters: CLIAdapterId[];
   private lastExecutedTaskContext:
@@ -180,6 +187,15 @@ export class PhaseRunner {
       role: config.role,
       policy: config.policy,
     });
+    this.worktreeManager =
+      config.worktrees?.enabled === true
+        ? new WorktreeManager({
+            git: this.git,
+            projectRootDir: config.projectRootDir,
+            baseDir: config.worktrees.baseDir,
+          })
+        : null;
+    this.executionCwd = config.projectRootDir;
     this.enabledAdapters = this.resolveEnabledAdapters();
   }
 
@@ -188,6 +204,9 @@ export class PhaseRunner {
       input: stdin,
       output: stdout,
     });
+    let activePhaseId: string | null = null;
+    let shouldTeardownOnSuccess = false;
+    this.executionCwd = this.config.projectRootDir;
 
     console.info(
       `Starting phase execution loop in ${this.config.mode} mode (countdown: ${this.config.countdownSeconds}s, assignee: ${this.config.activeAssignee}, recovery max attempts: ${this.config.maxRecoveryAttempts}).`,
@@ -206,6 +225,7 @@ export class PhaseRunner {
 
       const state = await this.control.getState();
       const phase = this.resolveActivePhase(state);
+      activePhaseId = phase.id;
 
       // Preflight: validate phase metadata and status before any git work.
       // Identical gate in both AUTO and MANUAL modes — deterministic execution
@@ -218,6 +238,7 @@ export class PhaseRunner {
 
       if (completedPhase && this.config.ciEnabled) {
         await this.handleCiIntegration(completedPhase);
+        shouldTeardownOnSuccess = true;
       } else if (completedPhase) {
         await this.control.setPhaseStatus({
           phaseId: completedPhase.id,
@@ -239,9 +260,18 @@ export class PhaseRunner {
             },
           }),
         );
+        shouldTeardownOnSuccess = true;
       }
+    } catch (error) {
+      if (activePhaseId) {
+        await this.teardownPhaseWorktreeOnFailure(activePhaseId);
+      }
+      throw error;
     } finally {
       rl.close();
+      if (shouldTeardownOnSuccess && activePhaseId) {
+        await this.teardownPhaseWorktree(activePhaseId);
+      }
     }
   }
 
@@ -271,6 +301,43 @@ export class PhaseRunner {
         default:
           throw error;
       }
+    }
+  }
+
+  private async teardownPhaseWorktree(phaseId: string): Promise<void> {
+    if (!this.worktreeManager) {
+      return;
+    }
+
+    const state = await this.control.getState();
+    const phase = state.phases.find(
+      (candidate: any) => candidate.id === phaseId,
+    );
+    if (!phase) {
+      return;
+    }
+
+    const worktreePath = phase.worktreePath?.trim();
+    if (!worktreePath) {
+      return;
+    }
+
+    await this.worktreeManager.teardown(phase.id);
+    await this.control.setPhaseStatus({
+      phaseId: phase.id,
+      status: phase.status,
+      worktreePath: null,
+    });
+    this.executionCwd = this.config.projectRootDir;
+    console.info(`Execution loop: removed worktree ${worktreePath}.`);
+  }
+
+  private async teardownPhaseWorktreeOnFailure(phaseId: string): Promise<void> {
+    try {
+      await this.teardownPhaseWorktree(phaseId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to teardown worktree after failure: ${message}`);
     }
   }
 
@@ -365,30 +432,47 @@ export class PhaseRunner {
       }),
     );
     console.info(`Execution loop: preparing branch ${phase.branchName}.`);
+    let branchCwd = this.config.projectRootDir;
+    let worktreePath = phase.worktreePath?.trim() || undefined;
 
     while (true) {
       try {
-        await this.git.ensureCleanWorkingTree(this.config.projectRootDir);
-        const currentBranch = await this.git.getCurrentBranch(
-          this.config.projectRootDir,
-        );
+        if (this.worktreeManager) {
+          if (!worktreePath) {
+            worktreePath = await this.worktreeManager.provision({
+              phaseId: phase.id,
+              branchName: phase.branchName,
+              fromRef: "HEAD",
+            });
+            await this.control.setPhaseStatus({
+              phaseId: phase.id,
+              status: "BRANCHING",
+              worktreePath,
+            });
+            console.info(
+              `Execution loop: provisioned worktree ${worktreePath}.`,
+            );
+          }
+          branchCwd = worktreePath;
+        }
+
+        this.executionCwd = branchCwd;
+        await this.git.ensureCleanWorkingTree(branchCwd);
+        const currentBranch = await this.git.getCurrentBranch(branchCwd);
         if (currentBranch === phase.branchName) {
           console.info(
             `Execution loop: already on branch ${phase.branchName}.`,
           );
         } else {
           try {
-            await this.git.checkout(
-              phase.branchName,
-              this.config.projectRootDir,
-            );
+            await this.git.checkout(phase.branchName, branchCwd);
             console.info(
               `Execution loop: checked out existing branch ${phase.branchName}.`,
             );
           } catch {
             await this.privilegedGit.createBranch({
               branchName: phase.branchName,
-              cwd: this.config.projectRootDir,
+              cwd: branchCwd,
               fromRef: "HEAD",
             });
             console.info(
@@ -408,7 +492,7 @@ export class PhaseRunner {
             category,
           });
           if (category === "DIRTY_WORKTREE") {
-            await this.git.ensureCleanWorkingTree(this.config.projectRootDir);
+            await this.git.ensureCleanWorkingTree(branchCwd);
           }
           console.info(
             "Execution loop: recovery succeeded for branching preconditions, retrying.",
@@ -983,7 +1067,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
 
     const result = await runDeliberationPass({
       projectName: this.config.projectName,
-      rootDir: this.config.projectRootDir,
+      rootDir: this.executionCwd,
       phase: input.phase,
       task: input.task,
       implementerAssignee: input.implementerAssignee,
@@ -1125,7 +1209,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         id: task.id,
         title: task.title,
       },
-      cwd: this.config.projectRootDir,
+      cwd: this.executionCwd,
       testerCommand: this.config.testerCommand,
       testerArgs: this.config.testerArgs,
       testerTimeoutMs: this.config.testerTimeoutMs,
@@ -1378,7 +1462,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           phaseId: phase.id,
           phaseName: phase.name,
           tasks: phase.tasks,
-          cwd: this.config.projectRootDir,
+          cwd: this.executionCwd,
           baseBranch: this.config.ciBaseBranch,
           pullRequest: this.config.ciPullRequest,
           commitTrailers,
@@ -1463,7 +1547,7 @@ ${testerResult.fixTaskDescription}`.trim(),
     console.info(`Polling GitHub CI checks for PR #${prNumber}.`);
     const ciSummary = await this.github.pollCiStatus({
       prNumber,
-      cwd: this.config.projectRootDir,
+      cwd: this.executionCwd,
       intervalMs: 1_000,
       terminalConfirmations: 2,
       onTransition: async (transition) => {
@@ -1659,7 +1743,7 @@ ${testerResult.fixTaskDescription}`.trim(),
         const diff = await this.testerRunner.run({
           command: "git",
           args: ["diff", "--no-color"],
-          cwd: this.config.projectRootDir,
+          cwd: this.executionCwd,
         });
         return diff.stdout;
       },
@@ -1737,7 +1821,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       const prNumber = parsePullRequestNumberFromUrl(prUrl);
       await this.privilegedGit.markPullRequestReady({
         prNumber,
-        cwd: this.config.projectRootDir,
+        cwd: this.executionCwd,
       });
       console.info(`Marked draft PR #${prNumber} as ready for review.`);
       await this.publishRuntimeEvent(
@@ -1864,7 +1948,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       let markedUnfixable = false;
       try {
         const recovery = await runExceptionRecovery({
-          cwd: this.config.projectRootDir,
+          cwd: this.executionCwd,
           assignee: this.config.activeAssignee,
           exception,
           attemptNumber,
@@ -1900,7 +1984,7 @@ ${testerResult.fixTaskDescription}`.trim(),
             exception: recovery.exception,
             verifiers: {
               verifyDirtyWorktree: async () =>
-                this.git.ensureCleanWorkingTree(this.config.projectRootDir),
+                this.git.ensureCleanWorkingTree(this.executionCwd),
             },
           });
           console.info(`Recovery fixed: ${recovery.result.reasoning}`);

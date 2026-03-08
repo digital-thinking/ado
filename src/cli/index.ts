@@ -1591,6 +1591,7 @@ async function runPhaseRunCommand({
         maxRefinePasses: settings.executionLoop.deliberation.maxRefinePasses,
       },
       projectRootDir,
+      worktrees: settings.worktrees,
       projectName,
       policy,
       role: "admin",

@@ -163,6 +163,7 @@ export type SetPhaseStatusInput = {
   status: PhaseStatus;
   ciStatusContext?: string;
   failureKind?: PhaseFailureKind;
+  worktreePath?: string | null;
 };
 
 export type RecordRecoveryAttemptInput = {
@@ -859,12 +860,23 @@ export class ControlCenterService {
       status === "CI_FAILED"
         ? (rawFailureKind ?? phase.failureKind)
         : undefined;
+    let worktreePath = phase.worktreePath;
+    if (input.worktreePath === null) {
+      worktreePath = null;
+    } else if (typeof input.worktreePath === "string") {
+      const normalizedWorktreePath = input.worktreePath.trim();
+      if (!normalizedWorktreePath) {
+        throw new Error("worktreePath must not be empty when provided.");
+      }
+      worktreePath = normalizedWorktreePath;
+    }
     const nextPhases = [...state.phases];
     nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
       status,
       ciStatusContext,
       failureKind,
+      worktreePath,
     });
 
     const nextState = await engine.writeProjectState({
