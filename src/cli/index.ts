@@ -1416,6 +1416,10 @@ async function runPhaseRunCommand({
       validationMaxRetries: settings.executionLoop.validationMaxRetries,
       ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
       ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
+      deliberation: {
+        reviewerAdapter: settings.executionLoop.deliberation.reviewerAdapter,
+        maxRefinePasses: settings.executionLoop.deliberation.maxRefinePasses,
+      },
       projectRootDir,
       projectName,
       policy,

@@ -125,6 +125,124 @@ describe("PhaseRunner", () => {
     });
   });
 
+  test("runs deliberation for deliberate tasks and forwards refined prompt/context", async () => {
+    const phaseId = "51111111-1111-4111-8111-111111111111";
+    const taskId = "52222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 30",
+          branchName: "phase-30-deliberation-mode",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Deliberate Task",
+              description: "Original task description",
+              deliberate: true,
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const startInputs: any[] = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        startInputs.push(input);
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async (input: any) => {
+        if (input.prompt.includes("Deliberation Stage: PROPOSE")) {
+          return {
+            stdout:
+              '{"proposal":"Refined implementation prompt for deliberate task."}',
+            stderr: "",
+          };
+        }
+        if (input.prompt.includes("Deliberation Stage: CRITIQUE")) {
+          return {
+            stdout: '{"verdict":"APPROVED","comments":[]}',
+            stderr: "",
+          };
+        }
+        return { stdout: "unexpected", stderr: "" };
+      }),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("status")) {
+          if (input.args.includes("--porcelain")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          return {
+            exitCode: 0,
+            stdout: "nothing to commit, working tree clean",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-30-deliberation-mode",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        deliberation: {
+          reviewerAdapter: "CLAUDE_CLI",
+          maxRefinePasses: 1,
+        },
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    expect(mockControl.runInternalWork).toHaveBeenCalledTimes(2);
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0]?.taskDescriptionOverride).toBe(
+      "Refined implementation prompt for deliberate task.",
+    );
+    expect(startInputs[0]?.resultContextPrefix).toContain(
+      "Deliberation summary:",
+    );
+    expect(startInputs[0]?.resultContextPrefix).toContain(
+      '"finalVerdict": "APPROVED"',
+    );
+    expect(startInputs[0]?.resultContextPrefix).toContain(
+      '"taskTitle": "Deliberate Task"',
+    );
+  });
+
   test("creates draft PR and marks it ready after validation approval when configured", async () => {
     const phaseId = "31111111-1111-4111-8111-111111111111";
     const taskId = "32222222-2222-4222-8222-222222222222";

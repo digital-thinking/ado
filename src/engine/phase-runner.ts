@@ -19,6 +19,10 @@ import {
 } from "./phase-loop-wait";
 import { runTesterWorkflow } from "./tester-workflow";
 import {
+  runDeliberationPass,
+  type DeliberationSummary,
+} from "./deliberation-pass";
+import {
   AdapterCircuitBreaker,
   type AdapterCircuitBreakerConfig,
   type AdapterCircuitDecision,
@@ -125,6 +129,10 @@ export type PhaseRunnerConfig = {
   validationMaxRetries: number;
   ciFixMaxFanOut: number;
   ciFixMaxDepth: number;
+  deliberation?: {
+    reviewerAdapter: CLIAdapterId;
+    maxRefinePasses: number;
+  };
   projectRootDir: string;
   projectName: string;
   policy: AuthPolicy;
@@ -540,6 +548,20 @@ Recovery: ${recoveryMessage}`,
       taskNumber,
       preferredAssignee,
     });
+    let taskDescriptionOverride: string | undefined;
+    let resultContextPrefix: string | undefined;
+    if (task.deliberate === true) {
+      const deliberation = await this.runDeliberationForTask({
+        phase,
+        task,
+        taskNumber,
+        implementerAssignee: effectiveAssignee,
+      });
+      taskDescriptionOverride = deliberation.refinedPrompt;
+      resultContextPrefix = this.formatDeliberationSummary(
+        deliberation.summary,
+      );
+    }
     const nextTaskLabel = `task #${taskNumber} ${task.title}`;
     console.info(
       `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
@@ -585,6 +607,8 @@ Recovery: ${recoveryMessage}`,
         resolvedAssignee: effectiveAssignee,
         routingReason,
         resume: resumeSession,
+        taskDescriptionOverride,
+        resultContextPrefix,
       });
       const updatedPhase = this.resolveActivePhase(updatedState);
       const resultTask = updatedPhase.tasks[taskNumber - 1];
@@ -924,6 +948,67 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       assignee: affinityAssignee,
       routingReason: TaskRoutingReasonSchema.enum.affinity,
     };
+  }
+
+  private async runDeliberationForTask(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    implementerAssignee: CLIAdapterId;
+  }): Promise<{
+    refinedPrompt: string;
+    summary: DeliberationSummary;
+  }> {
+    const reviewerAssignee =
+      this.config.deliberation?.reviewerAdapter ?? this.config.activeAssignee;
+    const maxRefinePasses = this.config.deliberation?.maxRefinePasses ?? 1;
+    console.info(
+      `Execution loop: running deliberation for task #${input.taskNumber} ${input.task.title} with implementer=${input.implementerAssignee} reviewer=${reviewerAssignee}.`,
+    );
+
+    const result = await runDeliberationPass({
+      projectName: this.config.projectName,
+      rootDir: this.config.projectRootDir,
+      phase: input.phase,
+      task: input.task,
+      implementerAssignee: input.implementerAssignee,
+      reviewerAssignee,
+      maxRefinePasses,
+      runInternalWork: async (internalInput) => {
+        const executionResult = await this.control.runInternalWork({
+          assignee: internalInput.assignee,
+          prompt: internalInput.prompt,
+          phaseId: internalInput.phaseId,
+          taskId: internalInput.taskId,
+          resume: internalInput.resume,
+        });
+        return {
+          stdout: executionResult.stdout,
+          stderr: executionResult.stderr,
+        };
+      },
+    });
+
+    if (result.status === "MAX_REFINE_PASSES_EXCEEDED") {
+      console.warn(
+        `Deliberation reached max refine passes (${maxRefinePasses}) for task #${input.taskNumber}. Continuing with latest refined prompt.`,
+      );
+    } else {
+      console.info(
+        `Deliberation approved for task #${input.taskNumber} after ${result.summary.rounds.length} round(s).`,
+      );
+    }
+
+    return {
+      refinedPrompt: result.refinedPrompt,
+      summary: result.summary,
+    };
+  }
+
+  private formatDeliberationSummary(summary: DeliberationSummary): string {
+    return ["Deliberation summary:", JSON.stringify(summary, null, 2)].join(
+      "\n",
+    );
   }
 
   private async runTesterStep(
