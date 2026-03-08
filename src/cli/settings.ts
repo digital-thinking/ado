@@ -215,6 +215,14 @@ function mergeCliSettings(
         ...base.agents.MOCK_CLI,
         ...override.agents?.MOCK_CLI,
       },
+      ...(base.agents.adapterAffinities || override.agents?.adapterAffinities
+        ? {
+            adapterAffinities: {
+              ...(base.agents.adapterAffinities ?? {}),
+              ...(override.agents?.adapterAffinities ?? {}),
+            },
+          }
+        : {}),
     },
   });
 }

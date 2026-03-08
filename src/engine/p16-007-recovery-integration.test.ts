@@ -23,6 +23,7 @@ import {
 } from "./exception-recovery";
 import { PhaseRunner, type PhaseRunnerConfig } from "./phase-runner";
 import { DEFAULT_AUTH_POLICY } from "../security/policy";
+import { CLIAdapterIdSchema } from "../types";
 import { type ControlCenterService } from "../web";
 import { MockProcessRunner } from "../test-utils";
 
@@ -114,6 +115,11 @@ function buildDirtyThenCleanRunner(dirtyOutput: string) {
   };
 }
 
+function resolveBypassApprovalsAndSandbox(assigneeRaw: unknown): boolean {
+  const assignee = CLIAdapterIdSchema.parse(assigneeRaw);
+  return DEFAULT_CLI_SETTINGS.agents[assignee].bypassApprovalsAndSandbox;
+}
+
 // ---------------------------------------------------------------------------
 // Scenario 1 – End-to-end DIRTY_WORKTREE → recovery with CODEX_CLI
 // Invocation must be policy-compliant (no bypass flag)
@@ -149,12 +155,10 @@ describe("P16-007 – end-to-end DIRTY_WORKTREE recovery: invocation is policy-c
       recordRecoveryAttempt: mock(async () => mockState),
       // Simulate the real execution path: create adapter from DEFAULT_CLI_SETTINGS
       runInternalWork: mock(async (work: any) => {
-        const agentSettings =
-          DEFAULT_CLI_SETTINGS.agents[
-            work.assignee as keyof typeof DEFAULT_CLI_SETTINGS.agents
-          ];
         const adapter = createAdapter(work.assignee, adapterRunner, {
-          bypassApprovalsAndSandbox: agentSettings.bypassApprovalsAndSandbox,
+          bypassApprovalsAndSandbox: resolveBypassApprovalsAndSandbox(
+            work.assignee,
+          ),
         });
         const result = await adapter.run({
           prompt: work.prompt,
@@ -213,12 +217,10 @@ describe("P16-007 – end-to-end DIRTY_WORKTREE recovery: invocation is policy-c
       }),
       recordRecoveryAttempt: mock(async () => mockState),
       runInternalWork: mock(async (work: any) => {
-        const agentSettings =
-          DEFAULT_CLI_SETTINGS.agents[
-            work.assignee as keyof typeof DEFAULT_CLI_SETTINGS.agents
-          ];
         const adapter = createAdapter(work.assignee, adapterRunner, {
-          bypassApprovalsAndSandbox: agentSettings.bypassApprovalsAndSandbox,
+          bypassApprovalsAndSandbox: resolveBypassApprovalsAndSandbox(
+            work.assignee,
+          ),
         });
         const result = await adapter.run({
           prompt: work.prompt,
@@ -274,12 +276,10 @@ describe("P16-007 – end-to-end DIRTY_WORKTREE recovery: invocation is policy-c
       }),
       recordRecoveryAttempt: mock(async () => mockState),
       runInternalWork: mock(async (work: any) => {
-        const agentSettings =
-          DEFAULT_CLI_SETTINGS.agents[
-            work.assignee as keyof typeof DEFAULT_CLI_SETTINGS.agents
-          ];
         const adapter = createAdapter(work.assignee, adapterRunner, {
-          bypassApprovalsAndSandbox: agentSettings.bypassApprovalsAndSandbox,
+          bypassApprovalsAndSandbox: resolveBypassApprovalsAndSandbox(
+            work.assignee,
+          ),
         });
         const result = await adapter.run({
           prompt: work.prompt,
@@ -345,12 +345,10 @@ describe("P16-007 – retries not exhausted by forced bypass args", () => {
             exitCode: 0,
           },
         ]);
-        const agentSettings =
-          DEFAULT_CLI_SETTINGS.agents[
-            work.assignee as keyof typeof DEFAULT_CLI_SETTINGS.agents
-          ];
         const adapter = createAdapter(work.assignee, adapterRunner, {
-          bypassApprovalsAndSandbox: agentSettings.bypassApprovalsAndSandbox,
+          bypassApprovalsAndSandbox: resolveBypassApprovalsAndSandbox(
+            work.assignee,
+          ),
         });
         const result = await adapter.run({
           prompt: work.prompt,

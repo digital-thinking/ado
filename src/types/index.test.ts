@@ -205,6 +205,44 @@ describe("type contracts", () => {
     ).toThrow("must be enabled");
   });
 
+  test("accepts adapter affinities that target enabled adapters", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      agents: {
+        CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+        CLAUDE_CLI: { enabled: true, timeoutMs: 1_000 },
+        GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+        MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+        adapterAffinities: {
+          documentation: "CLAUDE_CLI",
+          "code-review": "GEMINI_CLI",
+        },
+      },
+    });
+
+    expect(parsed.agents.adapterAffinities).toEqual({
+      documentation: "CLAUDE_CLI",
+      "code-review": "GEMINI_CLI",
+    });
+  });
+
+  test("rejects adapter affinities that target disabled adapters", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: { enabled: false },
+        agents: {
+          CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: false, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+          adapterAffinities: {
+            documentation: "CLAUDE_CLI",
+          },
+        },
+      }),
+    ).toThrow("adapter is disabled");
+  });
+
   test("rejects markReadyOnApproval when draft creation is disabled", () => {
     expect(() =>
       CliSettingsSchema.parse({

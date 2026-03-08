@@ -82,7 +82,7 @@ Status markers:
 ### Phase 28: Semantic Task Routing
 
 - [x] `P28-001` Add optional `taskType` field (enum: `implementation | code-review | test-writing | security-audit | documentation`) to `TaskSchema` in `src/types/index.ts`. Default absent (unclassified). Update Zod schema and derived types.
-- [ ] `P28-002` Add `adapterAffinities` config to `CliAgentSettingsSchema`: map of `taskType → CLIAdapterId`. Validate that referenced adapters exist in the enabled set. Deps: `P28-001`.
+- [x] `P28-002` Add `adapterAffinities` config to `CliAgentSettingsSchema`: map of `taskType → CLIAdapterId`. Validate that referenced adapters exist in the enabled set. Deps: `P28-001`.
 - [ ] `P28-003` Implement a local heuristic classifier in `src/engine/` that inspects task `title` + `description` keywords to infer `taskType` with zero API calls (e.g. "test" → `test-writing`, "review" → `code-review`, "security" → `security-audit`, "doc" → `documentation`). Deps: `P28-001`.
 - [ ] `P28-004` Wire affinity routing into `PhaseRunner`: when a task has a `taskType` and a matching affinity mapping exists, use the mapped adapter instead of `activeAssignee`; fall back to `activeAssignee` with a logged reason when no mapping found. Store `resolvedAssignee` and `routingReason` (`"affinity" | "fallback"`) in task metadata. Deps: `P28-002`, `P28-003`.
 - [ ] `P28-005` Auto-classify tasks at creation time using the heuristic classifier; allow manual override via `task create --type <taskType>`. Deps: `P28-003`.

@@ -15,6 +15,19 @@ export const CLI_ADAPTER_IDS: CLIAdapterId[] = [
   "MOCK_CLI",
 ];
 
+const TASK_TYPE_VALUES = [
+  "implementation",
+  "code-review",
+  "test-writing",
+  "security-audit",
+  "documentation",
+] as const;
+const TaskTypeKeySchema = z.enum(TASK_TYPE_VALUES);
+const AdapterAffinitiesSchema = z.partialRecord(
+  TaskTypeKeySchema,
+  CLIAdapterIdSchema,
+);
+
 export const CliAgentSettingsItemSchema = z.object({
   enabled: z.boolean().default(true),
   timeoutMs: z.number().int().positive().default(3_600_000),
@@ -48,6 +61,7 @@ export const CliAgentSettingsSchema = z.object({
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
   }),
+  adapterAffinities: AdapterAffinitiesSchema.optional(),
 });
 export type CliAgentSettings = z.infer<typeof CliAgentSettingsSchema>;
 
@@ -278,6 +292,18 @@ export const CliSettingsSchema = z
         path: ["internalWork", "assignee"],
       });
     }
+
+    for (const [taskType, adapterId] of Object.entries(
+      value.agents.adapterAffinities ?? {},
+    )) {
+      if (!value.agents[adapterId].enabled) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `agents.adapterAffinities.${taskType} references '${adapterId}', but that adapter is disabled in settings.agents.`,
+          path: ["agents", "adapterAffinities", taskType],
+        });
+      }
+    }
   });
 export type CliSettings = z.infer<typeof CliSettingsSchema>;
 
@@ -293,6 +319,7 @@ const CliAgentSettingsOverrideSchema = z.object({
   CLAUDE_CLI: CliAgentSettingsItemOverrideSchema.optional(),
   GEMINI_CLI: CliAgentSettingsItemOverrideSchema.optional(),
   MOCK_CLI: CliAgentSettingsItemOverrideSchema.optional(),
+  adapterAffinities: AdapterAffinitiesSchema.optional(),
 });
 
 const ExecutionLoopSettingsOverrideSchema = z.object({
@@ -381,13 +408,7 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-export const TaskTypeSchema = z.enum([
-  "implementation",
-  "code-review",
-  "test-writing",
-  "security-audit",
-  "documentation",
-]);
+export const TaskTypeSchema = TaskTypeKeySchema;
 export type TaskType = z.infer<typeof TaskTypeSchema>;
 
 export const ExceptionCategorySchema = z.enum([
