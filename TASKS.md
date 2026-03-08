@@ -103,7 +103,7 @@ Status markers:
 
 - [ ] `P30-001` Add optional `deliberate: boolean` flag to `TaskSchema`. When `true`, the task requires a council review pass before implementation.
 - [x] `P30-002` Add `deliberation` section to `ExecutionLoopSettingsSchema`: `reviewerAdapter: CLIAdapterId`, `maxRefinePasses: number` (default 1). Validate reviewer adapter is enabled. Deps: `P30-001`.
-- [ ] `P30-003` Implement `runDeliberationPass` in `src/engine/`: propose (implementer adapter) → critique (reviewer adapter) → refine (implementer) loop producing a structured deliberation summary. Deps: `P30-002`.
+- [x] `P30-003` Implement `runDeliberationPass` in `src/engine/`: propose (implementer adapter) → critique (reviewer adapter) → refine (implementer) loop producing a structured deliberation summary. Deps: `P30-002`.
 - [ ] `P30-004` Wire deliberation into `PhaseRunner`: when a task has `deliberate: true`, run the deliberation pass first, then hand the refined prompt to the standard execution path. Store the deliberation summary in task `resultContext`. Deps: `P30-003`.
 - [ ] `P30-005` Surface deliberation summary in PR body (collapsible section) and Telegram notification for the task. Deps: `P30-004`.
 - [ ] `P30-006` Add regression/integration tests for Phase 30: deliberation pass execution, refined-prompt handoff to execution, summary in PR body and Telegram, graceful fallback when reviewer adapter is unavailable. Deps: `P30-001`..`P30-005`.
