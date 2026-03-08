@@ -64,6 +64,10 @@ const DEFAULT_LOOP_SETTINGS = {
   validationMaxRetries: 3,
   ciFixMaxFanOut: 10,
   ciFixMaxDepth: 3,
+  deliberation: {
+    reviewerAdapter: "CODEX_CLI" as const,
+    maxRefinePasses: 1,
+  },
   pullRequest: {
     defaultTemplatePath: null,
     templateMappings: [],

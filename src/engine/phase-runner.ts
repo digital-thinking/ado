@@ -19,6 +19,11 @@ import {
 } from "./phase-loop-wait";
 import { runTesterWorkflow } from "./tester-workflow";
 import {
+  runDeliberationPass,
+  type DeliberationSummary,
+} from "./deliberation-pass";
+import { formatDeliberationSummaryForResultContext } from "./deliberation-summary";
+import {
   AdapterCircuitBreaker,
   type AdapterCircuitBreakerConfig,
   type AdapterCircuitDecision,
@@ -125,6 +130,10 @@ export type PhaseRunnerConfig = {
   validationMaxRetries: number;
   ciFixMaxFanOut: number;
   ciFixMaxDepth: number;
+  deliberation?: {
+    reviewerAdapter: CLIAdapterId;
+    maxRefinePasses: number;
+  };
   projectRootDir: string;
   projectName: string;
   policy: AuthPolicy;
@@ -540,6 +549,22 @@ Recovery: ${recoveryMessage}`,
       taskNumber,
       preferredAssignee,
     });
+    let taskDescriptionOverride: string | undefined;
+    let resultContextPrefix: string | undefined;
+    let deliberationSummary: DeliberationSummary | undefined;
+    if (task.deliberate === true) {
+      const deliberation = await this.runDeliberationForTask({
+        phase,
+        task,
+        taskNumber,
+        implementerAssignee: effectiveAssignee,
+      });
+      taskDescriptionOverride = deliberation.refinedPrompt;
+      deliberationSummary = deliberation.summary;
+      resultContextPrefix = formatDeliberationSummaryForResultContext(
+        deliberation.summary,
+      );
+    }
     const nextTaskLabel = `task #${taskNumber} ${task.title}`;
     console.info(
       `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
@@ -585,6 +610,8 @@ Recovery: ${recoveryMessage}`,
         resolvedAssignee: effectiveAssignee,
         routingReason,
         resume: resumeSession,
+        taskDescriptionOverride,
+        resultContextPrefix,
       });
       const updatedPhase = this.resolveActivePhase(updatedState);
       const resultTask = updatedPhase.tasks[taskNumber - 1];
@@ -609,6 +636,14 @@ Recovery: ${recoveryMessage}`,
           payload: {
             status: resultTask.status,
             message: `${nextTaskLabel} finished with status ${resultTask.status}.`,
+            deliberation: deliberationSummary
+              ? {
+                  finalVerdict: deliberationSummary.finalVerdict,
+                  rounds: deliberationSummary.rounds.length,
+                  refinePassesUsed: deliberationSummary.refinePassesUsed,
+                  pendingComments: deliberationSummary.pendingComments.length,
+                }
+              : undefined,
           },
           context: {
             source: "PHASE_RUNNER",
@@ -924,6 +959,138 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       assignee: affinityAssignee,
       routingReason: TaskRoutingReasonSchema.enum.affinity,
     };
+  }
+
+  private async runDeliberationForTask(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    implementerAssignee: CLIAdapterId;
+  }): Promise<{
+    refinedPrompt: string;
+    summary: DeliberationSummary;
+  }> {
+    const reviewerAssignee = await this.resolveDeliberationReviewerAssignee({
+      phase: input.phase,
+      task: input.task,
+      taskNumber: input.taskNumber,
+      implementerAssignee: input.implementerAssignee,
+    });
+    const maxRefinePasses = this.config.deliberation?.maxRefinePasses ?? 1;
+    console.info(
+      `Execution loop: running deliberation for task #${input.taskNumber} ${input.task.title} with implementer=${input.implementerAssignee} reviewer=${reviewerAssignee}.`,
+    );
+
+    const result = await runDeliberationPass({
+      projectName: this.config.projectName,
+      rootDir: this.config.projectRootDir,
+      phase: input.phase,
+      task: input.task,
+      implementerAssignee: input.implementerAssignee,
+      reviewerAssignee,
+      maxRefinePasses,
+      runInternalWork: async (internalInput) => {
+        const executionResult = await this.control.runInternalWork({
+          assignee: internalInput.assignee,
+          prompt: internalInput.prompt,
+          phaseId: internalInput.phaseId,
+          taskId: internalInput.taskId,
+          resume: internalInput.resume,
+        });
+        return {
+          stdout: executionResult.stdout,
+          stderr: executionResult.stderr,
+        };
+      },
+    });
+
+    if (result.status === "MAX_REFINE_PASSES_EXCEEDED") {
+      console.warn(
+        `Deliberation reached max refine passes (${maxRefinePasses}) for task #${input.taskNumber}. Continuing with latest refined prompt.`,
+      );
+    } else {
+      console.info(
+        `Deliberation approved for task #${input.taskNumber} after ${result.summary.rounds.length} round(s).`,
+      );
+    }
+
+    return {
+      refinedPrompt: result.refinedPrompt,
+      summary: result.summary,
+    };
+  }
+
+  private async resolveDeliberationReviewerAssignee(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    implementerAssignee: CLIAdapterId;
+  }): Promise<CLIAdapterId> {
+    const preferredReviewer =
+      this.config.deliberation?.reviewerAdapter ?? this.config.activeAssignee;
+    const enabledAdapters = new Set(this.enabledAdapters);
+    const candidates: CLIAdapterId[] = [];
+
+    for (const candidate of [
+      preferredReviewer,
+      input.implementerAssignee,
+      ...this.enabledAdapters,
+    ]) {
+      if (!candidates.includes(candidate)) {
+        candidates.push(candidate);
+      }
+    }
+
+    const openCandidates: CLIAdapterId[] = [];
+    for (const candidate of candidates) {
+      if (!enabledAdapters.has(candidate)) {
+        continue;
+      }
+
+      const decision = this.getAdapterBreaker(candidate).check(candidate);
+      await this.maybeEmitCircuitTransition({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        decision,
+      });
+
+      if (!decision.canExecute) {
+        openCandidates.push(candidate);
+        continue;
+      }
+
+      if (candidate !== preferredReviewer) {
+        const reason = enabledAdapters.has(preferredReviewer)
+          ? `circuit open for ${preferredReviewer}`
+          : `${preferredReviewer} is unavailable`;
+        const message = `Deliberation reviewer fallback for task #${input.taskNumber} (${input.task.title}): ${reason}; using ${candidate}.`;
+        console.info(message);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "task-lifecycle",
+            type: "task.lifecycle.progress",
+            payload: { message },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: input.phase.id,
+              phaseName: input.phase.name,
+              taskId: input.task.id,
+              taskTitle: input.task.title,
+              taskNumber: input.taskNumber,
+              adapterId: candidate,
+            },
+          }),
+        );
+      }
+
+      return candidate;
+    }
+
+    throw new Error(
+      `No deliberation reviewer available for task #${input.taskNumber} ${input.task.title}. Open circuits: ${openCandidates.join(", ")}.`,
+    );
   }
 
   private async runTesterStep(

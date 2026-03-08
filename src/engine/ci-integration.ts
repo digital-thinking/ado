@@ -13,6 +13,7 @@ import {
   PrivilegedGitActions,
   type CommitTrailers,
 } from "../vcs";
+import { parseDeliberationSummaryFromResultContext } from "./deliberation-summary";
 
 export type RunCiIntegrationInput = {
   phaseId: string;
@@ -34,6 +35,41 @@ export type RunCiIntegrationResult = {
   baseBranch: string;
   prUrl: string;
 };
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+}
+
+function buildDeliberationSummarySection(tasks: Task[]): string | undefined {
+  const lines = tasks
+    .map((task) => {
+      const summary = parseDeliberationSummaryFromResultContext(
+        task.resultContext,
+      );
+      if (!summary) {
+        return undefined;
+      }
+
+      return `| ${escapeMarkdownTableCell(task.title || summary.taskTitle)} | ${summary.finalVerdict} | ${summary.rounds.length} | ${summary.refinePassesUsed}/${summary.maxRefinePasses} | ${summary.pendingComments.length} |`;
+    })
+    .filter((line): line is string => line !== undefined);
+
+  if (lines.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "### Deliberation",
+    "<details>",
+    "<summary>Deliberation Summary</summary>",
+    "",
+    "| Task | Verdict | Rounds | Refine Passes | Pending Comments |",
+    "| --- | --- | --- | --- | --- |",
+    ...lines,
+    "",
+    "</details>",
+  ].join("\n");
+}
 
 /**
  * Derives PR metadata from phase/task context with deterministic formatting.
@@ -68,10 +104,16 @@ export function derivePullRequestMetadata(
     "",
     "### Completed Tasks",
     taskList || "_No tasks recorded._",
+  ];
+  const deliberationSection = buildDeliberationSummarySection(completedTasks);
+  if (deliberationSection) {
+    bodyParts.push("", deliberationSection);
+  }
+  bodyParts.push(
     "",
     "---",
     "*Automated PR created by [IxADO](https://github.com/digital-thinking/ado).*",
-  ];
+  );
 
   let body = bodyParts.join("\n").trim();
   if (body.length > MAX_BODY_LENGTH) {

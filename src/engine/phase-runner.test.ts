@@ -125,6 +125,272 @@ describe("PhaseRunner", () => {
     });
   });
 
+  test("runs deliberation for deliberate tasks and forwards refined prompt/context", async () => {
+    const phaseId = "51111111-1111-4111-8111-111111111111";
+    const taskId = "52222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 30",
+          branchName: "phase-30-deliberation-mode",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Deliberate Task",
+              description: "Original task description",
+              deliberate: true,
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const startInputs: any[] = [];
+    const runtimeEvents: Array<{ type: string; payload: any }> = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        startInputs.push(input);
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async (input: any) => {
+        if (input.prompt.includes("Deliberation Stage: PROPOSE")) {
+          return {
+            stdout:
+              '{"proposal":"Refined implementation prompt for deliberate task."}',
+            stderr: "",
+          };
+        }
+        if (input.prompt.includes("Deliberation Stage: CRITIQUE")) {
+          return {
+            stdout: '{"verdict":"APPROVED","comments":[]}',
+            stderr: "",
+          };
+        }
+        return { stdout: "unexpected", stderr: "" };
+      }),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("status")) {
+          if (input.args.includes("--porcelain")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          return {
+            exitCode: 0,
+            stdout: "nothing to commit, working tree clean",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-30-deliberation-mode",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        deliberation: {
+          reviewerAdapter: "CLAUDE_CLI",
+          maxRefinePasses: 1,
+        },
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push({ type: event.type, payload: event.payload });
+      },
+      mockRunner,
+    );
+    await runner.run();
+
+    expect(mockControl.runInternalWork).toHaveBeenCalledTimes(2);
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0]?.taskDescriptionOverride).toBe(
+      "Refined implementation prompt for deliberate task.",
+    );
+    expect(startInputs[0]?.resultContextPrefix).toContain(
+      "Deliberation summary:",
+    );
+    expect(startInputs[0]?.resultContextPrefix).toContain(
+      '"finalVerdict": "APPROVED"',
+    );
+    expect(startInputs[0]?.resultContextPrefix).toContain(
+      '"taskTitle": "Deliberate Task"',
+    );
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task.lifecycle.finish" &&
+          event.payload.deliberation?.finalVerdict === "APPROVED" &&
+          event.payload.deliberation?.rounds === 1 &&
+          event.payload.deliberation?.refinePassesUsed === 0 &&
+          event.payload.deliberation?.pendingComments === 0,
+      ),
+    ).toBe(true);
+  });
+
+  test("falls back to an available reviewer adapter when configured reviewer is unavailable", async () => {
+    const phaseId = "53333333-3333-4333-8333-333333333333";
+    const taskId = "54444444-4444-4444-8444-444444444444";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 30",
+          branchName: "phase-30-deliberation-mode",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Deliberate Task",
+              description: "Original task description",
+              deliberate: true,
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const deliberationCalls: Array<{ assignee: string; prompt: string }> = [];
+    const runtimeEvents: Array<{ type: string; payload: any }> = [];
+    const startInputs: any[] = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        startInputs.push(input);
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async (input: any) => {
+        if (input.assignee === "CLAUDE_CLI") {
+          throw new Error("reviewer adapter unavailable");
+        }
+        deliberationCalls.push({
+          assignee: input.assignee,
+          prompt: input.prompt,
+        });
+        if (input.prompt.includes("Deliberation Stage: PROPOSE")) {
+          return {
+            stdout: '{"proposal":"Refined fallback prompt"}',
+            stderr: "",
+          };
+        }
+        if (input.prompt.includes("Deliberation Stage: CRITIQUE")) {
+          return {
+            stdout: '{"verdict":"APPROVED","comments":[]}',
+            stderr: "",
+          };
+        }
+        return { stdout: "unexpected", stderr: "" };
+      }),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("status")) {
+          if (input.args.includes("--porcelain")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          return {
+            exitCode: 0,
+            stdout: "nothing to commit, working tree clean",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-30-deliberation-mode",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        activeAssignee: "CODEX_CLI",
+        enabledAdapters: ["CODEX_CLI"],
+        deliberation: {
+          reviewerAdapter: "CLAUDE_CLI",
+          maxRefinePasses: 1,
+        },
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push({ type: event.type, payload: event.payload });
+      },
+      mockRunner,
+    );
+
+    await runner.run();
+
+    expect(deliberationCalls).toHaveLength(2);
+    expect(deliberationCalls[0]?.assignee).toBe("CODEX_CLI");
+    expect(deliberationCalls[1]?.assignee).toBe("CODEX_CLI");
+    expect(deliberationCalls[1]?.prompt).toContain(
+      "Deliberation Stage: CRITIQUE",
+    );
+    expect(startInputs[0]?.taskDescriptionOverride).toBe(
+      "Refined fallback prompt",
+    );
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task.lifecycle.progress" &&
+          String(event.payload.message).includes(
+            "Deliberation reviewer fallback",
+          ),
+      ),
+    ).toBe(true);
+  });
+
   test("creates draft PR and marks it ready after validation approval when configured", async () => {
     const phaseId = "31111111-1111-4111-8111-111111111111";
     const taskId = "32222222-2222-4222-8222-222222222222";

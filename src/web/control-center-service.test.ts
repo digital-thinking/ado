@@ -1313,6 +1313,51 @@ describe("ControlCenterService", () => {
     expect(finished.phases[0].tasks[0].routingReason).toBe("affinity");
   });
 
+  test("supports prompt and resultContext overrides for task execution", async () => {
+    const prompts: string[] = [];
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async (input) => {
+        prompts.push(input.prompt);
+        return {
+          command: "codex",
+          args: ["run"],
+          stdout: "implemented",
+          stderr: "",
+          durationMs: 5,
+        };
+      },
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Overrides",
+      branchName: "phase-overrides",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "Deliberate execution",
+      description: "Original description",
+      assignee: "UNASSIGNED",
+      status: "TODO",
+    });
+
+    const finished = await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 1,
+      assignee: "CODEX_CLI",
+      taskDescriptionOverride: "Refined description from deliberation",
+      resultContextPrefix: 'Deliberation summary:\n{"finalVerdict":"APPROVED"}',
+    });
+
+    expect(prompts[0]).toContain("Refined description from deliberation");
+    expect(prompts[0]).not.toContain("Original description");
+    expect(finished.phases[0].tasks[0].resultContext).toContain(
+      "Deliberation summary:",
+    );
+    expect(finished.phases[0].tasks[0].resultContext).toContain("implemented");
+  });
+
   test("lists active phase tasks with 1-based numbers", async () => {
     const created = await service.createPhase({
       name: "Phase Numbers",

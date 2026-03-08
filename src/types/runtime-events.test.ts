@@ -192,6 +192,32 @@ describe("runtime event contract", () => {
     expect(formatRuntimeEventForTelegram(event)).toBe("npm test failed");
   });
 
+  test("includes deliberation summary in task finish Telegram notifications", () => {
+    const event = createRuntimeEvent({
+      family: "task-lifecycle",
+      type: "task.lifecycle.finish",
+      payload: {
+        status: "DONE",
+        message: "task #1 finished",
+        deliberation: {
+          finalVerdict: "APPROVED",
+          rounds: 2,
+          refinePassesUsed: 1,
+          pendingComments: 0,
+        },
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        taskNumber: 1,
+        taskTitle: "Deliberate task",
+      },
+    });
+
+    expect(formatRuntimeEventForTelegram(event)).toBe(
+      "Task update: #1 Deliberate task -> DONE.\nDeliberation: APPROVED (rounds=2, refinePasses=1, pendingComments=0).",
+    );
+  });
+
   test("suppresses adapter output events at important Telegram level", () => {
     const event = createRuntimeEvent({
       family: "adapter-output",

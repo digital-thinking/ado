@@ -145,6 +145,8 @@ export type StartTaskInput = {
   resolvedAssignee?: CLIAdapterId;
   routingReason?: TaskRoutingReason;
   resume?: boolean;
+  taskDescriptionOverride?: string;
+  resultContextPrefix?: string;
 };
 
 export type SetActivePhaseInput = {
@@ -177,6 +179,8 @@ export type StartActiveTaskInput = {
   resolvedAssignee?: CLIAdapterId;
   routingReason?: TaskRoutingReason;
   resume?: boolean;
+  taskDescriptionOverride?: string;
+  resultContextPrefix?: string;
 };
 
 export type ResetTaskInput = {
@@ -981,6 +985,8 @@ export class ControlCenterService {
       resolvedAssignee: input.resolvedAssignee,
       routingReason: input.routingReason,
       resume: input.resume,
+      taskDescriptionOverride: input.taskDescriptionOverride,
+      resultContextPrefix: input.resultContextPrefix,
       projectName: input.projectName,
     });
   }
@@ -1010,6 +1016,8 @@ export class ControlCenterService {
       resolvedAssignee: input.resolvedAssignee,
       routingReason: input.routingReason,
       resume: input.resume,
+      taskDescriptionOverride: input.taskDescriptionOverride,
+      resultContextPrefix: input.resultContextPrefix,
       projectName: input.projectName,
     });
   }
@@ -1024,6 +1032,8 @@ export class ControlCenterService {
       ? CLIAdapterIdSchema.parse(input.resolvedAssignee)
       : undefined;
     const routingReason = input.routingReason;
+    const taskDescriptionOverride = input.taskDescriptionOverride?.trim();
+    const resultContextPrefix = input.resultContextPrefix?.trim();
     if (!phaseId) {
       throw new Error("phaseId must not be empty.");
     }
@@ -1032,6 +1042,15 @@ export class ControlCenterService {
     }
     if (!this.internalWorkRunner) {
       throw new Error("Internal work runner is not configured.");
+    }
+    if (
+      input.taskDescriptionOverride !== undefined &&
+      !taskDescriptionOverride
+    ) {
+      throw new Error("taskDescriptionOverride must not be empty when set.");
+    }
+    if (input.resultContextPrefix !== undefined && !resultContextPrefix) {
+      throw new Error("resultContextPrefix must not be empty when set.");
     }
     if (!resolvedAssignee && routingReason) {
       throw new Error(
@@ -1112,12 +1131,18 @@ export class ControlCenterService {
       );
     }
 
+    const taskForPrompt: Task = taskDescriptionOverride
+      ? {
+          ...task,
+          description: taskDescriptionOverride,
+        }
+      : task;
     const prompt = buildWorkerPrompt({
       archetype: "CODER",
       projectName: state.projectName,
       rootDir: state.rootDir,
       phase,
-      task,
+      task: taskForPrompt,
     });
 
     const updatedTask = TaskSchema.parse({
@@ -1156,6 +1181,7 @@ export class ControlCenterService {
       prompt,
       resume: shouldResume,
       startedFromStatus: task.status,
+      resultContextPrefix,
       projectName: input.projectName,
       cwd: state.rootDir,
     }).finally(() => {
@@ -1876,6 +1902,7 @@ export class ControlCenterService {
     prompt: string;
     resume: boolean;
     startedFromStatus: Task["status"];
+    resultContextPrefix?: string;
     projectName?: string;
     cwd?: string;
   }): Promise<void> {
@@ -1952,11 +1979,19 @@ export class ControlCenterService {
           return;
         }
 
+        const resultContextBody =
+          combinedResult || "Task finished without textual output.";
+        const resultContext =
+          input.resultContextPrefix &&
+          input.resultContextPrefix.trim().length > 0
+            ? `${input.resultContextPrefix.trimEnd()}\n\n${resultContextBody}`
+            : resultContextBody;
+
         await this.updateTaskResult(
           input.phaseId,
           input.taskId,
           "DONE",
-          combinedResult || "Task finished without textual output.",
+          resultContext,
           undefined,
           undefined,
           undefined,
