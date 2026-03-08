@@ -79,6 +79,38 @@ describe("runtime event contract", () => {
     );
   });
 
+  test("formats adapter circuit transition events for CLI and Telegram", () => {
+    const event = createRuntimeEvent({
+      family: "adapter-circuit",
+      type: "adapter.circuit",
+      payload: {
+        stage: "opened",
+        summary: "Circuit breaker opened for CODEX_CLI after 3 failures.",
+        consecutiveFailures: 3,
+        failureThreshold: 3,
+        cooldownMs: 300_000,
+        remainingCooldownMs: 300_000,
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-1",
+        adapterId: "CODEX_CLI",
+      },
+    });
+
+    expect(formatRuntimeEventForCli(event)).toBe(
+      "Circuit breaker opened for CODEX_CLI after 3 failures.",
+    );
+    expect(formatRuntimeEventForTelegram(event)).toBe(
+      "Adapter circuit: Circuit breaker opened for CODEX_CLI after 3 failures.",
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(true);
+    expect(createRuntimeEventNotificationKey(event)).toContain(
+      "adapter.circuit",
+    );
+  });
+
   test("formats CI and PR lifecycle events for Telegram consumers", () => {
     const prEvent = createRuntimeEvent({
       family: "ci-pr-lifecycle",

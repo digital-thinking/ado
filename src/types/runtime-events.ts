@@ -101,6 +101,20 @@ export const AdapterOutputEventSchema = RuntimeEventBaseSchema.extend({
   }),
 });
 
+export const AdapterCircuitEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("adapter-circuit"),
+  type: z.literal("adapter.circuit"),
+  payload: z.object({
+    stage: z.enum(["opened", "closed"]),
+    summary: z.string().min(1),
+    consecutiveFailures: z.number().int().min(0),
+    failureThreshold: z.number().int().min(1),
+    cooldownMs: z.number().int().min(0),
+    remainingCooldownMs: z.number().int().min(0),
+    openedAt: z.string().datetime().nullable().optional(),
+  }),
+});
+
 export const TesterActivityEventSchema = RuntimeEventBaseSchema.extend({
   family: z.literal("tester-recovery"),
   type: z.literal("tester.activity"),
@@ -196,6 +210,7 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   TaskLifecyclePhaseUpdateEventSchema,
   TaskLifecycleFinishEventSchema,
   AdapterOutputEventSchema,
+  AdapterCircuitEventSchema,
   TesterActivityEventSchema,
   RecoveryActivityEventSchema,
   PrActivityEventSchema,
@@ -291,6 +306,8 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
       return `Outcome: ${event.payload.summary}`;
     case "adapter.output":
       return event.payload.line;
+    case "adapter.circuit":
+      return `Adapter circuit: ${event.payload.summary}`;
     default:
       return event.type;
   }
@@ -318,6 +335,8 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
       }
       return event.payload.line;
     }
+    case "adapter.circuit":
+      return event.payload.summary;
     default:
       return "unknown";
   }
@@ -388,6 +407,8 @@ export function shouldNotifyRuntimeEventForTelegram(
         event.payload.stage === "succeeded" ||
         event.payload.stage === "validation-max-retries"
       );
+    case "adapter.circuit":
+      return true;
     default:
       return false;
   }
@@ -477,6 +498,16 @@ export function createRuntimeEventNotificationKey(event: RuntimeEvent): string {
         event.agentId ?? "",
         event.payload.stream,
         event.payload.line,
+      ].join("|");
+    case "adapter.circuit":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.adapterId ?? "",
+        event.payload.stage,
+        event.payload.consecutiveFailures,
+        event.payload.summary,
       ].join("|");
     default:
       return "runtime-event";

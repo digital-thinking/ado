@@ -18,6 +18,11 @@ import {
   waitForManualAdvance as waitForManualAdvanceGate,
 } from "./phase-loop-wait";
 import { runTesterWorkflow } from "./tester-workflow";
+import {
+  AdapterCircuitBreaker,
+  type AdapterCircuitBreakerConfig,
+  type AdapterCircuitDecision,
+} from "../adapters";
 import { ProcessManager, type ProcessRunner } from "../process";
 import {
   GitHubManager,
@@ -34,6 +39,7 @@ import {
   resolveActivePhaseStrict,
 } from "../state/active-phase";
 import {
+  CLI_ADAPTER_IDS,
   TaskRoutingReasonSchema,
   type CLIAdapterId,
   type Phase,
@@ -77,6 +83,10 @@ const TERMINAL_PHASE_STATUSES = [
 ] as const;
 
 const ACTIONABLE_TASK_STATUSES = ["TODO", "CI_FIX"] as const;
+const DEFAULT_ADAPTER_BREAKER_CONFIG: AdapterCircuitBreakerConfig = {
+  failureThreshold: 3,
+  cooldownMs: 300_000,
+};
 
 export type PhaseExecutionGate = "OPEN" | "RESUMABLE" | "CLOSED";
 
@@ -100,7 +110,11 @@ export type PhaseRunnerConfig = {
   mode: "AUTO" | "MANUAL";
   countdownSeconds: number;
   activeAssignee: CLIAdapterId;
+  enabledAdapters?: CLIAdapterId[];
   adapterAffinities?: Partial<Record<TaskType, CLIAdapterId>>;
+  adapterCircuitBreakers?: Partial<
+    Record<CLIAdapterId, AdapterCircuitBreakerConfig>
+  >;
   maxRecoveryAttempts: number;
   testerCommand: string | null;
   testerArgs: string[] | null;
@@ -133,6 +147,8 @@ export class PhaseRunner {
   private git: GitManager;
   private github: GitHubManager;
   private privilegedGit: PrivilegedGitActions;
+  private adapterBreakers = new Map<CLIAdapterId, AdapterCircuitBreaker>();
+  private enabledAdapters: CLIAdapterId[];
 
   constructor(
     private control: ControlCenterService,
@@ -149,6 +165,7 @@ export class PhaseRunner {
       role: config.role,
       policy: config.policy,
     });
+    this.enabledAdapters = this.resolveEnabledAdapters();
   }
 
   async run(): Promise<void> {
@@ -509,8 +526,14 @@ Recovery: ${recoveryMessage}`,
     taskNumber: number,
     resumeSession: boolean,
   ): Promise<void> {
-    const { assignee: effectiveAssignee, routingReason } =
+    const { assignee: preferredAssignee, routingReason } =
       this.resolveTaskRouting(task, taskNumber);
+    let effectiveAssignee = await this.resolveDispatchAssignee({
+      phase,
+      task,
+      taskNumber,
+      preferredAssignee,
+    });
     const nextTaskLabel = `task #${taskNumber} ${task.title}`;
     console.info(
       `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
@@ -542,6 +565,14 @@ Recovery: ${recoveryMessage}`,
 
     while (taskRunCount < maxTaskRunCount) {
       taskRunCount += 1;
+      if (taskRunCount > 1) {
+        effectiveAssignee = await this.resolveDispatchAssignee({
+          phase,
+          task,
+          taskNumber,
+          preferredAssignee,
+        });
+      }
       const updatedState = await this.control.startActiveTaskAndWait({
         taskNumber,
         assignee: effectiveAssignee,
@@ -556,6 +587,12 @@ Recovery: ${recoveryMessage}`,
         throw new Error(`Task #${taskNumber} not found after loop execution.`);
       }
 
+      await this.recordAdapterTaskOutcome({
+        phase: updatedPhase,
+        task: resultTask,
+        taskNumber,
+        assignee: effectiveAssignee,
+      });
       console.info(
         `Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`,
       );
@@ -663,6 +700,180 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     });
     throw new Error(
       `Execution loop stopped after FAILED task #${taskNumber}. Recovery retries were exhausted.`,
+    );
+  }
+
+  private resolveEnabledAdapters(): CLIAdapterId[] {
+    const configured =
+      this.config.enabledAdapters && this.config.enabledAdapters.length > 0
+        ? this.config.enabledAdapters
+        : CLI_ADAPTER_IDS;
+    const unique: CLIAdapterId[] = [];
+    const seen = new Set<CLIAdapterId>();
+    for (const adapterId of configured) {
+      if (seen.has(adapterId)) {
+        continue;
+      }
+      seen.add(adapterId);
+      unique.push(adapterId);
+    }
+    if (!seen.has(this.config.activeAssignee)) {
+      unique.unshift(this.config.activeAssignee);
+    }
+    if (unique.length === 0) {
+      throw new Error("PhaseRunner requires at least one enabled adapter.");
+    }
+    return unique;
+  }
+
+  private buildAdapterFallbackChain(
+    preferredAssignee: CLIAdapterId,
+  ): CLIAdapterId[] {
+    const preferredIndex = this.enabledAdapters.indexOf(preferredAssignee);
+    if (preferredIndex < 0) {
+      return [
+        preferredAssignee,
+        ...this.enabledAdapters.filter(
+          (adapterId) => adapterId !== preferredAssignee,
+        ),
+      ];
+    }
+    return [
+      ...this.enabledAdapters.slice(preferredIndex),
+      ...this.enabledAdapters.slice(0, preferredIndex),
+    ];
+  }
+
+  private getAdapterBreakerConfig(
+    adapterId: CLIAdapterId,
+  ): AdapterCircuitBreakerConfig {
+    return (
+      this.config.adapterCircuitBreakers?.[adapterId] ??
+      DEFAULT_ADAPTER_BREAKER_CONFIG
+    );
+  }
+
+  private getAdapterBreaker(adapterId: CLIAdapterId): AdapterCircuitBreaker {
+    const existing = this.adapterBreakers.get(adapterId);
+    if (existing) {
+      return existing;
+    }
+    const breaker = new AdapterCircuitBreaker(
+      this.getAdapterBreakerConfig(adapterId),
+    );
+    this.adapterBreakers.set(adapterId, breaker);
+    return breaker;
+  }
+
+  private async resolveDispatchAssignee(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    preferredAssignee: CLIAdapterId;
+  }): Promise<CLIAdapterId> {
+    const chain = this.buildAdapterFallbackChain(input.preferredAssignee);
+    const openCandidates: CLIAdapterId[] = [];
+
+    for (const adapterId of chain) {
+      const decision = this.getAdapterBreaker(adapterId).check(adapterId);
+      await this.maybeEmitCircuitTransition({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        decision,
+      });
+      if (decision.canExecute) {
+        if (openCandidates.length > 0) {
+          const message = `Routing fallback for task #${input.taskNumber} (${input.task.title}): circuit open for ${openCandidates.join(", ")}; using ${adapterId}.`;
+          console.info(message);
+          await this.publishRuntimeEvent(
+            createRuntimeEvent({
+              family: "task-lifecycle",
+              type: "task.lifecycle.progress",
+              payload: { message },
+              context: {
+                source: "PHASE_RUNNER",
+                projectName: this.config.projectName,
+                phaseId: input.phase.id,
+                phaseName: input.phase.name,
+                taskId: input.task.id,
+                taskTitle: input.task.title,
+                taskNumber: input.taskNumber,
+                adapterId,
+              },
+            }),
+          );
+        }
+        return adapterId;
+      }
+      openCandidates.push(adapterId);
+    }
+
+    throw new Error(
+      `No adapter available for task #${input.taskNumber} ${input.task.title}. Open circuits: ${openCandidates.join(", ")}.`,
+    );
+  }
+
+  private async recordAdapterTaskOutcome(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    assignee: CLIAdapterId;
+  }): Promise<void> {
+    const breaker = this.getAdapterBreaker(input.assignee);
+    const decision =
+      input.task.status === "FAILED"
+        ? breaker.recordFailure(input.assignee)
+        : breaker.recordSuccess(input.assignee);
+
+    await this.maybeEmitCircuitTransition({
+      phase: input.phase,
+      task: input.task,
+      taskNumber: input.taskNumber,
+      decision,
+    });
+  }
+
+  private async maybeEmitCircuitTransition(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    decision: AdapterCircuitDecision;
+  }): Promise<void> {
+    if (input.decision.transition === "none") {
+      return;
+    }
+
+    const stage = input.decision.transition === "opened" ? "opened" : "closed";
+    const summary =
+      stage === "opened"
+        ? `Circuit breaker opened for ${input.decision.snapshot.adapterId} after ${input.decision.snapshot.consecutiveFailures} consecutive failure(s).`
+        : `Circuit breaker closed for ${input.decision.snapshot.adapterId}; adapter is eligible again.`;
+
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "adapter-circuit",
+        type: "adapter.circuit",
+        payload: {
+          stage,
+          summary,
+          consecutiveFailures: input.decision.snapshot.consecutiveFailures,
+          failureThreshold: input.decision.snapshot.failureThreshold,
+          cooldownMs: input.decision.snapshot.cooldownMs,
+          remainingCooldownMs: input.decision.snapshot.remainingCooldownMs,
+          openedAt: input.decision.snapshot.openedAt,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: input.phase.id,
+          phaseName: input.phase.name,
+          taskId: input.task.id,
+          taskTitle: input.task.title,
+          taskNumber: input.taskNumber,
+          adapterId: input.decision.snapshot.adapterId,
+        },
+      }),
     );
   }
 

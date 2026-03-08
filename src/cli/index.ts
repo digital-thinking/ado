@@ -1339,6 +1339,7 @@ async function runPhaseRunCommand({
   );
   const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
+  const enabledAdapters = getAvailableAgents(settings);
   const telegram = resolveTelegramConfig(settings.telegram);
 
   let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
@@ -1382,7 +1383,14 @@ async function runPhaseRunCommand({
       mode,
       countdownSeconds,
       activeAssignee,
+      enabledAdapters,
       adapterAffinities: settings.agents.adapterAffinities,
+      adapterCircuitBreakers: {
+        CODEX_CLI: settings.agents.CODEX_CLI.circuitBreaker,
+        CLAUDE_CLI: settings.agents.CLAUDE_CLI.circuitBreaker,
+        GEMINI_CLI: settings.agents.GEMINI_CLI.circuitBreaker,
+        MOCK_CLI: settings.agents.MOCK_CLI.circuitBreaker,
+      },
       maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
