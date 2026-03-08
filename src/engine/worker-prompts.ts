@@ -4,6 +4,7 @@ import {
   type Task,
   type WorkerArchetype,
 } from "../types";
+import { resolveTaskCompletionSideEffectContracts } from "../web/control-center-service";
 
 const WORKER_SYSTEM_PROMPTS: Record<WorkerArchetype, string> = {
   CODER:
@@ -33,19 +34,23 @@ export function getWorkerSystemPrompt(archetype: WorkerArchetype): string {
 export function buildWorkerPrompt(input: WorkerPromptInput): string {
   const archetype = WorkerArchetypeSchema.parse(input.archetype);
   const systemPrompt = getWorkerSystemPrompt(archetype);
+  const contracts = resolveTaskCompletionSideEffectContracts(input.task);
+  const isPrTask = contracts.includes("PR_CREATION");
 
-  const requirements = [
-    "- Implement the task in this repository.",
-    "- Run relevant validations/tests.",
-    "- Return a concise summary of concrete changes and validation commands.",
-  ];
-
-  if (archetype === "CODER") {
-    requirements.push(
-      "- Commit all changes with a descriptive git commit message before declaring the task done.",
-      "- Leave the repository in a clean state (no untracked or unstaged changes after your commit).",
-    );
-  }
+  const requirements = isPrTask
+    ? [
+        `- This is a pull-request creation task. Do NOT modify any source files.`,
+        `- Run exactly: gh pr create --base main --head ${input.phase.branchName} --title "${input.phase.name}" --body "Phase implementation complete."`,
+        `- If a PR already exists for this branch, run: gh pr view --head ${input.phase.branchName} --json url to confirm it and report the URL.`,
+        "- Return the PR URL in your summary.",
+      ]
+    : [
+        "- Implement the task in this repository.",
+        "- Run relevant validations/tests.",
+        "- Return a concise summary of concrete changes and validation commands.",
+        "- Commit all changes with a descriptive git commit message before declaring the task done.",
+        "- Leave the repository in a clean state (no untracked or unstaged changes after your commit).",
+      ];
 
   const lines = [
     `Worker archetype: ${archetype}`,
@@ -53,6 +58,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
     `You are implementing a coding task for the ${input.projectName} project.`,
     `Repository root: ${input.rootDir}`,
     `Phase: ${input.phase.name}`,
+    `Branch: ${input.phase.branchName}`,
     `Task: ${input.task.title}`,
     "Task description:",
     input.task.description,
@@ -60,7 +66,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
     ...requirements,
   ];
 
-  if (archetype === "REVIEWER") {
+  if (!isPrTask && archetype === "REVIEWER") {
     const gitDiff = input.gitDiff?.trim();
     if (!gitDiff) {
       throw new Error("Reviewer prompt requires gitDiff context.");
