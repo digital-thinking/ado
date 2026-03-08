@@ -118,6 +118,18 @@ Status markers:
 - [ ] `P31-005` Add regression/integration tests for Phase 31: scanner extraction, issue mapping, priority ranking, dry-run output correctness, task queuing, and config validation. Deps: `P31-001`..`P31-004`.
 - [ ] `P31-006` Create PR Task: open Phase 31 PR after coding tasks are done. Deps: `P31-005`.
 
+### Phase 32: Telegram Natural Language Assistant
+
+- [ ] `P32-001` Define `LLMChatProvider` interface in `src/bot/`: `chat(userMessage: string, context: ChatContext): Promise<ChatResponse>` where `ChatContext` carries a snapshot of active phase name/status, task list, and running agents; `ChatResponse` carries the reply text plus an optional `actions[]` array of structured operations (e.g. `{ type: "add-task", payload: { title, description } }`).
+- [ ] `P32-002` Implement `CodexCLIChatProvider` satisfying `LLMChatProvider`: builds a structured system prompt from `ChatContext` (injecting project state), appends multi-turn history, spawns the configured CLI adapter, and parses action markers (e.g. `<!-- ACTION: {...} -->`) from adapter output into `ChatResponse.actions`. Deps: `P32-001`.
+- [ ] `P32-003` Add `llmChat` config section to `CliSettingsSchema`: `enabled: boolean` (default `false`), `adapterId: CLIAdapterId` (adapter to use for NL responses, defaults to `activeAssignee`), `maxHistoryMessages: number` (default `10`). Validate referenced adapter is enabled. Deps: `P32-001`.
+- [ ] `P32-004` Implement `ChatActionExecutor` in `src/bot/`: maps `ChatResponse.actions` entries to existing engine operations (`addTask`, `setActivePhase`, `readState`, etc.) and returns a human-readable summary of executed actions. Deps: `P32-001`.
+- [ ] `P32-005` Wire the NL message handler into `createTelegramRuntime`: register `bot.on("message:text", ...)` for non-command messages (owner-gated); build `ChatContext` from current state snapshot; call `LLMChatProvider.chat()`; execute any returned actions via `ChatActionExecutor`; reply with combined LLM text and action result summary. Deps: `P32-002`, `P32-003`, `P32-004`.
+- [ ] `P32-006` Maintain a per-bot-session in-memory message history ring buffer (capped at `maxHistoryMessages`) and pass it into each `chat()` call so multi-turn conversations retain context. Deps: `P32-005`.
+- [ ] `P32-007` Update the Telegram startup greeting and add a `/help` command that lists both the slash-command reference and NL chat capabilities (what kinds of requests users can make in natural language). Deps: `P32-005`.
+- [ ] `P32-008` Add regression/integration tests for Phase 32: `LLMChatProvider` contract validation, `CodexCLIChatProvider` prompt-building and action-marker parsing, `ChatActionExecutor` operation dispatch, NL handler routing for non-command messages, history ring buffer truncation, and `/help` output correctness. Deps: `P32-001`..`P32-007`.
+- [ ] `P32-009` Create PR Task: open Phase 32 PR after coding tasks are done. Deps: `P32-008`.
+
 ## Deferred / Later
 
 ### Phase 9: Shell Integration (deferred for later)
