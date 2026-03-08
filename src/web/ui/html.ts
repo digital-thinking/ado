@@ -983,6 +983,7 @@ export function controlCenterHtml(params: {
         const isActive = phase.id === activePhaseId;
         if (!isActive) {
           const tasks = phase.tasks || [];
+          if (tasks.length === 0) return ""; // hide phases with no tasks
           const taskPills = tasks.map((task) => {
             const s = task.status;
             const cls = s === "DONE" ? "pill-done"
@@ -992,7 +993,12 @@ export function controlCenterHtml(params: {
             return '<span class="phase-task-pill ' + cls + '" title="' + escapeHtml(s) + '">' + escapeHtml(task.title) + '</span>';
           }).join("");
           const doneTasks = tasks.filter(t => t.status === "DONE").length;
-          const summary = escapeHtml(phase.status) + " | " + doneTasks + "/" + tasks.length + " done";
+          const allDone = doneTasks === tasks.length;
+          const effectiveStatus = allDone ? "DONE"
+            : (phase.status === "PLANNING" && doneTasks > 0) ? "PARTIAL"
+            : phase.status;
+          const isCompleted = allDone || phase.status === "DONE" || phase.status === "READY_FOR_REVIEW";
+          const summary = escapeHtml(effectiveStatus) + " | " + doneTasks + "/" + tasks.length + " done";
           return (
             '<section class="phase-row" data-phase-id="' + escapeHtml(phase.id) + '">' +
               '<div class="phase-collapsed">' +
@@ -1000,10 +1006,10 @@ export function controlCenterHtml(params: {
                   "<h3>" + escapeHtml(phase.name) + " <span class='phase-expand-arrow'>▶</span></h3>" +
                   '<div class="small mono muted">' + summary + "</div>" +
                 "</div>" +
-                (phase.status === "DONE" || phase.status === "READY_FOR_REVIEW" ? "" :
+                (isCompleted ? "" :
                   '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>') +
               "</div>" +
-              '<div class="phase-expand-tasks">' + (taskPills || '<span class="small muted">No tasks</span>') + '</div>' +
+              '<div class="phase-expand-tasks">' + taskPills + '</div>' +
             "</section>"
           );
         }
