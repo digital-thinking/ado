@@ -101,7 +101,8 @@ describe("P21-005 Snapshot Tests", () => {
         {
           name: "run",
           description: "Run TODO/CI_FIX tasks in active phase sequentially",
-          usage: "run [auto|manual] [countdownSeconds>=0]",
+          usage:
+            "run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
         },
       ],
     },

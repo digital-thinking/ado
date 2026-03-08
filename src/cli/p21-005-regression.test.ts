@@ -126,7 +126,9 @@ describe("P21-005 global help text", () => {
     expect(out).toContain("task reset <taskNumber>");
     expect(out).toContain("phase create <name> <branchName>");
     expect(out).toContain("phase active <phaseNumber|phaseId>");
-    expect(out).toContain("phase run [auto|manual] [countdownSeconds>=0]");
+    expect(out).toContain(
+      "phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
+    );
     expect(out).toContain("web start [port]");
   });
 
@@ -201,7 +203,7 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("ixado phase create <name> <branchName>");
     expect(out).toContain("ixado phase active <phaseNumber|phaseId>");
     expect(out).toContain(
-      "ixado phase run [auto|manual] [countdownSeconds>=0]",
+      "ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
     );
   });
 

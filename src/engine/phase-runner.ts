@@ -140,6 +140,7 @@ export type PhaseRunnerConfig = {
     enabled: boolean;
     baseDir: string;
   };
+  phaseId?: string;
   projectName: string;
   policy: AuthPolicy;
   role: Role | null;
@@ -276,6 +277,51 @@ export class PhaseRunner {
   }
 
   private resolveActivePhase(state: any): Phase {
+    const configuredPhaseId = this.config.phaseId?.trim();
+    if (configuredPhaseId) {
+      const isActive = Array.isArray(state.activePhaseIds)
+        ? state.activePhaseIds.some(
+            (candidate: string) => candidate.trim() === configuredPhaseId,
+          )
+        : false;
+      if (!isActive) {
+        throw new PhasePreflightError(
+          `Phase "${configuredPhaseId}" is not active. ` +
+            "Use 'ixado phase active <phaseNumber|phaseId>' before running with --phase.",
+        );
+      }
+
+      try {
+        return resolveActivePhaseStrict({
+          phases: state.phases,
+          activePhaseIds: [configuredPhaseId],
+        });
+      } catch (error) {
+        if (!(error instanceof ActivePhaseResolutionError)) {
+          throw error;
+        }
+
+        switch (error.code) {
+          case "NO_PHASES":
+            throw new PhasePreflightError(
+              "No phases found in project state. Run 'ixado phase create' to add a phase before running.",
+            );
+          case "ACTIVE_PHASE_ID_MISSING":
+            throw new PhasePreflightError(
+              "Active phase ID is missing from project state. " +
+                "Set one explicitly with 'ixado phase active <phaseNumber|phaseId>' before running.",
+            );
+          case "ACTIVE_PHASE_ID_NOT_FOUND":
+            throw new PhasePreflightError(
+              `Active phase ID "${error.activePhaseId}" not found in project state. ` +
+                "Run 'ixado phase list' to verify phase IDs, or 'ixado phase active <phaseNumber|phaseId>' to update.",
+            );
+          default:
+            throw error;
+        }
+      }
+    }
+
     try {
       return resolveActivePhaseStrict(state);
     } catch (error) {

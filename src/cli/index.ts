@@ -28,6 +28,7 @@ import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
   ActivePhaseResolutionError,
+  resolvePrimaryActivePhaseId,
   resolveActivePhaseStrict,
 } from "../state/active-phase";
 import {
@@ -77,6 +78,8 @@ import {
 
 const DEFAULT_STATE_FILE = ".ixado/state.json";
 const CLI_LOG_FILE_PATH = initializeCliLogging(process.cwd());
+const PHASE_RUN_USAGE =
+  "ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]";
 
 type TelegramBootstrapConfig =
   | { enabled: false }
@@ -794,7 +797,7 @@ function resolvePhaseRunMode(
   }
 
   throw new ValidationError(`Invalid phase run mode: '${rawMode}'.`, {
-    usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+    usage: PHASE_RUN_USAGE,
     hint: "Use 'auto' for fully automatic execution or 'manual' for step-by-step confirmation.",
   });
 }
@@ -813,13 +816,117 @@ function resolveCountdownSeconds(
     throw new ValidationError(
       `Invalid countdown seconds: '${rawCountdown}'. Expected a non-negative integer.`,
       {
-        usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+        usage: PHASE_RUN_USAGE,
         hint: "Use 0 to skip the countdown, or a positive number for a timed delay.",
       },
     );
   }
 
   return parsed;
+}
+
+function parsePhaseRunArgs(args: string[]): {
+  modeRaw: string | undefined;
+  countdownRaw: string | undefined;
+  phaseReference: string | undefined;
+} {
+  const positional: string[] = [];
+  let phaseReference: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]?.trim() ?? "";
+    if (!token) {
+      continue;
+    }
+
+    if (token === "--phase" || token.startsWith("--phase=")) {
+      if (phaseReference !== undefined) {
+        throw new ValidationError("Duplicate --phase option.", {
+          usage: PHASE_RUN_USAGE,
+          hint: "Provide --phase only once.",
+        });
+      }
+
+      const value =
+        token === "--phase"
+          ? (args[index + 1]?.trim() ?? "")
+          : token.slice("--phase=".length).trim();
+      if (!value) {
+        throw new ValidationError("Missing value for --phase.", {
+          usage: PHASE_RUN_USAGE,
+          hint: "Provide a phase number or phase ID after --phase.",
+        });
+      }
+
+      phaseReference = value;
+      if (token === "--phase") {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      throw new ValidationError(`Unknown option: '${token}'.`, {
+        usage: PHASE_RUN_USAGE,
+        hint: "Supported option: --phase <phaseNumber|phaseId>.",
+      });
+    }
+
+    positional.push(token);
+  }
+
+  return {
+    modeRaw: positional[0],
+    countdownRaw: positional[1],
+    phaseReference,
+  };
+}
+
+function resolvePhaseIdForReference(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>,
+  phaseReference: string,
+): string {
+  const exactMatch = state.phases.find((phase) => phase.id === phaseReference);
+  if (exactMatch) {
+    return exactMatch.id;
+  }
+
+  const phaseNumber = Number(phaseReference);
+  if (!Number.isInteger(phaseNumber) || phaseNumber < 1) {
+    throw new Error(`Phase not found: ${phaseReference}`);
+  }
+
+  const phase = state.phases[phaseNumber - 1];
+  if (!phase) {
+    throw new Error(`Phase not found: ${phaseReference}`);
+  }
+
+  return phase.id;
+}
+
+function resolvePhaseRunTargetId(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>,
+  phaseReference: string | undefined,
+): string | undefined {
+  if (!phaseReference) {
+    return undefined;
+  }
+
+  const phaseId = resolvePhaseIdForReference(state, phaseReference);
+  const isActive = state.activePhaseIds.some(
+    (candidate) => candidate.trim() === phaseId,
+  );
+  if (!isActive) {
+    throw new ValidationError(
+      `Phase '${phaseReference}' is not active and cannot be run with --phase.`,
+      {
+        usage: PHASE_RUN_USAGE,
+        hint: "Use 'ixado phase active <phaseNumber|phaseId>' first.",
+      },
+    );
+  }
+
+  return phaseId;
 }
 
 async function resolveActivePhaseTaskForNumber(
@@ -1498,6 +1605,7 @@ async function runPhaseRunCommand({
     settings,
     projectName,
   );
+  const parsedRunArgs = parsePhaseRunArgs(args);
 
   // Reconcile stale RUNNING agents left over from a prior process crash so that
   // the agent registry does not show phantom RUNNING entries.
@@ -1508,10 +1616,18 @@ async function runPhaseRunCommand({
     );
   }
 
-  const mode = resolvePhaseRunMode(args[0], projectExecutionSettings.autoMode);
+  const mode = resolvePhaseRunMode(
+    parsedRunArgs.modeRaw,
+    projectExecutionSettings.autoMode,
+  );
   const countdownSeconds = resolveCountdownSeconds(
-    args[1],
+    parsedRunArgs.countdownRaw,
     settings.executionLoop.countdownSeconds,
+  );
+  const lockState = await control.getState();
+  const targetPhaseId = resolvePhaseRunTargetId(
+    lockState,
+    parsedRunArgs.phaseReference,
   );
   const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
@@ -1595,6 +1711,7 @@ async function runPhaseRunCommand({
       },
       projectRootDir,
       worktrees: settings.worktrees,
+      phaseId: targetPhaseId,
       projectName,
       policy,
       role: "admin",
@@ -1608,8 +1725,10 @@ async function runPhaseRunCommand({
     },
   );
 
-  const lockState = await control.getState();
-  const lockPhaseId = lockState.activePhaseIds[0]?.trim() || "no-active-phase";
+  const lockPhaseId =
+    targetPhaseId ??
+    resolvePrimaryActivePhaseId(lockState) ??
+    "no-active-phase";
   const runLock = new ExecutionRunLock({
     projectRootDir,
     projectName,
@@ -2172,7 +2291,8 @@ async function runCli(args: string[]): Promise<void> {
         {
           name: "run",
           description: "Run TODO/CI_FIX tasks in active phase sequentially",
-          usage: "run [auto|manual] [countdownSeconds>=0]",
+          usage:
+            "run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
           action: runPhaseRunCommand,
         },
       ],
