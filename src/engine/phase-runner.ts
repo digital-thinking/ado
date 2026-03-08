@@ -117,6 +117,18 @@ export type PhaseRunnerConfig = {
   role: Role | null;
 };
 
+type RecoveryExhaustionReason = "failed" | "unfixable";
+
+class RecoveryAttemptsExhaustedError extends Error {
+  constructor(
+    message: string,
+    readonly reason: RecoveryExhaustionReason,
+  ) {
+    super(message);
+    this.name = "RecoveryAttemptsExhaustedError";
+  }
+}
+
 export class PhaseRunner {
   private git: GitManager;
   private github: GitHubManager;
@@ -598,12 +610,46 @@ Recovery: ${recoveryMessage}`,
           recoveryError instanceof Error
             ? recoveryError.message
             : String(recoveryError);
+        const deadLetterHint =
+          recoveryError instanceof RecoveryAttemptsExhaustedError &&
+          recoveryError.reason === "unfixable"
+            ? `Task moved to DEAD_LETTER after recovery marked it unfixable. Remediate manually, then reset with 'ixado task reset ${taskNumber}'.`
+            : undefined;
+
+        if (deadLetterHint) {
+          await this.control.markTaskDeadLetter?.({
+            phaseId: updatedPhase.id,
+            taskId: resultTask.id,
+            reason: deadLetterHint,
+          });
+          await this.publishRuntimeEvent(
+            createRuntimeEvent({
+              family: "task-lifecycle",
+              type: "task.lifecycle.finish",
+              payload: {
+                status: "DEAD_LETTER",
+                message: `${nextTaskLabel} moved to DEAD_LETTER.`,
+              },
+              context: {
+                source: "PHASE_RUNNER",
+                projectName: this.config.projectName,
+                phaseId: updatedPhase.id,
+                phaseName: updatedPhase.name,
+                taskId: resultTask.id,
+                taskTitle: resultTask.title,
+                taskNumber,
+                adapterId: effectiveAssignee,
+              },
+            }),
+          );
+        }
+
         await this.control.setPhaseStatus({
           phaseId: updatedPhase.id,
           status: "CI_FAILED",
           failureKind: "AGENT_FAILURE" as PhaseFailureKind,
           ciStatusContext: `${failureMessage}
-Recovery: ${recoveryMessage}`,
+Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         });
         throw recoveryError;
       }
@@ -1359,6 +1405,7 @@ ${testerResult.fixTaskDescription}`.trim(),
     }
 
     let lastError: Error | undefined;
+    let lastExhaustionReason: RecoveryExhaustionReason = "failed";
     for (
       let attemptNumber = 1;
       attemptNumber <= this.config.maxRecoveryAttempts;
@@ -1387,6 +1434,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           },
         }),
       );
+      let markedUnfixable = false;
       try {
         const recovery = await runExceptionRecovery({
           cwd: this.config.projectRootDir,
@@ -1473,12 +1521,14 @@ ${testerResult.fixTaskDescription}`.trim(),
           }),
         );
 
+        markedUnfixable = true;
         throw new Error(
           `Recovery marked unfixable: ${recovery.result.reasoning}`,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         lastError = new Error(message);
+        lastExhaustionReason = markedUnfixable ? "unfixable" : "failed";
         console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
         await this.publishRuntimeEvent(
           createRuntimeEvent({
@@ -1503,8 +1553,9 @@ ${testerResult.fixTaskDescription}`.trim(),
       }
     }
 
-    throw new Error(
+    throw new RecoveryAttemptsExhaustedError(
       `Recovery attempts exhausted (${this.config.maxRecoveryAttempts}): ${lastError?.message ?? input.errorMessage}`,
+      lastExhaustionReason,
     );
   }
 

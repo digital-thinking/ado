@@ -292,6 +292,19 @@ export class ExecutionControlService {
           });
           return;
         }
+
+        if (resultTask.status === "DEAD_LETTER") {
+          this.setStatus({
+            running: false,
+            stopRequested: false,
+            projectName,
+            phaseId: undefined,
+            taskId: undefined,
+            taskTitle: undefined,
+            message: `Auto mode stopped because task '${resultTask.title}' is DEAD_LETTER. Reset it to TODO after manual remediation.`,
+          });
+          return;
+        }
       }
     } finally {
       if (this.status.running && this.status.projectName === projectName) {

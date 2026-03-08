@@ -1128,6 +1128,13 @@ describe("agent top bar frontend (P12-007)", () => {
     expect(html).toContain("agent.recoveryAttempted");
     expect(html).toContain("agent.recoveryReasoning");
   });
+
+  test("HTML includes DEAD_LETTER kanban surfacing with remediation hint", async () => {
+    const html = await getHtml();
+    expect(html).toContain("DEAD_LETTER");
+    expect(html).toContain("Dead-lettered after unfixable recovery.");
+    expect(html).toContain("Reset TODO");
+  });
 });
 
 describe("SSE log viewer frontend (P12-010)", () => {

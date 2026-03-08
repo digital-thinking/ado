@@ -15,7 +15,7 @@ IxADO organizes work into **Phases**. Each phase contains tasks with explicit as
 2. **Branch Prep:** Phase execution prepares or checks out the phase branch.
 3. **Task Execution:** Tasks run through adapter-specific workers using one normalized execution path.
 4. **Tester Pass (optional but supported):** Post-task validation can create CI-fix tasks when checks fail.
-5. **Recovery:** Recoverable execution exceptions can trigger AI-assisted remediation attempts.
+5. **Recovery:** Recoverable execution exceptions can trigger AI-assisted remediation attempts. If recovery is exhausted with an `unfixable` result, the task is moved to `DEAD_LETTER` and requires manual remediation + `ixado task reset <n>`.
 6. **Completion:** Phase reaches `DONE` when no TODO/CI_FIX tasks remain and configured checks pass.
 
 ## Core Features

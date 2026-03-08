@@ -369,7 +369,10 @@ export function shouldNotifyRuntimeEventForTelegram(
         event.payload.status === "CI_FAILED"
       );
     case "task.lifecycle.finish":
-      return event.payload.status === "FAILED";
+      return (
+        event.payload.status === "FAILED" ||
+        event.payload.status === "DEAD_LETTER"
+      );
     case "tester.activity":
       return event.payload.stage === "failed";
     case "recovery.activity":

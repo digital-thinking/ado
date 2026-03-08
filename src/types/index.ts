@@ -404,6 +404,7 @@ export const TaskStatusSchema = z.enum([
   "IN_PROGRESS",
   "DONE",
   "FAILED",
+  "DEAD_LETTER", // terminal-unfixable failure requiring manual remediation
   "CI_FIX", // specifically for iterative fixing after a CI failure
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;

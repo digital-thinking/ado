@@ -1648,6 +1648,80 @@ describe("ControlCenterService", () => {
     expect(afterReset.phases[0].tasks[0].errorLogs).toBeUndefined();
   });
 
+  test("resetTaskToTodo also supports DEAD_LETTER tasks", async () => {
+    let resetCalled = 0;
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      repositoryResetRunner: async () => {
+        resetCalled += 1;
+      },
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Reset Dead Letter",
+      branchName: "phase-reset-dead-letter",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Reset dead letter",
+      description: "Task already dead-lettered",
+      status: "DEAD_LETTER",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const afterReset = await serviceWithRunner.resetTaskToTodo({
+      phaseId,
+      taskId,
+    });
+
+    expect(resetCalled).toBe(1);
+    expect(afterReset.phases[0].tasks[0].status).toBe("TODO");
+    expect(afterReset.phases[0].tasks[0].assignee).toBe("UNASSIGNED");
+  });
+
+  test("markTaskDeadLetter transitions FAILED task to DEAD_LETTER with reason", async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
+        throw new Error("adapter failed");
+      },
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Dead Letter",
+      branchName: "phase-dead-letter",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Mark dead letter",
+      description: "Task to mark",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+
+    const updated = await serviceWithRunner.markTaskDeadLetter({
+      phaseId,
+      taskId,
+      reason: "Needs manual remediation before retry.",
+    });
+
+    expect(updated.phases[0].tasks[0].status).toBe("DEAD_LETTER");
+    expect(updated.phases[0].tasks[0].resultContext).toBe(
+      "Needs manual remediation before retry.",
+    );
+  });
+
   test("calls onStateChange hook when state is written", async () => {
     let callCount = 0;
     let lastProjectName = "";

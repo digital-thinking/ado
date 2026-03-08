@@ -920,6 +920,103 @@ describe("PhaseRunner", () => {
     expect(statuses).not.toContain("DONE");
   });
 
+  test("P29-001: unfixable recovery exhaustion transitions task to DEAD_LETTER", async () => {
+    const phaseId = "77111111-1111-4111-8111-111111111111";
+    const taskId = "77222222-2222-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 29",
+          branchName: "phase-29-reliability",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "P29-001",
+              description: "dead-letter transition",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        const task = mockState.phases[0].tasks[0] as any;
+        task.status = "FAILED";
+        task.errorCategory = "AGENT_FAILURE";
+        task.errorLogs = "Task failed and needs recovery.";
+        return mockState;
+      }),
+      markTaskDeadLetter: mock(
+        async (input: { phaseId: string; taskId: string; reason: string }) => {
+          expect(input.phaseId).toBe(phaseId);
+          expect(input.taskId).toBe(taskId);
+          expect(input.reason).toContain("DEAD_LETTER");
+          const task = mockState.phases[0].tasks[0] as any;
+          task.status = "DEAD_LETTER";
+          task.resultContext = input.reason;
+          return mockState;
+        },
+      ),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: JSON.stringify({
+          status: "unfixable",
+          reasoning: "Needs manual intervention",
+        }),
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "phase-29-reliability", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      mockConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((candidate) => candidate);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Recovery attempts exhausted");
+
+    expect(mockControl.markTaskDeadLetter).toHaveBeenCalledTimes(1);
+    expect(mockState.phases[0].tasks[0].status).toBe("DEAD_LETTER");
+    expect((mockState.phases[0].tasks[0] as any).resultContext).toContain(
+      "Remediate manually",
+    );
+
+    const ciFailedCall = (
+      mockControl.setPhaseStatus as ReturnType<typeof mock>
+    ).mock.calls.find((entry: any[]) => entry[0].status === "CI_FAILED");
+    expect(ciFailedCall).toBeDefined();
+    expect(ciFailedCall?.[0]?.ciStatusContext).toContain("DEAD_LETTER");
+  });
+
   test("P19-003: each task uses its own persisted assignee instead of global default", async () => {
     const phaseId = "a0000000-0000-4000-8000-000000000001";
     const task1Id = "b0000000-0000-4000-8000-000000000001";
