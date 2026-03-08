@@ -1174,6 +1174,97 @@ describe("PhaseRunner", () => {
     expect(infoOutput).toContain("taskType is missing");
   });
 
+  test("P28-006: task with taskType and missing affinity falls back with reason", async () => {
+    const phaseId = "e0000000-0000-4000-8000-000000000001";
+    const taskId = "f0000000-0000-4000-8000-000000000001";
+
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Threat model update",
+              description: "Audit auth boundary",
+              taskType: "security-audit",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let startInput:
+      | { assignee: string; resolvedAssignee?: string; routingReason?: string }
+      | undefined;
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        startInput = input;
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const consoleInfo = console.info;
+    const infoSpy = mock(() => {});
+    console.info = infoSpy as unknown as typeof console.info;
+    try {
+      const runner = new PhaseRunner(
+        mockControl,
+        {
+          ...mockConfig,
+          adapterAffinities: {
+            documentation: "CLAUDE_CLI",
+          },
+        },
+        undefined,
+        undefined,
+        mockRunner,
+      );
+      await runner.run();
+    } finally {
+      console.info = consoleInfo;
+    }
+
+    expect(startInput?.assignee).toBe("MOCK_CLI");
+    expect(startInput?.resolvedAssignee).toBe("MOCK_CLI");
+    expect(startInput?.routingReason).toBe("fallback");
+
+    const infoOutput = infoSpy.mock.calls
+      .map((call) => call.join(" "))
+      .join("\n");
+    expect(infoOutput).toContain(
+      "no adapter affinity configured for taskType 'security-audit'",
+    );
+  });
+
   test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {
     const phaseId = "33333333-3333-4333-8333-333333333333";
     const taskId = "44444444-4444-4444-8444-444444444444";

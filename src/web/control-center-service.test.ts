@@ -97,6 +97,22 @@ describe("ControlCenterService", () => {
     expect(taskState.phases[0].tasks[0].taskType).toBe("documentation");
   });
 
+  test("infers code-review task type at creation when no explicit type is provided", async () => {
+    const phaseState = await service.createPhase({
+      name: "Phase 6",
+      branchName: "phase-6-web-interface",
+    });
+    const phaseId = phaseState.phases[0].id;
+
+    const taskState = await service.createTask({
+      phaseId,
+      title: "Release readiness pass",
+      description: "Perform peer review and provide LGTM findings.",
+    });
+
+    expect(taskState.phases[0].tasks[0].taskType).toBe("code-review");
+  });
+
   test("updates task title, description, and dependencies", async () => {
     const phaseState = await service.createPhase({
       name: "Phase 6",

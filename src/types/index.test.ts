@@ -243,6 +243,23 @@ describe("type contracts", () => {
     });
   });
 
+  test("rejects adapter affinities with unknown task type keys", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: { enabled: false },
+        agents: {
+          CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: true, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+          adapterAffinities: {
+            refactor: "CODEX_CLI",
+          },
+        },
+      }),
+    ).toThrow("Invalid key in record");
+  });
+
   test("rejects adapter affinities that target disabled adapters", () => {
     expect(() =>
       CliSettingsSchema.parse({

@@ -75,4 +75,52 @@ describe("task-type-classifier", () => {
 
     expect(inferred).toBe("test-writing");
   });
+
+  test("covers high-signal keywords across all task types", () => {
+    const cases: Array<{
+      title: string;
+      description: string;
+      expected:
+        | "implementation"
+        | "code-review"
+        | "test-writing"
+        | "security-audit"
+        | "documentation";
+    }> = [
+      {
+        title: "CVE-2026-12345 triage",
+        description: "Threat review and hardening follow-up.",
+        expected: "security-audit",
+      },
+      {
+        title: "Final LGTM pass",
+        description: "Run peer review on the release PR.",
+        expected: "code-review",
+      },
+      {
+        title: "Stabilize checkout flow",
+        description: "Add e2e coverage for regression prevention.",
+        expected: "test-writing",
+      },
+      {
+        title: "Prepare release changelog",
+        description: "Update README and documentation guide.",
+        expected: "documentation",
+      },
+      {
+        title: "Fix flaky state update",
+        description: "Refactor the writer and add missing feature flag logic.",
+        expected: "implementation",
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(
+        inferTaskType({
+          title: testCase.title,
+          description: testCase.description,
+        }),
+      ).toBe(testCase.expected);
+    }
+  });
 });
