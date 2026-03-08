@@ -253,24 +253,18 @@ describe("PhaseRunner", () => {
     const ghCalls = (mockRunner.run as ReturnType<typeof mock>).mock.calls
       .map((entry: any[]) => entry[0])
       .filter((call: any) => call.command === "gh");
-    expect(ghCalls).toHaveLength(4);
-    expect(ghCalls[0].args).toContain("--title");
-    expect(ghCalls[0].args).toContain("Phase 23");
-    expect(ghCalls[0].args).toContain("--body");
-    expect(ghCalls[0].args[ghCalls[0].args.indexOf("--body") + 1]).toContain(
+    expect(ghCalls).toHaveLength(5);
+    // ghCalls[0] is gh pr list (check existing PR), ghCalls[1] is gh pr create
+    expect(ghCalls[1].args).toContain("--title");
+    expect(ghCalls[1].args).toContain("Phase 23");
+    expect(ghCalls[1].args).toContain("--body");
+    expect(ghCalls[1].args[ghCalls[1].args.indexOf("--body") + 1]).toContain(
       "## Phase: Phase 23",
     );
-    expect(ghCalls[0].args[ghCalls[0].args.indexOf("--body") + 1]).toContain(
+    expect(ghCalls[1].args[ghCalls[1].args.indexOf("--body") + 1]).toContain(
       "- **P23-001**: ",
     );
-    expect(ghCalls[0].args).toContain("--draft");
-    expect(ghCalls[1].args).toEqual([
-      "pr",
-      "view",
-      "2301",
-      "--json",
-      "statusCheckRollup",
-    ]);
+    expect(ghCalls[1].args).toContain("--draft");
     expect(ghCalls[2].args).toEqual([
       "pr",
       "view",
@@ -278,7 +272,14 @@ describe("PhaseRunner", () => {
       "--json",
       "statusCheckRollup",
     ]);
-    expect(ghCalls[3].args).toEqual(["pr", "ready", "2301"]);
+    expect(ghCalls[3].args).toEqual([
+      "pr",
+      "view",
+      "2301",
+      "--json",
+      "statusCheckRollup",
+    ]);
+    expect(ghCalls[4].args).toEqual(["pr", "ready", "2301"]);
     expect(
       runtimeEvents.some(
         (event) =>

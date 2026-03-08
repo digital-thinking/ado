@@ -103,6 +103,7 @@ describe("P11-008 integration coverage", () => {
       { stdout: "" },
       { stdout: "feature/p11-008\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/1108\n" },
     ]);
 
@@ -134,8 +135,10 @@ describe("P11-008 integration coverage", () => {
       "feature/p11-008",
     ]);
     expect(runner.calls[5]?.command).toBe("gh");
-    expect(runner.calls[5]?.args).toContain("pr");
-    expect(runner.calls[5]?.args).toContain("create");
+    expect(runner.calls[5]?.args).toContain("list"); // gh pr list (check existing)
+    expect(runner.calls[6]?.command).toBe("gh");
+    expect(runner.calls[6]?.args).toContain("pr");
+    expect(runner.calls[6]?.args).toContain("create");
   });
 
   test("audit log writes to target project cwd even when process cwd is elsewhere", async () => {
@@ -368,6 +371,7 @@ describe("P11-008 integration coverage", () => {
         { stdout: "" },
         { stdout: "feature/p11-008\n" },
         { stdout: "" },
+        { stdout: "" }, // gh pr list (no existing PR)
         { stdout: "https://github.com/org/repo/pull/42\n" },
       ]);
 
@@ -388,9 +392,9 @@ describe("P11-008 integration coverage", () => {
       expect(result.prUrl).toBe("https://github.com/org/repo/pull/42");
       expect(result.phaseId).toBe(PHASE.id);
       expect(result.baseBranch).toBe("main");
-      expect(runner.calls).toHaveLength(6);
+      expect(runner.calls).toHaveLength(7);
       expect(runner.calls[4]?.command).toBe("git");
-      expect(runner.calls[5]?.command).toBe("gh");
+      expect(runner.calls[6]?.command).toBe("gh");
     });
 
     test("owner setPhasePrUrl callback receives the correct prUrl", async () => {

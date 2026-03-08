@@ -171,7 +171,8 @@ describe("PhaseRunner CI_FIX guardrails", () => {
         title: "Initial Task",
         description: "",
         status: "DONE",
-        assignee: "UNASSIGNED",
+        assignee: "MOCK_CLI",
+        resolvedAssignee: "MOCK_CLI",
         dependencies: [],
       },
     ];

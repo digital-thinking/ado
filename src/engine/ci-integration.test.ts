@@ -116,6 +116,7 @@ describe("runCiIntegration", () => {
       { stdout: "" },
       { stdout: "phase-5-ci-execution-loop\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/123\n" },
     ]);
     const setPrCalls: Array<{ phaseId: string; prUrl: string }> = [];
@@ -163,7 +164,7 @@ describe("runCiIntegration", () => {
 
     expect(result.prUrl).toBe("https://github.com/org/repo/pull/123");
     expect(result.headBranch).toBe("phase-5-ci-execution-loop");
-    expect(runner.calls).toHaveLength(6);
+    expect(runner.calls).toHaveLength(7);
     expect(runner.calls[0]).toEqual({
       command: "git",
       args: ["add", "--all"],
@@ -198,7 +199,9 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
     });
     expect(runner.calls[5]?.command).toBe("gh");
-    const ghArgs = runner.calls[5]?.args as string[];
+    expect((runner.calls[5]?.args as string[])[1]).toBe("list"); // gh pr list (check existing)
+    expect(runner.calls[6]?.command).toBe("gh");
+    const ghArgs = runner.calls[6]?.args as string[];
     expect(ghArgs[0]).toBe("pr");
     expect(ghArgs[1]).toBe("create");
     expect(ghArgs[7]).toBe("Phase 5: CI Execution Loop");
@@ -291,8 +294,18 @@ describe("runCiIntegration", () => {
     expect(runner.calls).toHaveLength(0);
   });
 
-  test("fails fast when there is nothing to commit", async () => {
-    const runner = new MockProcessRunner([{ stdout: "" }, { stdout: "" }]);
+  test("skips commit step and proceeds to push when there is nothing to stage", async () => {
+    // Provide enough responses to reach the push/PR step without throwing MissingCommitError.
+    // gh pr list (no existing), git add, git diff --cached (empty=nothing staged), git branch, git push, gh pr create (empty→parse error)
+    // Sequence: git add, git diff --cached (empty→skip commit), git branch --show-current, git push, gh pr list (no existing), gh pr create (empty→parse error)
+    const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "feat/phase-5" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "" },
+    ]);
 
     await expect(
       runCiIntegration({
@@ -322,10 +335,9 @@ describe("runCiIntegration", () => {
         },
         setPhasePrUrl: async () => {},
       }),
-    ).rejects.toThrow(
-      "CI integration requires a commit before push/PR, but there are no local changes to commit.",
-    );
-    expect(runner.calls).toHaveLength(2);
+    ).rejects.toThrow("Unable to parse pull request URL from gh output.");
+    // Must have made more than 3 calls (meaning it got past the staged-changes check)
+    expect(runner.calls.length).toBeGreaterThan(3);
   });
 
   test("fails fast with actionable message when commit command fails", async () => {
@@ -376,6 +388,7 @@ describe("runCiIntegration", () => {
       { stdout: "" },
       { stdout: "phase-23-feature\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/321\n" },
     ]);
 
@@ -419,7 +432,7 @@ describe("runCiIntegration", () => {
       setPhasePrUrl: async () => {},
     });
 
-    const ghArgs = runner.calls[5]?.args as string[];
+    const ghArgs = runner.calls[6]?.args as string[];
     expect(ghArgs[0]).toBe("pr");
     expect(ghArgs[1]).toBe("create");
     expect(ghArgs[7]).toBe("Phase 23");
