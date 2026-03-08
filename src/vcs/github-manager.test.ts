@@ -4,6 +4,93 @@ import { GitHubManager, parsePullRequestNumberFromUrl } from "./github-manager";
 import { MockProcessRunner } from "./test-utils";
 
 describe("GitHubManager", () => {
+  test("lists open issues with metadata", async () => {
+    const runner = new MockProcessRunner([
+      {
+        stdout: JSON.stringify([
+          {
+            number: 12,
+            title: "Stabilize scanner ranking",
+            body: "- [ ] Add tests\nTODO: verify weight merge",
+            url: "https://github.com/org/repo/issues/12",
+            labels: [{ name: "bug" }, { name: "discovery" }],
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-03-05T00:00:00.000Z",
+          },
+        ]),
+      },
+    ]);
+    const manager = new GitHubManager(runner);
+
+    const issues = await manager.listOpenIssues({
+      cwd: "C:/repo",
+      limit: 25,
+      labels: ["bug", "discovery"],
+    });
+
+    expect(issues).toEqual([
+      {
+        number: 12,
+        title: "Stabilize scanner ranking",
+        body: "- [ ] Add tests\nTODO: verify weight merge",
+        url: "https://github.com/org/repo/issues/12",
+        labels: ["bug", "discovery"],
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-05T00:00:00.000Z",
+      },
+    ]);
+    expect(runner.calls[0]).toEqual({
+      command: "gh",
+      args: [
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "25",
+        "--json",
+        "number,title,body,url,labels,createdAt,updatedAt",
+        "--label",
+        "bug,discovery",
+      ],
+      cwd: "C:/repo",
+    });
+  });
+
+  test("fails when open issues response is invalid json", async () => {
+    const runner = new MockProcessRunner([{ stdout: "{oops}" }]);
+    const manager = new GitHubManager(runner);
+
+    await expect(
+      manager.listOpenIssues({
+        cwd: "C:/repo",
+      }),
+    ).rejects.toThrow("Unable to parse open issues response");
+  });
+
+  test("fails when open issue payload is missing required fields", async () => {
+    const runner = new MockProcessRunner([
+      {
+        stdout: JSON.stringify([
+          {
+            number: 1,
+            title: "",
+            url: "https://github.com/org/repo/issues/1",
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-03-02T00:00:00.000Z",
+          },
+        ]),
+      },
+    ]);
+    const manager = new GitHubManager(runner);
+
+    await expect(
+      manager.listOpenIssues({
+        cwd: "C:/repo",
+      }),
+    ).rejects.toThrow("Issue response contains invalid title");
+  });
+
   test("creates a pull request and returns its URL", async () => {
     const runner = new MockProcessRunner([
       { stdout: "" }, // gh pr list (no existing PR)

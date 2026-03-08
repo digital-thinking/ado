@@ -12,6 +12,22 @@ export type CreatePullRequestInput = {
   draft?: boolean;
 };
 
+export type ListOpenIssuesInput = {
+  cwd: string;
+  limit?: number;
+  labels?: string[];
+};
+
+export type GitHubIssue = {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  labels: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CiCheckState =
   | "PENDING"
   | "SUCCESS"
@@ -66,6 +82,8 @@ export type CiPollTransition = {
 type StatusCheckRollupResponse = {
   statusCheckRollup?: Array<Record<string, unknown>>;
 };
+
+type IssuesListResponse = Array<Record<string, unknown>>;
 
 function toUpperText(value: unknown): string {
   return typeof value === "string" ? value.toUpperCase() : "";
@@ -145,11 +163,112 @@ function isTerminalState(state: CiCheckState): boolean {
   return state === "SUCCESS" || state === "FAILURE" || state === "CANCELLED";
 }
 
+function parseIssueLabels(rawLabels: unknown): string[] {
+  if (!Array.isArray(rawLabels)) {
+    return [];
+  }
+
+  const labels: string[] = [];
+  for (const rawLabel of rawLabels) {
+    if (!rawLabel || typeof rawLabel !== "object") {
+      continue;
+    }
+    const candidate = rawLabel as Record<string, unknown>;
+    if (typeof candidate.name !== "string") {
+      continue;
+    }
+    const normalized = candidate.name.trim();
+    if (normalized) {
+      labels.push(normalized);
+    }
+  }
+
+  return labels;
+}
+
+function parseIssueRow(row: Record<string, unknown>): GitHubIssue {
+  const rawNumber = row.number;
+  const title = row.title;
+  const url = row.url;
+  const createdAt = row.createdAt;
+  const updatedAt = row.updatedAt;
+
+  if (
+    typeof rawNumber !== "number" ||
+    !Number.isInteger(rawNumber) ||
+    rawNumber <= 0
+  ) {
+    throw new Error("Issue response contains invalid number.");
+  }
+  if (typeof title !== "string" || !title.trim()) {
+    throw new Error("Issue response contains invalid title.");
+  }
+  if (typeof url !== "string" || !url.trim()) {
+    throw new Error("Issue response contains invalid url.");
+  }
+  if (typeof createdAt !== "string" || !createdAt.trim()) {
+    throw new Error("Issue response contains invalid createdAt.");
+  }
+  if (typeof updatedAt !== "string" || !updatedAt.trim()) {
+    throw new Error("Issue response contains invalid updatedAt.");
+  }
+
+  return {
+    number: rawNumber,
+    title: title.trim(),
+    body: typeof row.body === "string" ? row.body : "",
+    url: url.trim(),
+    labels: parseIssueLabels(row.labels),
+    createdAt,
+    updatedAt,
+  };
+}
+
 export class GitHubManager {
   private readonly runner: ProcessRunner;
 
   constructor(runner: ProcessRunner) {
     this.runner = runner;
+  }
+
+  async listOpenIssues(input: ListOpenIssuesInput): Promise<GitHubIssue[]> {
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new Error("limit must be a positive integer.");
+    }
+
+    const args = [
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      String(limit),
+      "--json",
+      "number,title,body,url,labels,createdAt,updatedAt",
+    ];
+    if (input.labels && input.labels.length > 0) {
+      args.push("--label", input.labels.join(","));
+    }
+
+    const result = await this.runner.run({
+      command: "gh",
+      args,
+      cwd: input.cwd,
+    });
+
+    let payload: IssuesListResponse;
+    try {
+      payload = JSON.parse(result.stdout) as IssuesListResponse;
+    } catch {
+      throw new Error("Unable to parse open issues response from gh.");
+    }
+
+    if (!Array.isArray(payload)) {
+      throw new Error("Open issues response must be a JSON array.");
+    }
+
+    return payload.map((row) => parseIssueRow(row));
   }
 
   async createPullRequest(input: CreatePullRequestInput): Promise<string> {
