@@ -33,6 +33,11 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
   markReadyOnApproval: false,
 };
 
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy: `${PHASE.id}/22222222-2222-4222-8222-222222222222`,
+  executedBy: "CODEX_CLI",
+};
+
 function clonePolicy(policy: AuthPolicy): AuthPolicy {
   return structuredClone(policy);
 }
@@ -64,6 +69,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy,
@@ -79,6 +85,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner([{ stdout: "feature/p11-008\n" }]),
         role: "admin",
         policy,
@@ -107,6 +114,7 @@ describe("P11-008 integration coverage", () => {
       cwd: TEST_CWD,
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -158,6 +166,7 @@ describe("P11-008 integration coverage", () => {
         cwd: projectDir,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -210,6 +219,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: null,
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -268,6 +278,7 @@ describe("P11-008 integration coverage", () => {
           cwd: TEST_CWD,
           baseBranch: "main",
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+          commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
           role: "operator",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -289,6 +300,7 @@ describe("P11-008 integration coverage", () => {
           cwd: TEST_CWD,
           baseBranch: "main",
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+          commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
           role: "viewer",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -307,6 +319,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
         role: "operator",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -329,6 +342,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
         role: "viewer",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -364,6 +378,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -396,6 +411,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),

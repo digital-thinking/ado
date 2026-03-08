@@ -1,5 +1,7 @@
 export { GitManager } from "./git-manager";
 export type {
+  CommitInput,
+  CommitTrailers,
   CreateBranchInput,
   CreateWorktreeInput,
   PushBranchInput,

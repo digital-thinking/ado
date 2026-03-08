@@ -14,6 +14,12 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
   markReadyOnApproval: false,
 };
 
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy:
+    "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+  executedBy: "CODEX_CLI",
+};
+
 describe("derivePullRequestMetadata", () => {
   test("formats title and body with DONE tasks sorted by ID and excludes CI_FIX", () => {
     const tasks: Task[] = [
@@ -132,6 +138,7 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {
@@ -173,6 +180,10 @@ describe("runCiIntegration", () => {
         "commit",
         "-m",
         "chore(ixado): finalize Phase 5: CI Execution Loop",
+        "--trailer",
+        "Originated-By=11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        "--trailer",
+        "Executed-By=CODEX_CLI",
       ],
       cwd: "C:/repo",
     });
@@ -213,6 +224,7 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "   ",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -251,6 +263,7 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "operator",
       policy: {
@@ -289,6 +302,7 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -329,6 +343,7 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -383,6 +398,7 @@ describe("runCiIntegration", () => {
         createAsDraft: true,
         markReadyOnApproval: false,
       },
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {

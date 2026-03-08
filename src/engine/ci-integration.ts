@@ -7,7 +7,12 @@ import {
   authorizeOrchestratorAction,
 } from "../security/orchestration-authorizer";
 import { ORCHESTRATOR_ACTIONS } from "../security/workflow-profiles";
-import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
+import {
+  GitHubManager,
+  GitManager,
+  PrivilegedGitActions,
+  type CommitTrailers,
+} from "../vcs";
 
 export type RunCiIntegrationInput = {
   phaseId: string;
@@ -19,6 +24,7 @@ export type RunCiIntegrationInput = {
   runner: ProcessRunner;
   role: Role | null;
   policy: AuthPolicy;
+  commitTrailers: CommitTrailers;
   setPhasePrUrl: (input: { phaseId: string; prUrl: string }) => Promise<void>;
 };
 
@@ -136,6 +142,7 @@ export async function runCiIntegration(
     await git.commit({
       cwd: input.cwd,
       message: `chore(ixado): finalize ${input.phaseName}`,
+      trailers: input.commitTrailers,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

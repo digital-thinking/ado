@@ -16,6 +16,12 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
   markReadyOnApproval: false,
 };
 
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy:
+    "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+  executedBy: "CODEX_CLI",
+};
+
 const TEST_PHASE: Phase = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Phase 5: CI Execution Loop",
@@ -64,6 +70,7 @@ describe("execution loop integration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {
@@ -118,6 +125,7 @@ describe("execution loop integration", () => {
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: null,
         policy: {

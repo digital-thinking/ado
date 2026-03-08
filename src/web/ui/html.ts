@@ -522,7 +522,7 @@ export function controlCenterHtml(params: {
       autoMode: Boolean(defaultAutoMode),
     };
     let projects = [];
-    let activeProjectName = INITIAL_PROJECT_NAME;
+    let activeProjectName = localStorage.getItem("ixado_active_project") || INITIAL_PROJECT_NAME;
     let isSettingsActive = false;
     const projectStateCache = new Map();
     let currentEventSource = null;
@@ -664,6 +664,7 @@ export function controlCenterHtml(params: {
 
     async function switchProject(name) {
       activeProjectName = name;
+      localStorage.setItem("ixado_active_project", name);
       isSettingsActive = false;
       projectContent.classList.remove("hidden");
       settingsContent.classList.add("hidden");

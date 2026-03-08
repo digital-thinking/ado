@@ -149,6 +149,12 @@ export class PhaseRunner {
   private privilegedGit: PrivilegedGitActions;
   private adapterBreakers = new Map<CLIAdapterId, AdapterCircuitBreaker>();
   private enabledAdapters: CLIAdapterId[];
+  private lastExecutedTaskContext:
+    | {
+        taskId: string;
+        assignee: CLIAdapterId;
+      }
+    | undefined;
 
   constructor(
     private control: ControlCenterService,
@@ -617,6 +623,10 @@ Recovery: ${recoveryMessage}`,
         }),
       );
       if (resultTask.status !== "FAILED") {
+        this.lastExecutedTaskContext = {
+          taskId: resultTask.id,
+          assignee: effectiveAssignee,
+        };
         return;
       }
 
@@ -1127,6 +1137,43 @@ ${testerResult.fixTaskDescription}`.trim(),
     return depth;
   }
 
+  private resolveCommitTrailersForPhase(phase: Phase): {
+    originatedBy: string;
+    executedBy: CLIAdapterId;
+  } {
+    if (this.lastExecutedTaskContext) {
+      return {
+        originatedBy: `${phase.id}/${this.lastExecutedTaskContext.taskId}`,
+        executedBy: this.lastExecutedTaskContext.assignee,
+      };
+    }
+
+    for (let index = phase.tasks.length - 1; index >= 0; index -= 1) {
+      const task = phase.tasks[index];
+      if (!task || task.status !== "DONE") {
+        continue;
+      }
+
+      const executedBy =
+        task.resolvedAssignee ??
+        (task.assignee !== "UNASSIGNED"
+          ? (task.assignee as CLIAdapterId)
+          : undefined);
+      if (!executedBy) {
+        continue;
+      }
+
+      return {
+        originatedBy: `${phase.id}/${task.id}`,
+        executedBy,
+      };
+    }
+
+    throw new Error(
+      `CI integration requires at least one DONE task with a resolved assignee to derive commit trailers for phase "${phase.name}".`,
+    );
+  }
+
   private async handleCiIntegration(phase: Phase): Promise<void> {
     await this.control.setPhaseStatus({
       phaseId: phase.id,
@@ -1151,6 +1198,7 @@ ${testerResult.fixTaskDescription}`.trim(),
     console.info(
       "Optional CI integration enabled. Pushing branch and creating PR via gh.",
     );
+    const commitTrailers = this.resolveCommitTrailersForPhase(phase);
 
     let ciResult: any;
     for (
@@ -1166,6 +1214,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           cwd: this.config.projectRootDir,
           baseBranch: this.config.ciBaseBranch,
           pullRequest: this.config.ciPullRequest,
+          commitTrailers,
           runner: this.testerRunner,
           role: this.config.role,
           policy: this.config.policy,
