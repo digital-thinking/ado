@@ -84,4 +84,37 @@ describe("phase loop wait helpers", () => {
 
     expect(result).toBe("STOP");
   });
+
+  test("auto mode with countdownSeconds=0 advances immediately without sleeping", async () => {
+    const loopControl = new PhaseLoopControl();
+    let sleeps = 0;
+
+    const result = await waitForAutoAdvance({
+      loopControl,
+      countdownSeconds: 0,
+      nextTaskLabel: "task #3",
+      sleep: async () => {
+        sleeps += 1;
+      },
+    });
+
+    expect(result).toBe("NEXT");
+    expect(sleeps).toBe(0);
+  });
+
+  test("auto mode with countdownSeconds=0 emits 'immediately' in info message", async () => {
+    const loopControl = new PhaseLoopControl();
+    const infoLines: string[] = [];
+
+    await waitForAutoAdvance({
+      loopControl,
+      countdownSeconds: 0,
+      nextTaskLabel: "task #3",
+      sleep: async () => {},
+      onInfo: (line) => infoLines.push(line),
+    });
+
+    expect(infoLines.some((l) => l.includes("immediately"))).toBe(true);
+    expect(infoLines.some((l) => l.includes("in 0s"))).toBe(false);
+  });
 });

@@ -5,8 +5,10 @@ import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
 import {
   buildAdapterExecutionPlan,
+  buildAdapterInitializationDiagnostic,
   CodexUsageTracker,
   createAdapter,
+  formatAdapterStartupDiagnostic,
 } from "../adapters";
 import { resolveCliLogFilePath } from "../cli/logging";
 import {
@@ -22,10 +24,12 @@ import {
   ProjectExecutionSettingsSchema,
   type CLIAdapterId,
   type CliAgentSettings,
+  type ProjectState,
 } from "../types";
-import { AgentSupervisor } from "./agent-supervisor";
+import { AgentSupervisor, type AgentView } from "./agent-supervisor";
 import { createWebApp } from "./app";
 import { ControlCenterService } from "./control-center-service";
+import { ExecutionControlService } from "./execution-control-service";
 import { UsageService } from "./usage-service";
 
 export type StartWebControlCenterInput = {
@@ -47,6 +51,22 @@ export type WebControlCenterRuntime = {
 };
 
 const WEB_SERVER_HOST = "127.0.0.1";
+const WEB_SERVER_IDLE_TIMEOUT_SECONDS = 255;
+const TERMINAL_TASK_STATUSES = new Set(["DONE", "FAILED", "DEAD_LETTER"]);
+
+function findTaskStatusById(
+  state: ProjectState,
+  taskId: string,
+): string | undefined {
+  for (const phase of state.phases) {
+    const task = phase.tasks.find((candidate) => candidate.id === taskId);
+    if (task) {
+      return task.status;
+    }
+  }
+
+  return undefined;
+}
 
 async function resolveWebPort(
   requestedPort: number | undefined,
@@ -123,11 +143,43 @@ export async function startWebControlCenter(
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     autoMode: input.defaultAutoMode,
   };
-  const agents = new AgentSupervisor({
+
+  // 1. Define placeholders for cross-dependencies.
+  let agents: AgentSupervisor;
+  let control: ControlCenterService;
+
+  // 2. Define the hooks.
+  const onAgentFailure = async (agent: AgentView) => {
+    const isTerminalFailure =
+      agent.status === "FAILED" ||
+      (agent.status === "STOPPED" && (agent.lastExitCode ?? -1) !== 0);
+    if (isTerminalFailure && agent.taskId) {
+      const { buildAgentFailureReason } = await import("./api/agents");
+      try {
+        await control.failTaskIfInProgress({
+          taskId: agent.taskId,
+          reason: buildAgentFailureReason(agent, "terminated"),
+          projectName: agent.projectName,
+        });
+      } catch {
+        // Ignore stale task references.
+      }
+    }
+  };
+
+  const onStateChange = async (_projectName: string, state: ProjectState) => {
+    const { refreshRecoveryCache } = await import("./api/agents");
+    refreshRecoveryCache(state);
+  };
+
+  // 3. Initialize services with hooks.
+  agents = new AgentSupervisor({
     registryFilePath: resolveAgentRegistryFilePath(input.cwd),
+    onFailure: onAgentFailure,
   });
-  const control = new ControlCenterService(
-    (projectName) => {
+
+  control = new ControlCenterService({
+    stateEngine: (projectName) => {
       const settingsFilePath = input.settingsFilePath;
       return (async () => {
         const s = await loadCliSettings(settingsFilePath);
@@ -144,8 +196,7 @@ export async function startWebControlCenter(
         throw new Error(`Project not found: ${projectName}`);
       })();
     },
-    resolve(input.cwd, "TASKS.md"),
-    async (workInput) => {
+    internalWorkRunner: async (workInput) => {
       const assigneeSettings = input.agentSettings[workInput.assignee];
       if (!assigneeSettings.enabled) {
         const available = CLI_ADAPTER_IDS.filter(
@@ -156,7 +207,20 @@ export async function startWebControlCenter(
         );
       }
 
-      const adapter = createAdapter(workInput.assignee, processManager);
+      const adapter = createAdapter(workInput.assignee, processManager, {
+        bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
+      });
+      const startupDiagnostic = buildAdapterInitializationDiagnostic({
+        adapterId: workInput.assignee,
+        command: adapter.contract.command,
+        baseArgs: adapter.contract.baseArgs,
+        cwd: input.cwd,
+        timeoutMs: assigneeSettings.timeoutMs,
+        startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
+      });
+      if (startupDiagnostic) {
+        console.info(formatAdapterStartupDiagnostic(startupDiagnostic));
+      }
       const artifacts = await createPromptLogArtifacts({
         cwd: input.cwd,
         assignee: workInput.assignee,
@@ -183,9 +247,11 @@ export async function startWebControlCenter(
             name: agentName,
             command: adapter.contract.command,
             args,
-            cwd: input.cwd,
+            cwd: workInput.cwd ?? input.cwd,
             timeoutMs: assigneeSettings.timeoutMs,
+            startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
             stdin,
+            adapterId: workInput.assignee,
             approvedAdapterSpawn: true,
             phaseId: workInput.phaseId,
             taskId: workInput.taskId,
@@ -230,15 +296,70 @@ export async function startWebControlCenter(
         durationMs: result.durationMs,
       };
     },
-    async () => {
+    repositoryResetRunner: async () => {
       await processManager.run({
         command: "git",
         args: ["reset", "--hard"],
         cwd: input.cwd,
       });
     },
-  );
+    onStateChange: onStateChange,
+  });
+
+  // 4. Initial cache load for all known projects.
+  const { refreshRecoveryCache } = await import("./api/agents");
+  for (const project of settings.projects) {
+    try {
+      const state = await control.getState(project.name);
+      refreshRecoveryCache(state);
+    } catch {
+      // Ignore projects with no state yet.
+    }
+  }
+  try {
+    const defaultState = await control.getState(input.projectName);
+    refreshRecoveryCache(defaultState);
+  } catch {
+    // Ignore.
+  }
+
   await control.ensureInitialized(input.projectName, input.cwd);
+
+  const projectNames = new Set<string>([
+    input.projectName,
+    ...settings.projects.map((project) => project.name),
+  ]);
+  const statesByProject = new Map<string, ProjectState>();
+  for (const projectName of projectNames) {
+    try {
+      const state = await control.getState(projectName);
+      statesByProject.set(projectName, state);
+    } catch {
+      // Ignore projects with no state yet.
+    }
+  }
+
+  const crossStoreReconciledAgents = agents.reconcileRunningAgentsWhere(
+    (agent) => {
+      if (!agent.taskId || !agent.projectName) {
+        return false;
+      }
+      const projectState = statesByProject.get(agent.projectName);
+      if (!projectState) {
+        return false;
+      }
+      const taskStatus = findTaskStatusById(projectState, agent.taskId);
+      if (!taskStatus) {
+        return false;
+      }
+      return TERMINAL_TASK_STATUSES.has(taskStatus);
+    },
+  );
+  if (crossStoreReconciledAgents > 0) {
+    console.info(
+      `Startup: reconciled ${crossStoreReconciledAgents} stale RUNNING agent(s) with terminal task state to STOPPED.`,
+    );
+  }
 
   const usage = new UsageService(
     new CodexUsageTracker(processManager),
@@ -248,17 +369,41 @@ export async function startWebControlCenter(
     },
   );
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
+  const execution = new ExecutionControlService({
+    control,
+    agents: {
+      list: () => agents.list(),
+      kill: (id) => agents.kill(id),
+    },
+    projectRootDir: input.cwd,
+    projectName: input.projectName,
+    resolveDefaultAssignee: async (projectName) => {
+      const currentSettings = await loadCliSettings(input.settingsFilePath);
+      const project = currentSettings.projects.find(
+        (candidate) => candidate.name === projectName,
+      );
+      return (
+        project?.executionSettings?.defaultAssignee ??
+        currentSettings.internalWork.assignee
+      );
+    },
+  });
   const app = createWebApp({
     control: {
       getState: (name) => control.getState(name),
       createPhase: (input) => control.createPhase(input),
       createTask: (input) => control.createTask(input),
+      updateTask: (input) => control.updateTask(input),
       setActivePhase: (input) => control.setActivePhase(input),
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),
+      reconcileInProgressTaskToTodo: (input) =>
+        control.reconcileInProgressTaskToTodo(input),
       failTaskIfInProgress: (input) => control.failTaskIfInProgress(input),
+      recordRecoveryAttempt: (input) => control.recordRecoveryAttempt(input),
       importFromTasksMarkdown: (assignee, name) =>
         control.importFromTasksMarkdown(assignee, name),
+      syncFromTasksMarkdown: (name) => control.syncFromTasksMarkdown(name),
       runInternalWork: (input) => control.runInternalWork(input),
     },
     agents: {
@@ -320,6 +465,10 @@ export async function startWebControlCenter(
         telegram: {
           ...current.telegram,
           ...(validatedPatch.telegram ?? {}),
+          notifications: {
+            ...current.telegram.notifications,
+            ...(validatedPatch.telegram?.notifications ?? {}),
+          },
         },
         internalWork: {
           ...current.internalWork,
@@ -328,6 +477,30 @@ export async function startWebControlCenter(
         executionLoop: {
           ...current.executionLoop,
           ...(validatedPatch.executionLoop ?? {}),
+          deliberation: {
+            ...current.executionLoop.deliberation,
+            ...(validatedPatch.executionLoop?.deliberation ?? {}),
+          },
+          pullRequest: {
+            ...current.executionLoop.pullRequest,
+            ...(validatedPatch.executionLoop?.pullRequest ?? {}),
+          },
+        },
+        discovery: {
+          ...current.discovery,
+          ...(validatedPatch.discovery ?? {}),
+          priorityWeights: {
+            ...current.discovery.priorityWeights,
+            ...(validatedPatch.discovery?.priorityWeights ?? {}),
+          },
+        },
+        worktrees: {
+          ...current.worktrees,
+          ...(validatedPatch.worktrees ?? {}),
+        },
+        exceptionRecovery: {
+          ...current.exceptionRecovery,
+          ...(validatedPatch.exceptionRecovery ?? {}),
         },
         usage: {
           ...current.usage,
@@ -337,23 +510,53 @@ export async function startWebControlCenter(
           CODEX_CLI: {
             ...current.agents.CODEX_CLI,
             ...(validatedPatch.agents?.CODEX_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.CODEX_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.CODEX_CLI?.circuitBreaker ?? {}),
+            },
           },
           CLAUDE_CLI: {
             ...current.agents.CLAUDE_CLI,
             ...(validatedPatch.agents?.CLAUDE_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.CLAUDE_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.CLAUDE_CLI?.circuitBreaker ?? {}),
+            },
           },
           GEMINI_CLI: {
             ...current.agents.GEMINI_CLI,
             ...(validatedPatch.agents?.GEMINI_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.GEMINI_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.GEMINI_CLI?.circuitBreaker ?? {}),
+            },
           },
           MOCK_CLI: {
             ...current.agents.MOCK_CLI,
             ...(validatedPatch.agents?.MOCK_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.MOCK_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.MOCK_CLI?.circuitBreaker ?? {}),
+            },
           },
+          ...(current.agents.adapterAffinities ||
+          validatedPatch.agents?.adapterAffinities
+            ? {
+                adapterAffinities: {
+                  ...(current.agents.adapterAffinities ?? {}),
+                  ...(validatedPatch.agents?.adapterAffinities ?? {}),
+                },
+              }
+            : {}),
         },
       };
 
       return saveCliSettings(input.settingsFilePath, merged);
+    },
+    execution: {
+      getStatus: async (projectName) => execution.getStatus(projectName),
+      startAuto: async (workInput) => execution.startAuto(workInput),
+      stop: async (workInput) => execution.stop(workInput),
     },
     updateRuntimeConfig: async (next) => {
       const currentSettings = await loadCliSettings(input.settingsFilePath);
@@ -396,6 +599,7 @@ export async function startWebControlCenter(
   const server = Bun.serve({
     port: requestedPort,
     hostname: WEB_SERVER_HOST,
+    idleTimeout: WEB_SERVER_IDLE_TIMEOUT_SECONDS,
     fetch: app.fetch,
   });
   const resolvedPort = server.port ?? requestedPort;

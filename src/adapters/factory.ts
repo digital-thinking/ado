@@ -10,12 +10,13 @@ import type { TaskAdapter } from "./types";
 type AdapterFactoryOptions = {
   command?: string;
   baseArgs?: string[];
+  bypassApprovalsAndSandbox?: boolean;
 };
 
 export function createAdapter(
   adapterId: CLIAdapterId,
   runner: ProcessRunner,
-  options: AdapterFactoryOptions = {}
+  options: AdapterFactoryOptions = {},
 ): TaskAdapter {
   switch (adapterId) {
     case "MOCK_CLI":
@@ -25,7 +26,10 @@ export function createAdapter(
     case "GEMINI_CLI":
       return new GeminiAdapter(runner, options);
     case "CODEX_CLI":
-      return new CodexAdapter(runner, options);
+      return new CodexAdapter(runner, {
+        ...options,
+        bypassApprovalsAndSandbox: options.bypassApprovalsAndSandbox,
+      });
     default: {
       const unreachable: never = adapterId;
       throw new Error(`Unsupported adapter: ${String(unreachable)}`);

@@ -5,7 +5,11 @@ import { PassThrough } from "node:stream";
 import { describe, expect, test } from "bun:test";
 
 import { resolveCommandForSpawn } from "./command-resolver";
-import { ProcessExecutionError, ProcessManager } from "./manager";
+import {
+  ProcessExecutionError,
+  ProcessManager,
+  ProcessStdinUnavailableError,
+} from "./manager";
 import type { SpawnFn } from "./types";
 
 type FakeChildProcess = ChildProcess & {
@@ -42,7 +46,11 @@ function createFakeChild(): FakeChildProcess {
 describe("ProcessManager", () => {
   test("runs a command and collects stdout/stderr", async () => {
     const child = createFakeChild();
-    const spawnCalls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
+    const spawnCalls: Array<{
+      command: string;
+      args: string[];
+      options: SpawnOptions;
+    }> = [];
 
     const spawnFn: SpawnFn = (command, args, options) => {
       spawnCalls.push({ command, args, options });
@@ -58,7 +66,9 @@ describe("ProcessManager", () => {
     const result = await manager.run({ command: "git", args: ["status"] });
 
     expect(spawnCalls).toHaveLength(1);
-    expect(spawnCalls[0]?.command).toBe(resolveCommandForSpawn("git", process.env));
+    expect(spawnCalls[0]?.command).toBe(
+      resolveCommandForSpawn("git", process.env),
+    );
     expect(spawnCalls[0]?.args).toEqual(["status"]);
     expect(result.stdout).toBe("ok");
     expect(result.stderr).toBe("warn");
@@ -110,6 +120,49 @@ describe("ProcessManager", () => {
     expect(stdinPayload).toBe("hello");
   });
 
+  test("throws ProcessStdinUnavailableError when stdin content is required but stdin pipe is null", async () => {
+    const emitter = new EventEmitter() as ChildProcess;
+    const child = Object.assign(emitter, {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      stdin: null,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+
+    const spawnFn: SpawnFn = () => child;
+    const manager = new ProcessManager(spawnFn);
+
+    await expect(
+      manager.run({ command: "codex", stdin: "prompt" }),
+    ).rejects.toBeInstanceOf(ProcessStdinUnavailableError);
+  });
+
+  test("delivers stdin via atomic end(data) when pipe is available", async () => {
+    const child = createFakeChild();
+    const received: string[] = [];
+    let ended = false;
+
+    child.stdin.on("data", (chunk) => {
+      received.push(chunk.toString());
+    });
+    child.stdin.on("end", () => {
+      ended = true;
+    });
+
+    const spawnFn: SpawnFn = () => {
+      queueMicrotask(() => {
+        child.emit("close", 0, null);
+      });
+      return child;
+    };
+
+    const manager = new ProcessManager(spawnFn);
+    await manager.run({ command: "cat", stdin: "atomic-payload" });
+
+    expect(received.join("")).toBe("atomic-payload");
+    expect(ended).toBe(true);
+  });
+
   test("fails when process emits an error", async () => {
     const child = createFakeChild();
     const spawnFn: SpawnFn = () => {
@@ -120,7 +173,9 @@ describe("ProcessManager", () => {
     };
 
     const manager = new ProcessManager(spawnFn);
-    await expect(manager.run({ command: "bad" })).rejects.toThrow("spawn failed");
+    await expect(manager.run({ command: "bad" })).rejects.toThrow(
+      "spawn failed",
+    );
   });
 
   test("times out and kills the process", async () => {
@@ -128,9 +183,9 @@ describe("ProcessManager", () => {
     const spawnFn: SpawnFn = () => child;
     const manager = new ProcessManager(spawnFn);
 
-    await expect(manager.run({ command: "sleep", timeoutMs: 10 })).rejects.toThrow(
-      "Command timed out"
-    );
+    await expect(
+      manager.run({ command: "sleep", timeoutMs: 10 }),
+    ).rejects.toThrow("Command timed out");
     expect(child.killedByTest).toBe(true);
   });
 });

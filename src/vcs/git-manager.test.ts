@@ -23,7 +23,64 @@ describe("GitManager", () => {
     const manager = new GitManager(runner);
 
     await expect(manager.ensureCleanWorkingTree("C:/repo")).rejects.toThrow(
-      "Git working tree is not clean."
+      "Git working tree is not clean.",
+    );
+  });
+
+  test("untracked source file blocks clean-tree check with DIRTY_WORKTREE category", async () => {
+    const runner = new MockProcessRunner([{ stdout: "?? src/new-file.ts\n" }]);
+    const manager = new GitManager(runner);
+
+    const error = await manager
+      .ensureCleanWorkingTree("C:/repo")
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("Git working tree is not clean.");
+    expect(error.category).toBe("DIRTY_WORKTREE");
+  });
+
+  test("modified tracked source file blocks clean-tree check with DIRTY_WORKTREE category", async () => {
+    const runner = new MockProcessRunner([{ stdout: " M src/modified.ts\n" }]);
+    const manager = new GitManager(runner);
+
+    const error = await manager
+      .ensureCleanWorkingTree("C:/repo")
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("Git working tree is not clean.");
+    expect(error.category).toBe("DIRTY_WORKTREE");
+  });
+
+  test("ignores all .ixado/ artifacts while checking clean working tree", async () => {
+    const artifacts = [
+      "?? .ixado/cli.log",
+      "?? .ixado/web.log",
+      "?? .ixado/audit.log",
+      "?? .ixado/state.json",
+      "?? .ixado/settings.json",
+      "?? .ixado/agents.json",
+      "?? .ixado/agent_logs/abc.log",
+      "?? .ixado/",
+    ];
+
+    for (const line of artifacts) {
+      const runner = new MockProcessRunner([{ stdout: `${line}\n` }]);
+      const manager = new GitManager(runner);
+
+      await expect(
+        manager.ensureCleanWorkingTree("C:/repo"),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  test("still fails when .ixado/ and real dirty files are mixed", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "?? .ixado/cli.log\n M src/file.ts\n" },
+    ]);
+    const manager = new GitManager(runner);
+
+    await expect(manager.ensureCleanWorkingTree("C:/repo")).rejects.toThrow(
+      "Git working tree is not clean.",
     );
   });
 
@@ -39,7 +96,7 @@ describe("GitManager", () => {
     const manager = new GitManager(runner);
 
     await expect(manager.getCurrentBranch("C:/repo")).rejects.toThrow(
-      "Unable to resolve current git branch."
+      "Unable to resolve current git branch.",
     );
   });
 
@@ -77,7 +134,14 @@ describe("GitManager", () => {
 
     expect(runner.calls[0]).toEqual({
       command: "git",
-      args: ["worktree", "add", "-b", "phase-2", "C:/repo/.worktrees/phase-2", "HEAD"],
+      args: [
+        "worktree",
+        "add",
+        "-b",
+        "phase-2",
+        "C:/repo/.worktrees/phase-2",
+        "HEAD",
+      ],
       cwd: "C:/repo",
     });
     expect(runner.calls[1]).toEqual({
@@ -85,5 +149,67 @@ describe("GitManager", () => {
       args: ["worktree", "remove", "--force", "C:/repo/.worktrees/phase-2"],
       cwd: "C:/repo",
     });
+  });
+
+  test("stages all files, checks staged changes, and commits", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+    ]);
+    const manager = new GitManager(runner);
+
+    await manager.stageAll("C:/repo");
+    await expect(manager.hasStagedChanges("C:/repo")).resolves.toBe(true);
+    await manager.commit({
+      cwd: "C:/repo",
+      message: "chore(ixado): finalize phase",
+      trailers: {
+        originatedBy:
+          "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        executedBy: "CODEX_CLI",
+      },
+    });
+
+    expect(runner.calls).toHaveLength(3);
+    expect(runner.calls[0]).toEqual({
+      command: "git",
+      args: ["add", "--all"],
+      cwd: "C:/repo",
+    });
+    expect(runner.calls[1]).toEqual({
+      command: "git",
+      args: ["diff", "--cached", "--name-only"],
+      cwd: "C:/repo",
+    });
+    expect(runner.calls[2]).toEqual({
+      command: "git",
+      args: [
+        "commit",
+        "-m",
+        "chore(ixado): finalize phase",
+        "--trailer",
+        "Originated-By=11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        "--trailer",
+        "Executed-By=CODEX_CLI",
+      ],
+      cwd: "C:/repo",
+    });
+  });
+
+  test("fails fast when trailer metadata is blank", async () => {
+    const runner = new MockProcessRunner();
+    const manager = new GitManager(runner);
+
+    await expect(
+      manager.commit({
+        cwd: "C:/repo",
+        message: "chore(ixado): finalize phase",
+        trailers: {
+          originatedBy: " ",
+          executedBy: "CODEX_CLI",
+        },
+      }),
+    ).rejects.toThrow("Originated-By trailer must not be empty.");
+    expect(runner.calls).toHaveLength(0);
   });
 });

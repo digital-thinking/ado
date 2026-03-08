@@ -1,4 +1,5 @@
 import type { ProcessRunner } from "../process";
+import { DirtyWorktreeError } from "../errors";
 
 export type CreateBranchInput = {
   branchName: string;
@@ -32,6 +33,37 @@ export type RebaseInput = {
   cwd: string;
 };
 
+export type CommitInput = {
+  cwd: string;
+  message: string;
+  trailers: CommitTrailers;
+};
+
+export type CommitTrailers = {
+  originatedBy: string;
+  executedBy: string;
+};
+
+function normalizeStatusPath(rawPath: string): string {
+  let value = rawPath.trim();
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.slice(1, -1);
+  }
+
+  if (value.includes(" -> ")) {
+    const parts = value.split(" -> ");
+    value = parts[parts.length - 1] ?? value;
+  }
+
+  return value;
+}
+
+function isIgnoredRuntimeArtifact(statusLine: string): boolean {
+  const payload = statusLine.length > 3 ? statusLine.slice(3) : statusLine;
+  const path = normalizeStatusPath(payload);
+  return path === ".ixado" || path.startsWith(".ixado/");
+}
+
 export class GitManager {
   private readonly runner: ProcessRunner;
 
@@ -46,8 +78,14 @@ export class GitManager {
       cwd,
     });
 
-    if (result.stdout.trim()) {
-      throw new Error("Git working tree is not clean.");
+    const dirtyEntries = result.stdout
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
+      .filter((line) => !isIgnoredRuntimeArtifact(line));
+
+    if (dirtyEntries.length > 0) {
+      throw new DirtyWorktreeError();
     }
   }
 
@@ -64,6 +102,19 @@ export class GitManager {
     }
 
     return branchName;
+  }
+
+  async localBranchExists(branchName: string, cwd: string): Promise<boolean> {
+    try {
+      await this.runner.run({
+        command: "git",
+        args: ["rev-parse", "--verify", `refs/heads/${branchName}`],
+        cwd,
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async createBranch(input: CreateBranchInput): Promise<void> {
@@ -156,6 +207,58 @@ export class GitManager {
     await this.runner.run({
       command: "git",
       args,
+      cwd: input.cwd,
+    });
+  }
+
+  async stageAll(cwd: string): Promise<void> {
+    await this.runner.run({
+      command: "git",
+      args: ["add", "--all"],
+      cwd,
+    });
+  }
+
+  async hasStagedChanges(cwd: string): Promise<boolean> {
+    const result = await this.runner.run({
+      command: "git",
+      args: ["diff", "--cached", "--name-only"],
+      cwd,
+    });
+
+    return result.stdout.trim().length > 0;
+  }
+
+  async commit(input: CommitInput): Promise<void> {
+    if (!input.message.trim()) {
+      throw new Error("commit message must not be empty.");
+    }
+    const originatedBy = input.trailers.originatedBy.trim();
+    if (!originatedBy) {
+      throw new Error("Originated-By trailer must not be empty.");
+    }
+    if (originatedBy.includes("\n") || originatedBy.includes("\r")) {
+      throw new Error("Originated-By trailer must be a single line.");
+    }
+    const executedBy = input.trailers.executedBy.trim();
+    if (!executedBy) {
+      throw new Error("Executed-By trailer must not be empty.");
+    }
+    if (executedBy.includes("\n") || executedBy.includes("\r")) {
+      throw new Error("Executed-By trailer must be a single line.");
+    }
+
+    await this.runner.run({
+      command: "git",
+      args: [
+        "commit",
+        "-m",
+        input.message,
+        "--trailer",
+        `Originated-By=${originatedBy}`,
+        "--trailer",
+        `Executed-By=${executedBy}`,
+      ],
       cwd: input.cwd,
     });
   }

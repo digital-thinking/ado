@@ -21,6 +21,10 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
   projects: [],
   telegram: {
     enabled: false,
+    notifications: {
+      level: "all",
+      suppressDuplicates: true,
+    },
   },
   internalWork: {
     assignee: "CODEX_CLI",
@@ -28,12 +32,49 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
   executionLoop: {
     autoMode: false,
     countdownSeconds: 10,
-    testerCommand: "npm",
-    testerArgs: ["run", "test"],
+    testerCommand: null,
+    testerArgs: null,
     testerTimeoutMs: 600_000,
     ciEnabled: false,
     ciBaseBranch: "main",
     validationMaxRetries: 3,
+    ciFixMaxFanOut: 10,
+    ciFixMaxDepth: 3,
+    deliberation: {
+      reviewerAdapter: "CODEX_CLI",
+      maxRefinePasses: 1,
+    },
+    pullRequest: {
+      defaultTemplatePath: null,
+      templateMappings: [],
+      labels: [],
+      assignees: [],
+      createAsDraft: false,
+      markReadyOnApproval: false,
+    },
+  },
+  discovery: {
+    includePatterns: ["**/*"],
+    excludePatterns: [
+      ".git/**",
+      ".ixado/**",
+      "node_modules/**",
+      "dist/**",
+      "coverage/**",
+    ],
+    priorityWeights: {
+      recency: 0.4,
+      frequency: 0.3,
+      tags: 0.3,
+    },
+    maxCandidates: 25,
+  },
+  worktrees: {
+    enabled: false,
+    baseDir: ".ixado/worktrees",
+  },
+  exceptionRecovery: {
+    maxAttempts: 1,
   },
   usage: {
     codexbarEnabled: true,
@@ -42,18 +83,42 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     CODEX_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
+      bypassApprovalsAndSandbox: false,
+      circuitBreaker: {
+        failureThreshold: 3,
+        cooldownMs: 300_000,
+      },
     },
     CLAUDE_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
+      bypassApprovalsAndSandbox: false,
+      circuitBreaker: {
+        failureThreshold: 3,
+        cooldownMs: 300_000,
+      },
     },
     GEMINI_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
+      bypassApprovalsAndSandbox: false,
+      circuitBreaker: {
+        failureThreshold: 3,
+        cooldownMs: 300_000,
+      },
     },
     MOCK_CLI: {
       enabled: true,
       timeoutMs: 3_600_000,
+      startupSilenceTimeoutMs: 60_000,
+      bypassApprovalsAndSandbox: false,
+      circuitBreaker: {
+        failureThreshold: 3,
+        cooldownMs: 300_000,
+      },
     },
   },
 };
@@ -64,7 +129,7 @@ export function resolveSettingsFilePath(): string {
     return resolve(configuredSettingsPath);
   }
 
-  return resolve(process.cwd(), DEFAULT_SETTINGS_FILE);
+  return resolveGlobalSettingsFilePath();
 }
 
 export function resolveGlobalSettingsFilePath(): string {
@@ -91,6 +156,25 @@ export function resolveSoulFilePath(): string {
   }
 
   return resolve(process.cwd(), DEFAULT_SOUL_FILE);
+}
+
+export function resolveOnboardSettingsFilePath(): string {
+  const configuredSettingsPath = process.env.IXADO_SETTINGS_FILE?.trim();
+  if (configuredSettingsPath) {
+    return resolve(configuredSettingsPath);
+  }
+
+  return resolveGlobalSettingsFilePath();
+}
+
+export function resolveOnboardSoulFilePath(): string {
+  const configuredSoulPath = process.env.IXADO_SOUL_FILE?.trim();
+  if (configuredSoulPath) {
+    return resolve(configuredSoulPath);
+  }
+
+  const onboardSettingsFilePath = resolveOnboardSettingsFilePath();
+  return resolve(dirname(onboardSettingsFilePath), "SOUL.md");
 }
 
 async function readSettingsOverrideFile(
@@ -121,12 +205,20 @@ function mergeCliSettings(
   base: CliSettings,
   override: CliSettingsOverride,
 ): CliSettings {
+  const executionLoopOverride = override.executionLoop;
+  const discoveryOverride = override.discovery;
+  const worktreesOverride = override.worktrees;
+  const activeProject = override.activeProject ?? base.activeProject;
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
-    activeProject: override.activeProject ?? base.activeProject,
+    ...(activeProject ? { activeProject } : {}),
     telegram: {
       ...base.telegram,
       ...override.telegram,
+      notifications: {
+        ...base.telegram.notifications,
+        ...override.telegram?.notifications,
+      },
     },
     internalWork: {
       ...base.internalWork,
@@ -134,7 +226,31 @@ function mergeCliSettings(
     },
     executionLoop: {
       ...base.executionLoop,
-      ...override.executionLoop,
+      ...executionLoopOverride,
+      deliberation: {
+        ...base.executionLoop.deliberation,
+        ...executionLoopOverride?.deliberation,
+      },
+      pullRequest: {
+        ...base.executionLoop.pullRequest,
+        ...executionLoopOverride?.pullRequest,
+      },
+    },
+    discovery: {
+      ...base.discovery,
+      ...discoveryOverride,
+      priorityWeights: {
+        ...base.discovery.priorityWeights,
+        ...discoveryOverride?.priorityWeights,
+      },
+    },
+    worktrees: {
+      ...base.worktrees,
+      ...worktreesOverride,
+    },
+    exceptionRecovery: {
+      ...base.exceptionRecovery,
+      ...override.exceptionRecovery,
     },
     usage: {
       ...base.usage,
@@ -157,81 +273,27 @@ function mergeCliSettings(
         ...base.agents.MOCK_CLI,
         ...override.agents?.MOCK_CLI,
       },
+      ...(base.agents.adapterAffinities || override.agents?.adapterAffinities
+        ? {
+            adapterAffinities: {
+              ...(base.agents.adapterAffinities ?? {}),
+              ...(override.agents?.adapterAffinities ?? {}),
+            },
+          }
+        : {}),
     },
   });
-}
-
-export function migrateRuntimeConfigToActiveProject(settings: CliSettings): {
-  settings: CliSettings;
-  migrated: boolean;
-} {
-  const activeProjectName = settings.activeProject;
-  if (!activeProjectName) {
-    return { settings, migrated: false };
-  }
-
-  let migrated = false;
-  const projects = settings.projects.map((project) => {
-    if (project.name !== activeProjectName || project.executionSettings) {
-      return project;
-    }
-
-    migrated = true;
-    return {
-      ...project,
-      executionSettings: {
-        autoMode: settings.executionLoop.autoMode,
-        defaultAssignee: settings.internalWork.assignee,
-      },
-    };
-  });
-
-  if (!migrated) {
-    return { settings, migrated: false };
-  }
-
-  return {
-    settings: {
-      ...settings,
-      projects,
-    },
-    migrated: true,
-  };
 }
 
 export async function loadCliSettings(
   settingsFilePath: string,
 ): Promise<CliSettings> {
-  const globalSettingsFilePath = resolveGlobalSettingsFilePath();
-  const globalOverride =
-    settingsFilePath === globalSettingsFilePath
-      ? null
-      : await readSettingsOverrideFile(globalSettingsFilePath);
-  const localOverride = await readSettingsOverrideFile(settingsFilePath);
-
-  // When settingsFilePath IS the global file, localOverride holds the global content (globalOverride is null).
-  // When settingsFilePath is a local file, globalOverride holds the global content.
-  // Build global-only settings so migration operates on and saves only global data.
-  const globalFileContent = globalOverride ?? localOverride;
-  let globalSettings = DEFAULT_CLI_SETTINGS;
-  if (globalFileContent) {
-    globalSettings = mergeCliSettings(globalSettings, globalFileContent);
+  const override = await readSettingsOverrideFile(settingsFilePath);
+  if (!override) {
+    return DEFAULT_CLI_SETTINGS;
   }
 
-  const migration = migrateRuntimeConfigToActiveProject(globalSettings);
-  if (migration.migrated) {
-    globalSettings = migration.settings;
-    await saveCliSettings(globalSettingsFilePath, globalSettings);
-  }
-
-  // For a local path, apply the local file's overrides on top of global settings.
-  // For the global path itself, globalSettings already contains the full content.
-  let settings = globalSettings;
-  if (globalOverride !== null && localOverride) {
-    settings = mergeCliSettings(settings, localOverride);
-  }
-
-  return settings;
+  return mergeCliSettings(DEFAULT_CLI_SETTINGS, override);
 }
 
 export async function saveCliSettings(
@@ -552,11 +614,15 @@ export async function runOnboard(
           enabled: existingSettings.telegram.enabled,
           botToken: existingSettings.telegram.botToken,
           ownerId: existingSettings.telegram.ownerId,
+          notifications: existingSettings.telegram.notifications,
         },
         internalWork: {
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        discovery: existingSettings.discovery,
+        worktrees: existingSettings.worktrees,
+        exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
       };
@@ -569,11 +635,15 @@ export async function runOnboard(
         projects: existingSettings.projects,
         telegram: {
           enabled: false,
+          notifications: existingSettings.telegram.notifications,
         },
         internalWork: {
           assignee: internalWorkAssignee,
         },
         executionLoop: existingSettings.executionLoop,
+        discovery: existingSettings.discovery,
+        worktrees: existingSettings.worktrees,
+        exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
       };
@@ -629,11 +699,15 @@ export async function runOnboard(
         enabled: true,
         botToken,
         ownerId,
+        notifications: existingSettings.telegram.notifications,
       },
       internalWork: {
         assignee: internalWorkAssignee,
       },
       executionLoop: existingSettings.executionLoop,
+      discovery: existingSettings.discovery,
+      worktrees: existingSettings.worktrees,
+      exceptionRecovery: existingSettings.exceptionRecovery,
       usage: existingSettings.usage,
       agents: configuredAgents,
     };

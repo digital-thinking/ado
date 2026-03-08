@@ -10,14 +10,20 @@ export {
   ControlCenterService,
   type CreatePhaseInput,
   type CreateTaskInput,
+  type UpdateTaskInput,
   type ActivePhaseTasksView,
   type ImportTasksMarkdownResult,
   type SetActivePhaseInput,
   type ResetTaskInput,
+  type MarkTaskDeadLetterInput,
   type StartActiveTaskInput,
   type StartTaskInput,
   type RunInternalWorkInput,
   type RunInternalWorkResult,
+  type RecordRecoveryAttemptInput,
 } from "./control-center-service";
-export { startWebControlCenter, type StartWebControlCenterInput } from "./server";
+export {
+  startWebControlCenter,
+  type StartWebControlCenterInput,
+} from "./server";
 export { UsageService, type UsageResponse } from "./usage-service";

@@ -29,7 +29,9 @@ describe("CLI adapters", () => {
 
   test("ClaudeAdapter always includes required danger flag", async () => {
     const runner = new MockProcessRunner();
-    const adapter = new ClaudeAdapter(runner, { baseArgs: ["--model", "sonnet"] });
+    const adapter = new ClaudeAdapter(runner, {
+      baseArgs: ["--model", "sonnet"],
+    });
 
     await adapter.run({
       prompt: "fix bug",
@@ -60,7 +62,7 @@ describe("CLI adapters", () => {
     expect(runner.calls[0]?.args).toEqual(["--yolo", "write test"]);
   });
 
-  test("CodexAdapter always includes sandbox bypass flag", async () => {
+  test("CodexAdapter defaults to safe mode without sandbox bypass flag", async () => {
     const runner = new MockProcessRunner();
     const adapter = new CodexAdapter(runner);
 
@@ -70,7 +72,25 @@ describe("CLI adapters", () => {
     });
 
     expect(adapter.contract.baseArgs[0]).toBe("exec");
-    expect(adapter.contract.baseArgs[1]).toBe("--dangerously-bypass-approvals-and-sandbox");
+    expect(adapter.contract.baseArgs).toEqual(["exec"]);
+    expect(runner.calls[0]?.args).toEqual(["exec", "refactor module"]);
+  });
+
+  test("CodexAdapter includes sandbox bypass only when explicitly enabled", async () => {
+    const runner = new MockProcessRunner();
+    const adapter = new CodexAdapter(runner, {
+      bypassApprovalsAndSandbox: true,
+    });
+
+    await adapter.run({
+      prompt: "refactor module",
+      cwd: "C:/repo",
+    });
+
+    expect(adapter.contract.baseArgs).toEqual([
+      "exec",
+      "--dangerously-bypass-approvals-and-sandbox",
+    ]);
     expect(runner.calls[0]?.args).toEqual([
       "exec",
       "--dangerously-bypass-approvals-and-sandbox",
@@ -95,14 +115,14 @@ describe("CLI adapters", () => {
       adapter.run({
         prompt: "",
         cwd: "C:/repo",
-      })
+      }),
     ).rejects.toThrow("prompt must not be empty.");
 
     await expect(
       adapter.run({
         prompt: "ok",
         cwd: "",
-      })
+      }),
     ).rejects.toThrow("cwd must not be empty.");
   });
 });

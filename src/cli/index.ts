@@ -6,35 +6,72 @@ import { resolve, basename } from "node:path";
 
 import { createPromptLogArtifacts, writeOutputLog } from "../agent-logs";
 import { resolveAgentRegistryFilePath } from "../agent-registry";
-import { buildAdapterExecutionPlan, createAdapter } from "../adapters";
-import { createTelegramRuntime } from "../bot";
-import { runCiIntegration } from "../engine/ci-integration";
-import { runCiValidationLoop } from "../engine/ci-validation-loop";
-import { PhaseLoopControl } from "../engine/phase-loop-control";
 import {
-  waitForAutoAdvance as waitForAutoAdvanceGate,
-  waitForManualAdvance as waitForManualAdvanceGate,
-} from "../engine/phase-loop-wait";
-import { runTesterWorkflow } from "../engine/tester-workflow";
+  resolveLatestAgentRuntimeDiagnostic,
+  summarizeAgentRuntimeDiagnostic,
+} from "../agent-runtime-diagnostics";
+import {
+  buildAdapterExecutionPlan,
+  buildAdapterInitializationDiagnostic,
+  createAdapter,
+  formatAdapterStartupDiagnostic,
+} from "../adapters";
+import { createTelegramRuntime } from "../bot";
+import { ExecutionRunLock } from "../engine/execution-run-lock";
+import { PhaseLoopControl } from "../engine/phase-loop-control";
+import { PhaseRunner } from "../engine/phase-runner";
+import {
+  discoverTaskCandidates,
+  type DiscoveryCandidate,
+} from "../engine/discovery-candidates";
 import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
-import { CLIAdapterIdSchema } from "../types";
-import { GitHubManager, GitManager, PrivilegedGitActions } from "../vcs";
+import {
+  ActivePhaseResolutionError,
+  resolvePrimaryActivePhaseId,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
+import {
+  buildRecoveryTraceLinks,
+  formatPhaseTaskContext,
+  summarizeFailure,
+} from "../log-readability";
+import {
+  CLIAdapterIdSchema,
+  TaskTypeSchema,
+  WorkerAssigneeSchema,
+  type CLIAdapterId,
+  type PhaseFailureKind,
+  type TaskType,
+  type WorkerAssignee,
+} from "../types";
+import {
+  createTelegramNotificationEvaluator,
+  formatRuntimeEventForCli,
+  formatRuntimeEventForTelegram,
+} from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
+import { GitHubManager, GitManager, WorktreeManager } from "../vcs";
 import { initializeCliLogging } from "./logging";
 import { generateCompletionScript, parseCompletionShell } from "./completion";
+import { CommandRegistry, type CommandActionContext } from "./command-registry";
+import { ValidationError } from "./validation";
 import {
   getAvailableAgents,
   loadCliSettings,
   resolveGlobalSettingsFilePath,
+  resolveOnboardSettingsFilePath,
+  resolveOnboardSoulFilePath,
   resolveSettingsFilePath,
-  resolveSoulFilePath,
   runOnboard,
   saveCliSettings,
 } from "./settings";
 import {
+  isProcessRunning,
   parseWebPort,
+  readWebRuntimeRecord,
+  resolveWebRuntimeFilePath,
   serveWebControlCenter,
   startWebDaemon,
   stopWebDaemon,
@@ -42,6 +79,8 @@ import {
 
 const DEFAULT_STATE_FILE = ".ixado/state.json";
 const CLI_LOG_FILE_PATH = initializeCliLogging(process.cwd());
+const PHASE_RUN_USAGE =
+  "ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]";
 
 type TelegramBootstrapConfig =
   | { enabled: false }
@@ -119,6 +158,42 @@ async function resolveProjectName(): Promise<string> {
 async function resolveProjectRootDir(): Promise<string> {
   const activeRootDir = await resolveActiveProjectRootDir();
   return activeRootDir ?? process.cwd();
+}
+
+function resolveProjectExecutionSettings(
+  settings: Awaited<ReturnType<typeof loadCliSettings>>,
+  projectName: string,
+): { autoMode: boolean; defaultAssignee: CLIAdapterId } {
+  const project = settings.projects.find((p) => p.name === projectName);
+  return {
+    autoMode:
+      project?.executionSettings?.autoMode ?? settings.executionLoop.autoMode,
+    defaultAssignee:
+      project?.executionSettings?.defaultAssignee ??
+      settings.internalWork.assignee,
+  };
+}
+
+function resolveConfigTargetProjectIndex(
+  settings: Awaited<ReturnType<typeof loadCliSettings>>,
+): number | undefined {
+  if (settings.activeProject) {
+    const activeIndex = settings.projects.findIndex(
+      (project) => project.name === settings.activeProject,
+    );
+    if (activeIndex >= 0) {
+      return activeIndex;
+    }
+  }
+
+  const cwd = process.cwd();
+  const cwdIndex = settings.projects.findIndex(
+    (project) => project.rootDir === cwd,
+  );
+  if (cwdIndex >= 0) {
+    return cwdIndex;
+  }
+  return undefined;
 }
 
 async function loadOrInitializeState(
@@ -214,10 +289,10 @@ function createControlCenterServiceWithAgentTracking(
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
   projectName: string,
 ): ControlCenterService {
-  return new ControlCenterService(
-    new StateEngine(stateFilePath),
-    resolve(projectRootDir, "TASKS.md"),
-    async (workInput) => {
+  return new ControlCenterService({
+    stateEngine: new StateEngine(stateFilePath),
+    tasksMarkdownFilePath: resolve(projectRootDir, "TASKS.md"),
+    internalWorkRunner: async (workInput) => {
       const availableAgents = getAvailableAgents(settings);
       if (!availableAgents.includes(workInput.assignee)) {
         throw new Error(
@@ -226,7 +301,20 @@ function createControlCenterServiceWithAgentTracking(
       }
 
       const assigneeSettings = settings.agents[workInput.assignee];
-      const adapter = createAdapter(workInput.assignee, processManager);
+      const adapter = createAdapter(workInput.assignee, processManager, {
+        bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
+      });
+      const startupDiagnostic = buildAdapterInitializationDiagnostic({
+        adapterId: workInput.assignee,
+        command: adapter.contract.command,
+        baseArgs: adapter.contract.baseArgs,
+        cwd: projectRootDir,
+        timeoutMs: assigneeSettings.timeoutMs,
+        startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
+      });
+      if (startupDiagnostic) {
+        console.info(formatAdapterStartupDiagnostic(startupDiagnostic));
+      }
       const artifacts = await createPromptLogArtifacts({
         cwd: projectRootDir,
         assignee: workInput.assignee,
@@ -251,7 +339,9 @@ function createControlCenterServiceWithAgentTracking(
           args,
           cwd: projectRootDir,
           timeoutMs: assigneeSettings.timeoutMs,
+          startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
           stdin,
+          adapterId: workInput.assignee,
           approvedAdapterSpawn: true,
           phaseId: workInput.phaseId,
           taskId: workInput.taskId,
@@ -289,14 +379,14 @@ function createControlCenterServiceWithAgentTracking(
         throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
       }
     },
-    async () => {
+    repositoryResetRunner: async () => {
       await processManager.run({
         command: "git",
         args: ["reset", "--hard"],
         cwd: projectRootDir,
       });
     },
-  );
+  });
 }
 
 function createServices(
@@ -323,6 +413,17 @@ function createServices(
   return { control, agents };
 }
 
+function createWorktreeManager(
+  projectRootDir: string,
+  baseDir: string,
+): WorktreeManager {
+  return new WorktreeManager({
+    git: new GitManager(new ProcessManager()),
+    projectRootDir,
+    baseDir,
+  });
+}
+
 async function runDefaultCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -345,6 +446,10 @@ async function runDefaultCommand(): Promise<void> {
     projectName,
   );
   const availableAgents = getAvailableAgents(settings);
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
 
   console.info("IxADO bootstrap checks passed.");
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}.`);
@@ -375,7 +480,7 @@ async function runDefaultCommand(): Promise<void> {
       readState: () => control.getState(),
       listAgents: () => agents.list(),
       availableAssignees: availableAgents,
-      defaultAssignee: settings.internalWork.assignee,
+      defaultAssignee: projectExecutionSettings.defaultAssignee,
       startTask: async (input) =>
         control.startActiveTaskAndWait({
           taskNumber: input.taskNumber,
@@ -396,7 +501,7 @@ async function runDefaultCommand(): Promise<void> {
   console.info("Telegram command center not started.");
 }
 
-async function runInitCommand(): Promise<void> {
+async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(globalSettingsFilePath);
   const currentDir = process.cwd();
@@ -408,6 +513,9 @@ async function runInitCommand(): Promise<void> {
   if (existingProject) {
     console.info(
       `Project '${existingProject.name}' is already registered at ${currentDir}.`,
+    );
+    console.info(
+      `Next:    Run 'ixado switch ${existingProject.name}' to activate it, or 'ixado list' to see all projects.`,
     );
     return;
   }
@@ -421,9 +529,12 @@ async function runInitCommand(): Promise<void> {
   console.info(
     `Registered project '${projectName}' at ${currentDir} in global config.`,
   );
+  console.info(
+    `Next:    Run 'ixado switch ${projectName}' to set it active, then 'ixado phase create <name> <branch>'.`,
+  );
 }
 
-async function runListCommand(): Promise<void> {
+async function runListCommand(_ctx: CommandActionContext): Promise<void> {
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(globalSettingsFilePath);
   const currentDir = process.cwd();
@@ -447,10 +558,13 @@ async function runListCommand(): Promise<void> {
   }
 }
 
-async function runSwitchCommand(args: string[]): Promise<void> {
-  const projectName = args[1]?.trim() ?? "";
+async function runSwitchCommand({ args }: CommandActionContext): Promise<void> {
+  const projectName = args[0]?.trim() ?? "";
   if (!projectName) {
-    throw new Error("Usage: ixado switch <project-name>");
+    throw new ValidationError("Missing required argument: <project-name>.", {
+      usage: "ixado switch <project-name>",
+      hint: "Run 'ixado list' to see registered projects.",
+    });
   }
 
   const globalSettingsFilePath = resolveGlobalSettingsFilePath();
@@ -458,9 +572,10 @@ async function runSwitchCommand(args: string[]): Promise<void> {
   const project = settings.projects.find((p) => p.name === projectName);
   if (!project) {
     const available = settings.projects.map((p) => p.name).join(", ");
-    throw new Error(
-      `Project '${projectName}' not found. Registered projects: ${available || "none"}.`,
-    );
+    throw new ValidationError(`Project '${projectName}' not found.`, {
+      usage: "ixado switch <project-name>",
+      hint: `Registered projects: ${available || "none"}. Run 'ixado list' for details.`,
+    });
   }
 
   settings.activeProject = project.name;
@@ -468,60 +583,12 @@ async function runSwitchCommand(args: string[]): Promise<void> {
   console.info(
     `Switched active project to '${project.name}' at ${project.rootDir}.`,
   );
-}
-
-function printHelp(): void {
-  console.info("IxADO CLI");
-  console.info("");
-  console.info("Usage:");
-  console.info("  ixado           Run IxADO with stored settings");
-  console.info("  ixado status    Show project status and running agents");
-  console.info(
-    "  ixado init      Register current directory as project in global config",
-  );
-  console.info("  ixado list      Show all registered projects");
-  console.info("  ixado switch <project-name>  Switch active project context");
-  console.info("  ixado onboard   Configure local CLI settings");
-  console.info("  ixado task list  List tasks in active phase with numbers");
-  console.info(
-    "  ixado task start <taskNumber> [assignee]  Start active-phase task",
-  );
-  console.info(
-    "  ixado task retry <taskNumber>  Retry FAILED task with same assignee/session",
-  );
-  console.info(
-    "  ixado task logs <taskNumber>   Show logs/result for task in active phase",
-  );
-  console.info(
-    "  ixado task reset <taskNumber>  Reset FAILED task to TODO and hard-reset repo",
-  );
-  console.info("  ixado phase active <phaseNumber|phaseId>  Set active phase");
-  console.info(
-    "  ixado phase run [auto|manual] [countdownSeconds]  Run TODO tasks in active phase sequentially",
-  );
-  console.info(
-    "  ixado config                 Show execution mode and default coding CLI",
-  );
-  console.info(
-    "  ixado config mode <auto|manual>      Set default phase-loop mode",
-  );
-  console.info("  ixado config assignee <CLI_ADAPTER>  Set default coding CLI");
-  console.info(
-    "  ixado config usage <on|off>          Enable/disable codexbar usage telemetry",
-  );
-  console.info(
-    "  ixado web start [port]   Start local web control center in background",
-  );
-  console.info("  ixado web stop           Stop local web control center");
-  console.info(
-    "  ixado completion <bash|zsh|fish>  Generate shell completion script",
-  );
-  console.info("  ixado help      Show this help");
+  console.info(`Next:    Run 'ixado status' to see phase and task state.`);
 }
 
 async function runOnboardCommand(): Promise<void> {
-  const settingsFilePath = resolveSettingsFilePath();
-  const soulFilePath = resolveSoulFilePath();
+  const settingsFilePath = resolveOnboardSettingsFilePath();
+  const soulFilePath = resolveOnboardSoulFilePath();
   const rl = createInterface({
     input: stdin,
     output: stdout,
@@ -551,6 +618,9 @@ async function runOnboardCommand(): Promise<void> {
     if (settings.telegram.enabled) {
       console.info("Telegram bot credentials stored in settings file.");
     }
+    console.info(
+      `Next:    Run 'ixado init' to register this directory as a project, then 'ixado phase create <name> <branch>'.`,
+    );
   } finally {
     rl.close();
   }
@@ -565,19 +635,26 @@ function resolveCliEntryScriptPath(): string {
   return resolve(scriptPath);
 }
 
-async function runWebStartCommand(args: string[]): Promise<void> {
-  const settingsFilePath = resolveSettingsFilePath();
+async function runWebStartCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const portFromArgs = parseWebPort(args[2]);
+  const portFromArgs = parseWebPort(args[0]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
   const port = portFromArgs ?? portFromEnv;
 
   const runtime = await startWebDaemon({
     cwd: projectRootDir,
     stateFilePath,
+    settingsFilePath,
     projectName,
     entryScriptPath: resolveCliEntryScriptPath(),
     port,
@@ -589,24 +666,28 @@ async function runWebStartCommand(args: string[]): Promise<void> {
   console.info(`Web logs: ${runtime.logFilePath}`);
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
   console.info(
-    `Internal work default adapter: ${settings.internalWork.assignee}.`,
+    `Internal work default adapter: ${projectExecutionSettings.defaultAssignee}.`,
   );
   console.info("Use `ixado web stop` to stop it.");
 }
 
-async function runWebStopCommand(): Promise<void> {
+async function runWebStopCommand(_ctx: CommandActionContext): Promise<void> {
   const projectRootDir = await resolveProjectRootDir();
   const result = await stopWebDaemon(projectRootDir);
   if (result.status === "stopped") {
     console.info(`Web control center stopped (pid: ${result.record.pid}).`);
     console.info(`Web logs: ${result.record.logFilePath}`);
     console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
+    console.info(`Next:    Run 'ixado web start' to restart it.`);
     return;
   }
 
   if (result.status === "permission_denied") {
     console.info(
       `Web control center is running at ${result.record.url} (pid: ${result.record.pid}), but this user cannot stop it (permission denied).`,
+    );
+    console.info(
+      `Next:    Run as the user who started the process to stop it.`,
     );
     return;
   }
@@ -615,19 +696,27 @@ async function runWebStopCommand(): Promise<void> {
     console.info(
       "Web control center was not running. Removed stale runtime metadata.",
     );
+    console.info(`Next:    Run 'ixado web start [port]' to start it.`);
     return;
   }
 
   console.info("Web control center is not running.");
+  console.info(`Next:    Run 'ixado web start [port]' to start it.`);
 }
 
-async function runWebServeCommand(args: string[]): Promise<void> {
+async function runWebServeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const portFromArgs = parseWebPort(args[2]);
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
+  const portFromArgs = parseWebPort(args[0]);
   const portFromEnv = parseWebPort(process.env.IXADO_WEB_PORT?.trim());
   const port = portFromArgs ?? portFromEnv;
 
@@ -636,8 +725,8 @@ async function runWebServeCommand(args: string[]): Promise<void> {
     stateFilePath,
     settingsFilePath,
     projectName,
-    defaultInternalWorkAssignee: settings.internalWork.assignee,
-    defaultAutoMode: settings.executionLoop.autoMode,
+    defaultInternalWorkAssignee: projectExecutionSettings.defaultAssignee,
+    defaultAutoMode: projectExecutionSettings.autoMode,
     agentSettings: settings.agents,
     port,
   });
@@ -649,42 +738,59 @@ async function runWebServeCommand(args: string[]): Promise<void> {
   console.info(`CLI logs: ${CLI_LOG_FILE_PATH}`);
 }
 
-async function runWebCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-
-  if (subcommand === "start") {
-    await runWebStartCommand(args);
-    return;
+function resolvePhaseFailureKindLabel(
+  failureKind: PhaseFailureKind | undefined,
+): string {
+  switch (failureKind) {
+    case "LOCAL_TESTER":
+      return "local tester failure";
+    case "REMOTE_CI":
+      return "remote CI failure";
+    case "AGENT_FAILURE":
+      return "agent execution failure";
+    default:
+      return "failure";
   }
+}
 
-  if (subcommand === "stop") {
-    await runWebStopCommand();
-    return;
+function resolvePhaseFailureGuidance(
+  failureKind: PhaseFailureKind | undefined,
+): string {
+  switch (failureKind) {
+    case "LOCAL_TESTER":
+      return "Local test suite failed. Complete the CI_FIX task(s) to fix failing tests, then rerun 'ixado phase run'.";
+    case "REMOTE_CI":
+      return "Remote CI checks failed on the PR. Complete the CI_FIX task(s) to address CI errors, then rerun 'ixado phase run'.";
+    case "AGENT_FAILURE":
+      return "Task agent execution failed. Retry FAILED tasks with 'ixado task retry <n>'. DEAD_LETTER tasks require manual remediation, then 'ixado task reset <n>'.";
+    default:
+      return "Phase execution stopped. Run 'ixado task list' to review tasks and 'ixado phase run' to resume.";
   }
-
-  if (subcommand === "serve") {
-    await runWebServeCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown web command. Use `ixado web start [port]` or `ixado web stop`.",
-  );
 }
 
 type PhaseRunMode = "AUTO" | "MANUAL";
+type DiscoverCommandMode = "DRY_RUN" | "QUEUE";
 
 function resolveActivePhaseFromState(
   state: Awaited<ReturnType<ControlCenterService["getState"]>>,
 ): Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number] {
-  const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
-  if (!phase) {
-    throw new Error("No active phase found.");
-  }
+  try {
+    return resolveActivePhaseStrict(state);
+  } catch (error) {
+    if (error instanceof ActivePhaseResolutionError) {
+      switch (error.code) {
+        case "ACTIVE_PHASE_ID_MISSING":
+        case "ACTIVE_PHASE_ID_NOT_FOUND":
+          throw new Error(
+            `${error.message} Run 'ixado phase active <phaseNumber|phaseId>'.`,
+          );
+        default:
+          throw error;
+      }
+    }
 
-  return phase;
+    throw error;
+  }
 }
 
 function resolvePhaseRunMode(
@@ -702,7 +808,10 @@ function resolvePhaseRunMode(
     return "MANUAL";
   }
 
-  throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds]");
+  throw new ValidationError(`Invalid phase run mode: '${rawMode}'.`, {
+    usage: PHASE_RUN_USAGE,
+    hint: "Use 'auto' for fully automatic execution or 'manual' for step-by-step confirmation.",
+  });
 }
 
 function resolveCountdownSeconds(
@@ -715,57 +824,121 @@ function resolveCountdownSeconds(
   }
 
   const parsed = Number(normalized);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error("Usage: ixado phase run [auto|manual] [countdownSeconds]");
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new ValidationError(
+      `Invalid countdown seconds: '${rawCountdown}'. Expected a non-negative integer.`,
+      {
+        usage: PHASE_RUN_USAGE,
+        hint: "Use 0 to skip the countdown, or a positive number for a timed delay.",
+      },
+    );
   }
 
   return parsed;
 }
 
-async function waitForManualAdvance(
-  rl: ReturnType<typeof createInterface>,
-  loopControl: PhaseLoopControl,
-  nextTaskLabel: string,
-): Promise<"NEXT" | "STOP"> {
-  const abortController = new AbortController();
-  return waitForManualAdvanceGate({
-    loopControl,
-    nextTaskLabel,
-    askLocal: async () =>
-      rl
-        .question("> ", { signal: abortController.signal })
-        .then((answer) =>
-          answer.trim().toLowerCase() === "stop" ? "STOP" : "NEXT",
-        )
-        .catch((error) => {
-          if ((error as { name?: string }).name === "AbortError") {
-            return new Promise<"NEXT" | "STOP">(() => {});
-          }
+function parsePhaseRunArgs(args: string[]): {
+  modeRaw: string | undefined;
+  countdownRaw: string | undefined;
+  phaseReference: string | undefined;
+} {
+  const positional: string[] = [];
+  let phaseReference: string | undefined;
 
-          throw error;
-        }),
-    cancelLocal: () => {
-      abortController.abort();
-    },
-    onInfo: (line) => {
-      console.info(line);
-    },
-  });
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]?.trim() ?? "";
+    if (!token) {
+      continue;
+    }
+
+    if (token === "--phase" || token.startsWith("--phase=")) {
+      if (phaseReference !== undefined) {
+        throw new ValidationError("Duplicate --phase option.", {
+          usage: PHASE_RUN_USAGE,
+          hint: "Provide --phase only once.",
+        });
+      }
+
+      const value =
+        token === "--phase"
+          ? (args[index + 1]?.trim() ?? "")
+          : token.slice("--phase=".length).trim();
+      if (!value) {
+        throw new ValidationError("Missing value for --phase.", {
+          usage: PHASE_RUN_USAGE,
+          hint: "Provide a phase number or phase ID after --phase.",
+        });
+      }
+
+      phaseReference = value;
+      if (token === "--phase") {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      throw new ValidationError(`Unknown option: '${token}'.`, {
+        usage: PHASE_RUN_USAGE,
+        hint: "Supported option: --phase <phaseNumber|phaseId>.",
+      });
+    }
+
+    positional.push(token);
+  }
+
+  return {
+    modeRaw: positional[0],
+    countdownRaw: positional[1],
+    phaseReference,
+  };
 }
 
-async function waitForAutoAdvance(
-  loopControl: PhaseLoopControl,
-  countdownSeconds: number,
-  nextTaskLabel: string,
-): Promise<"NEXT" | "STOP"> {
-  return waitForAutoAdvanceGate({
-    loopControl,
-    countdownSeconds,
-    nextTaskLabel,
-    onInfo: (line) => {
-      console.info(line);
-    },
-  });
+function resolvePhaseIdForReference(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>,
+  phaseReference: string,
+): string {
+  const exactMatch = state.phases.find((phase) => phase.id === phaseReference);
+  if (exactMatch) {
+    return exactMatch.id;
+  }
+
+  const phaseNumber = Number(phaseReference);
+  if (!Number.isInteger(phaseNumber) || phaseNumber < 1) {
+    throw new Error(`Phase not found: ${phaseReference}`);
+  }
+
+  const phase = state.phases[phaseNumber - 1];
+  if (!phase) {
+    throw new Error(`Phase not found: ${phaseReference}`);
+  }
+
+  return phase.id;
+}
+
+function resolvePhaseRunTargetId(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>,
+  phaseReference: string | undefined,
+): string | undefined {
+  if (!phaseReference) {
+    return undefined;
+  }
+
+  const phaseId = resolvePhaseIdForReference(state, phaseReference);
+  const isActive = state.activePhaseIds.some(
+    (candidate) => candidate.trim() === phaseId,
+  );
+  if (!isActive) {
+    throw new ValidationError(
+      `Phase '${phaseReference}' is not active and cannot be run with --phase.`,
+      {
+        usage: PHASE_RUN_USAGE,
+        hint: "Use 'ixado phase active <phaseNumber|phaseId>' first.",
+      },
+    );
+  }
+
+  return phaseId;
 }
 
 async function resolveActivePhaseTaskForNumber(
@@ -781,27 +954,41 @@ async function resolveActivePhaseTaskForNumber(
 }> {
   const state = await control.getState();
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
-    throw new Error("No active phase found.");
+    throw new ValidationError("No active phase found.", {
+      hint: "Run 'ixado phase create <name> <branchName>' to create a phase first.",
+    });
   }
 
   const task = phase.tasks[taskNumber - 1];
   if (!task) {
-    throw new Error(
-      `Task #${taskNumber} not found in active phase ${phase.name}.`,
+    throw new ValidationError(
+      `Task #${taskNumber} not found in active phase '${phase.name}'.`,
+      {
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
     );
   }
 
   return { phase, task };
 }
 
-async function runTaskStartCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskStartCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task start <taskNumber> [assignee]");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task start <taskNumber> [assignee]",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -817,8 +1004,13 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   );
   await control.ensureInitialized(projectName, projectRootDir);
 
-  const explicitAssignee = args[3]?.trim();
-  let assigneeCandidate = explicitAssignee || settings.internalWork.assignee;
+  const explicitAssignee = args[1]?.trim();
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
+  let assigneeCandidate =
+    explicitAssignee || projectExecutionSettings.defaultAssignee;
   if (!explicitAssignee) {
     const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
     if (task.status === "FAILED" && task.assignee !== "UNASSIGNED") {
@@ -829,9 +1021,9 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   const assignee = CLIAdapterIdSchema.parse(assigneeCandidate);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: `Available agents: ${availableAgents.join(", ")}. Enable the agent with 'ixado onboard'.`,
+    });
   }
   console.info(`Starting active-phase task #${taskNumber} with ${assignee}.`);
 
@@ -841,8 +1033,9 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   });
 
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new Error("No phase available after task run.");
   }
@@ -854,12 +1047,302 @@ async function runTaskStartCommand(args: string[]): Promise<void> {
   console.info(
     `Task #${taskNumber} ${task.title} finished with status ${task.status}.`,
   );
-  if (task.status === "FAILED" && task.errorLogs) {
-    console.info(`Failure details: ${task.errorLogs}`);
+  if (task.status === "FAILED") {
+    if (task.errorLogs) {
+      console.info(`Failure details: ${task.errorLogs}`);
+    }
+    console.info(
+      `Next:    Retry with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else if (task.status === "DEAD_LETTER") {
+    console.info(
+      `Next:    DEAD_LETTER requires manual remediation. Reset with 'ixado task reset ${taskNumber}' after fixing root cause.`,
+    );
+  } else {
+    console.info(
+      `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
+    );
   }
 }
 
-async function runTaskListCommand(): Promise<void> {
+function parseDiscoverCommandMode(args: string[]): DiscoverCommandMode {
+  const DISCOVER_USAGE = "ixado discover [--dry-run|--queue]";
+  let mode: DiscoverCommandMode | undefined;
+
+  for (const rawToken of args) {
+    const token = rawToken.trim();
+    if (!token) {
+      continue;
+    }
+
+    if (token === "--dry-run") {
+      if (mode && mode !== "DRY_RUN") {
+        throw new ValidationError(
+          "Options --dry-run and --queue are mutually exclusive.",
+          {
+            usage: DISCOVER_USAGE,
+            hint: "Use --dry-run to preview, or --queue to create TODO tasks.",
+          },
+        );
+      }
+      mode = "DRY_RUN";
+      continue;
+    }
+
+    if (token === "--queue") {
+      if (mode && mode !== "QUEUE") {
+        throw new ValidationError(
+          "Options --dry-run and --queue are mutually exclusive.",
+          {
+            usage: DISCOVER_USAGE,
+            hint: "Use --dry-run to preview, or --queue to create TODO tasks.",
+          },
+        );
+      }
+      mode = "QUEUE";
+      continue;
+    }
+
+    throw new ValidationError(`Unknown option: '${token}'.`, {
+      usage: DISCOVER_USAGE,
+      hint: "Supported options: --dry-run, --queue.",
+    });
+  }
+
+  return mode ?? "DRY_RUN";
+}
+
+function formatDiscoverCandidateLine(
+  candidate: DiscoveryCandidate,
+  index: number,
+): string {
+  if (candidate.source === "TODO_COMMENT") {
+    return `${index + 1}. [TODO ${candidate.tag}] ${candidate.filePath}:${candidate.line} ${candidate.title} (score=${candidate.priorityScore.toFixed(3)})`;
+  }
+
+  return `${index + 1}. [ISSUE #${candidate.issueNumber}] ${candidate.title} (score=${candidate.priorityScore.toFixed(3)})`;
+}
+
+function buildDiscoverTaskInput(candidate: DiscoveryCandidate): {
+  title: string;
+  description: string;
+} {
+  if (candidate.source === "TODO_COMMENT") {
+    return {
+      title: `Resolve ${candidate.tag}: ${candidate.title}`,
+      description: [
+        candidate.description,
+        `Source: ${candidate.filePath}:${candidate.line}`,
+        `Discovery score: ${candidate.priorityScore.toFixed(3)} (recency=${candidate.recencyScore.toFixed(3)}, frequency=${candidate.frequencyScore.toFixed(3)}, tags=${candidate.tagScore.toFixed(3)}).`,
+      ].join("\n"),
+    };
+  }
+
+  return {
+    title: `[Issue #${candidate.issueNumber}] ${candidate.title}`,
+    description: [
+      candidate.description,
+      `Source: ${candidate.issueUrl}`,
+      `Discovery score: ${candidate.priorityScore.toFixed(3)} (recency=${candidate.recencyScore.toFixed(3)}, frequency=${candidate.frequencyScore.toFixed(3)}, tags=${candidate.tagScore.toFixed(3)}).`,
+    ].join("\n"),
+  };
+}
+
+async function runDiscoverCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const mode = parseDiscoverCommandMode(args);
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+
+  const githubManager = new GitHubManager(new ProcessManager());
+  const candidates = await discoverTaskCandidates({
+    rootDir: projectRootDir,
+    githubManager,
+    includePatterns: settings.discovery.includePatterns,
+    excludePatterns: settings.discovery.excludePatterns,
+    priorityWeights: settings.discovery.priorityWeights,
+    issueLimit: settings.discovery.maxCandidates,
+    maxCandidates: settings.discovery.maxCandidates,
+  });
+
+  console.info(`Discovered ${candidates.length} candidate(s).`);
+  if (candidates.length === 0) {
+    if (mode === "DRY_RUN") {
+      console.info("Dry run only. No tasks were queued.");
+      console.info(
+        "Next:    Add TODO/FIXME comments or open GitHub issues, then run 'ixado discover --queue'.",
+      );
+      return;
+    }
+
+    console.info("Queued 0 discovery candidate(s).");
+    console.info(
+      "Next:    Add TODO/FIXME comments or open GitHub issues, then rerun 'ixado discover --queue'.",
+    );
+    return;
+  }
+
+  for (const [index, candidate] of candidates.entries()) {
+    console.info(formatDiscoverCandidateLine(candidate, index));
+  }
+
+  if (mode === "DRY_RUN") {
+    console.info("Dry run only. No tasks were queued.");
+    console.info(
+      "Next:    Run 'ixado discover --queue' to add these candidates as TODO tasks in the active phase.",
+    );
+    return;
+  }
+
+  const state = await control.getState();
+  const activePhase = resolveActivePhaseFromState(state);
+
+  for (const candidate of candidates) {
+    const taskInput = buildDiscoverTaskInput(candidate);
+    await control.createTask({
+      phaseId: activePhase.id,
+      title: taskInput.title,
+      description: taskInput.description,
+      assignee: "UNASSIGNED",
+      status: "TODO",
+    });
+  }
+
+  const refreshedState = await control.getState();
+  const refreshedPhase = resolveActivePhaseFromState(refreshedState);
+  console.info(
+    `Queued ${candidates.length} discovery candidate(s) as TODO tasks in ${refreshedPhase.name}.`,
+  );
+  console.info(
+    `Next:    Run 'ixado task list' to review queued tasks or 'ixado phase run' to execute them.`,
+  );
+}
+
+async function runTaskCreateCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const TASK_CREATE_USAGE =
+    "ixado task create <title> <description> [assignee] [--type <taskType>]";
+  const title = args[0]?.trim() ?? "";
+  const description = args[1]?.trim() ?? "";
+  if (!title || !description) {
+    throw new ValidationError(
+      "Missing required arguments: <title> and <description>.",
+      {
+        usage: TASK_CREATE_USAGE,
+        hint: "Enclose multi-word values in quotes.",
+      },
+    );
+  }
+
+  const parseTaskType = (rawTaskType: string): TaskType => {
+    const parsedTaskType = TaskTypeSchema.safeParse(rawTaskType);
+    if (!parsedTaskType.success) {
+      throw new ValidationError(`Invalid task type: '${rawTaskType}'.`, {
+        usage: TASK_CREATE_USAGE,
+        hint: "taskType must be one of: implementation, code-review, test-writing, security-audit, documentation",
+      });
+    }
+    return parsedTaskType.data;
+  };
+
+  let rawAssignee: string | undefined;
+  let taskType: TaskType | undefined;
+  for (let index = 2; index < args.length; index += 1) {
+    const token = args[index]?.trim() ?? "";
+    if (token === "--type") {
+      const rawTaskType = args[index + 1]?.trim() ?? "";
+      if (!rawTaskType) {
+        throw new ValidationError("Missing value for --type.", {
+          usage: TASK_CREATE_USAGE,
+          hint: "Provide one task type: implementation, code-review, test-writing, security-audit, documentation.",
+        });
+      }
+      taskType = parseTaskType(rawTaskType);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--type=")) {
+      const rawTaskType = token.slice("--type=".length).trim();
+      if (!rawTaskType) {
+        throw new ValidationError("Missing value for --type.", {
+          usage: TASK_CREATE_USAGE,
+          hint: "Provide one task type: implementation, code-review, test-writing, security-audit, documentation.",
+        });
+      }
+      taskType = parseTaskType(rawTaskType);
+      continue;
+    }
+    if (token.startsWith("--")) {
+      throw new ValidationError(`Unknown option: '${token}'.`, {
+        usage: TASK_CREATE_USAGE,
+        hint: "Supported option: --type <taskType>.",
+      });
+    }
+    if (rawAssignee !== undefined) {
+      throw new ValidationError(`Unexpected argument: '${token}'.`, {
+        usage: TASK_CREATE_USAGE,
+        hint: "Provide at most one assignee and optional --type <taskType>.",
+      });
+    }
+    rawAssignee = token;
+  }
+
+  const parsedAssignee = rawAssignee
+    ? WorkerAssigneeSchema.safeParse(rawAssignee)
+    : { success: true as const, data: "UNASSIGNED" as WorkerAssignee };
+  if (!parsedAssignee.success) {
+    throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
+      usage: TASK_CREATE_USAGE,
+      hint: "assignee must be one of: MOCK_CLI, CLAUDE_CLI, GEMINI_CLI, CODEX_CLI, UNASSIGNED",
+    });
+  }
+  const assignee = parsedAssignee.data;
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const state = await control.getState();
+  const activePhase = resolveActivePhaseFromState(state);
+  const updated = await control.createTask({
+    phaseId: activePhase.id,
+    title,
+    description,
+    assignee,
+    taskType,
+  });
+  const refreshedPhase =
+    updated.phases.find((phase) => phase.id === activePhase.id) ?? activePhase;
+  const taskNumber = refreshedPhase.tasks.length;
+  console.info(
+    `Created task #${taskNumber} in ${refreshedPhase.name}: ${title}.`,
+  );
+  console.info(`Status:  TODO — assignee: ${assignee}`);
+  console.info(
+    `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
+  );
+}
+
+async function runTaskListCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
@@ -886,11 +1369,19 @@ async function runTaskListCommand(): Promise<void> {
   }
 }
 
-async function runTaskRetryCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskRetryCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task retry <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task retry <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -908,22 +1399,33 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
 
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
   if (task.status !== "FAILED") {
-    throw new Error(
-      `Task #${taskNumber} must be FAILED before retry. Current status: ${task.status}.`,
+    if (task.status === "DEAD_LETTER") {
+      throw new ValidationError(
+        `Task #${taskNumber} is in DEAD_LETTER status.`,
+        {
+          hint: `Manual remediation is required first. Reset to TODO with 'ixado task reset ${taskNumber}', then start it again.`,
+        },
+      );
+    }
+    throw new ValidationError(
+      `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
+      {
+        hint: "Only failed tasks can be retried.",
+      },
     );
   }
   if (task.assignee === "UNASSIGNED") {
-    throw new Error(
-      `Task #${taskNumber} has no retry assignee. Reset to TODO, assign an agent, and start it again.`,
-    );
+    throw new ValidationError(`Task #${taskNumber} has no assignee.`, {
+      hint: `Reset to TODO with 'ixado task reset ${taskNumber}', assign an agent, then start it again.`,
+    });
   }
 
   const assignee = CLIAdapterIdSchema.parse(task.assignee);
   const availableAgents = getAvailableAgents(settings);
   if (!availableAgents.includes(assignee)) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Available agents: ${availableAgents.join(", ")}.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: `Available agents: ${availableAgents.join(", ")}. Enable the agent with 'ixado onboard'.`,
+    });
   }
 
   console.info(`Retrying active-phase task #${taskNumber} with ${assignee}.`);
@@ -933,8 +1435,9 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
   });
 
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new Error("No phase available after task retry.");
   }
@@ -946,50 +1449,37 @@ async function runTaskRetryCommand(args: string[]): Promise<void> {
   console.info(
     `Task #${taskNumber} ${retriedTask.title} finished with status ${retriedTask.status}.`,
   );
-  if (retriedTask.status === "FAILED" && retriedTask.errorLogs) {
-    console.info(`Failure details: ${retriedTask.errorLogs}`);
+  if (retriedTask.status === "FAILED") {
+    if (retriedTask.errorLogs) {
+      console.info(`Failure details: ${retriedTask.errorLogs}`);
+    }
+    console.info(
+      `Next:    Retry again with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else if (retriedTask.status === "DEAD_LETTER") {
+    console.info(
+      `Next:    DEAD_LETTER requires manual remediation. Reset with 'ixado task reset ${taskNumber}' after fixing root cause.`,
+    );
+  } else {
+    console.info(
+      `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
+    );
   }
 }
 
-async function runTaskLogsCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
+async function runTaskLogsCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
   const taskNumber = Number(rawTaskNumber);
   if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task logs <taskNumber>");
-  }
-
-  const settingsFilePath = resolveSettingsFilePath();
-  const settings = await loadCliSettings(settingsFilePath);
-  const projectRootDir = await resolveProjectRootDir();
-  const projectName = await resolveProjectName();
-  const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
-    stateFilePath,
-    projectRootDir,
-    settings,
-    projectName,
-  );
-  await control.ensureInitialized(projectName, projectRootDir);
-  const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
-
-  console.info(`Task #${taskNumber}: ${task.title} [${task.status}]`);
-  if (task.status === "FAILED") {
-    console.info(task.errorLogs ?? "No failure logs recorded.");
-    return;
-  }
-  if (task.status === "DONE") {
-    console.info(task.resultContext ?? "No result context recorded.");
-    return;
-  }
-
-  console.info("Task has no terminal logs yet.");
-}
-
-async function runTaskResetCommand(args: string[]): Promise<void> {
-  const rawTaskNumber = args[2]?.trim() ?? "";
-  const taskNumber = Number(rawTaskNumber);
-  if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
-    throw new Error("Usage: ixado task reset <taskNumber>");
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task logs <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -1009,57 +1499,68 @@ async function runTaskResetCommand(args: string[]): Promise<void> {
     taskNumber,
   );
 
-  if (task.status !== "FAILED") {
-    throw new Error(
-      `Task #${taskNumber} must be FAILED before reset. Current status: ${task.status}.`,
+  console.info(`Task #${taskNumber}: ${task.title} [${task.status}]`);
+  const contextLabel = formatPhaseTaskContext({
+    phaseId: phase.id,
+    phaseName: phase.name,
+    taskId: task.id,
+    taskTitle: task.title,
+    taskNumber,
+  });
+  if (contextLabel) {
+    console.info(`Context: ${contextLabel}`);
+  }
+
+  if (task.status === "FAILED") {
+    console.info(`Failure summary: ${summarizeFailure(task.errorLogs)}`);
+    const recoveryLinks = buildRecoveryTraceLinks({
+      context: {
+        phaseId: phase.id,
+        taskId: task.id,
+      },
+      attempts: task.recoveryAttempts,
+    });
+    if (recoveryLinks.length > 0) {
+      console.info(
+        `Recovery traces: ${recoveryLinks.map((link) => `${link.label}=${link.href}`).join(" | ")}`,
+      );
+    }
+    console.info(task.errorLogs ?? "No failure logs recorded.");
+    return;
+  }
+  if (task.status === "DEAD_LETTER") {
+    console.info(`Failure summary: ${summarizeFailure(task.errorLogs)}`);
+    console.info(
+      `Remediation: ${task.resultContext ?? `Manual remediation required. Reset with 'ixado task reset ${taskNumber}' once fixed.`}`,
+    );
+    console.info(task.errorLogs ?? "No failure logs recorded.");
+    return;
+  }
+  if (task.status === "DONE") {
+    console.info(task.resultContext ?? "No result context recorded.");
+    return;
+  }
+
+  console.info("Task has no terminal logs yet.");
+}
+
+async function runTaskResetCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawTaskNumber = args[0]?.trim() ?? "";
+  const taskNumber = Number(rawTaskNumber);
+  if (!Number.isInteger(taskNumber) || taskNumber <= 0) {
+    throw new ValidationError(
+      `Invalid task number${rawTaskNumber ? `: '${rawTaskNumber}'` : ""}. Expected a positive integer.`,
+      {
+        usage: "ixado task reset <taskNumber>",
+        hint: "Run 'ixado task list' to see available task numbers.",
+      },
     );
   }
 
-  await control.resetTaskToTodo({
-    phaseId: phase.id,
-    taskId: task.id,
-  });
-  console.info(
-    `Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`,
-  );
-}
-
-async function runTaskCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-  if (subcommand === "list") {
-    await runTaskListCommand();
-    return;
-  }
-
-  if (subcommand === "start") {
-    await runTaskStartCommand(args);
-    return;
-  }
-
-  if (subcommand === "retry") {
-    await runTaskRetryCommand(args);
-    return;
-  }
-
-  if (subcommand === "logs") {
-    await runTaskLogsCommand(args);
-    return;
-  }
-
-  if (subcommand === "reset") {
-    await runTaskResetCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown task command. Use `ixado task list`, `ixado task start <taskNumber> [assignee]`, `ixado task retry <taskNumber>`, `ixado task logs <taskNumber>`, or `ixado task reset <taskNumber>`.",
-  );
-}
-
-async function runPhaseRunCommand(args: string[]): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  const policy = await loadAuthPolicy(settingsFilePath);
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
@@ -1070,29 +1571,100 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
     projectName,
   );
   await control.ensureInitialized(projectName, projectRootDir);
+  const { phase, task } = await resolveActivePhaseTaskForNumber(
+    control,
+    taskNumber,
+  );
 
-  const mode = resolvePhaseRunMode(args[2], settings.executionLoop.autoMode);
+  if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
+    throw new ValidationError(
+      `Task #${taskNumber} is not in FAILED/DEAD_LETTER status (current: ${task.status}).`,
+      {
+        hint: "Only failed or dead-letter tasks can be reset.",
+      },
+    );
+  }
+
+  await control.resetTaskToTodo({
+    phaseId: phase.id,
+    taskId: task.id,
+  });
+  console.info(
+    `Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`,
+  );
+  console.info(
+    `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
+  );
+}
+
+async function runPhaseRunCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const policy = await loadAuthPolicy(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const { control, agents } = createServices(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
+  const parsedRunArgs = parsePhaseRunArgs(args);
+
+  // Reconcile stale RUNNING agents left over from a prior process crash so that
+  // the agent registry does not show phantom RUNNING entries.
+  const reconciledAgents = agents.reconcileStaleRunningAgents();
+  if (reconciledAgents > 0) {
+    console.info(
+      `Startup: reconciled ${reconciledAgents} stale RUNNING agent(s) to STOPPED after process restart.`,
+    );
+  }
+
+  const mode = resolvePhaseRunMode(
+    parsedRunArgs.modeRaw,
+    projectExecutionSettings.autoMode,
+  );
   const countdownSeconds = resolveCountdownSeconds(
-    args[3],
+    parsedRunArgs.countdownRaw,
     settings.executionLoop.countdownSeconds,
   );
+  const lockState = await control.getState();
+  const targetPhaseId = resolvePhaseRunTargetId(
+    lockState,
+    parsedRunArgs.phaseReference,
+  );
   const loopControl = new PhaseLoopControl();
-  const activeAssignee = settings.internalWork.assignee;
-  const testerRunner = new ProcessManager();
-  const git = new GitManager(testerRunner);
-  const github = new GitHubManager(testerRunner);
-  const privilegedGit = new PrivilegedGitActions({
-    git,
-    github,
-    role: "admin",
-    policy,
-  });
-  const cwd = projectRootDir;
+  const activeAssignee = projectExecutionSettings.defaultAssignee;
+  const enabledAdapters = getAvailableAgents(settings);
   const telegram = resolveTelegramConfig(settings.telegram);
 
-  let runtime: ReturnType<typeof createTelegramRuntime> | undefined;
-  if (telegram.enabled) {
-    runtime = createTelegramRuntime({
+  // Skip Telegram when the web server is already running — it owns the bot
+  // polling and starting a second listener causes a 409 conflict.
+  const webRuntimeFile = resolveWebRuntimeFilePath(projectRootDir);
+  const webRuntime = await readWebRuntimeRecord(webRuntimeFile);
+  const webServerRunning =
+    webRuntime !== null && isProcessRunning(webRuntime.pid);
+  if (webServerRunning) {
+    console.info(
+      "Web server is running — Telegram polling delegated to web server. Loop controls (/next, /stop) are available via Telegram.",
+    );
+  }
+
+  let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
+  const notifyTelegramEvent = createTelegramNotificationEvaluator({
+    level: settings.telegram.notifications.level,
+    suppressDuplicates: settings.telegram.notifications.suppressDuplicates,
+  });
+  if (telegram.enabled && !webServerRunning) {
+    telegramRuntime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
       readState: () => control.getState(),
@@ -1117,324 +1689,86 @@ async function runPhaseRunCommand(args: string[]): Promise<void> {
         return "Execution loop stop requested.";
       },
     });
-    await runtime.start();
+    await telegramRuntime.start();
     console.info("Telegram loop controls enabled: /next and /stop.");
   }
 
-  const notifyLoopEvent = async (message: string): Promise<void> => {
-    if (!runtime) {
-      return;
-    }
-
-    await runtime.notifyOwner(message);
-  };
-
-  const rl = createInterface({
-    input: stdin,
-    output: stdout,
-  });
-
-  console.info(
-    `Starting phase execution loop in ${mode} mode (countdown: ${countdownSeconds}s, assignee: ${activeAssignee}).`,
+  const runner = new PhaseRunner(
+    control,
+    {
+      mode,
+      countdownSeconds,
+      activeAssignee,
+      enabledAdapters,
+      adapterAffinities: settings.agents.adapterAffinities,
+      adapterCircuitBreakers: {
+        CODEX_CLI: settings.agents.CODEX_CLI.circuitBreaker,
+        CLAUDE_CLI: settings.agents.CLAUDE_CLI.circuitBreaker,
+        GEMINI_CLI: settings.agents.GEMINI_CLI.circuitBreaker,
+        MOCK_CLI: settings.agents.MOCK_CLI.circuitBreaker,
+      },
+      maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
+      testerCommand: settings.executionLoop.testerCommand,
+      testerArgs: settings.executionLoop.testerArgs,
+      testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+      ciEnabled: settings.executionLoop.ciEnabled,
+      ciBaseBranch: settings.executionLoop.ciBaseBranch,
+      ciPullRequest: settings.executionLoop.pullRequest,
+      validationMaxRetries: settings.executionLoop.validationMaxRetries,
+      ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
+      ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
+      deliberation: {
+        reviewerAdapter: settings.executionLoop.deliberation.reviewerAdapter,
+        maxRefinePasses: settings.executionLoop.deliberation.maxRefinePasses,
+      },
+      projectRootDir,
+      worktrees: settings.worktrees,
+      phaseId: targetPhaseId,
+      projectName,
+      policy,
+      role: "admin",
+    },
+    loopControl,
+    async (event) => {
+      console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
+      if (telegramRuntime && notifyTelegramEvent(event)) {
+        await telegramRuntime.notifyOwner(formatRuntimeEventForTelegram(event));
+      }
+    },
   );
 
+  const lockPhaseId =
+    targetPhaseId ??
+    resolvePrimaryActivePhaseId(lockState) ??
+    "no-active-phase";
+  const runLock = new ExecutionRunLock({
+    projectRootDir,
+    projectName,
+    phaseId: lockPhaseId,
+    owner: "CLI_PHASE_RUN",
+  });
+  await runLock.acquire();
+
   try {
-    const startingState = await control.getState();
-    const startingPhase = resolveActivePhaseFromState(startingState);
-    await control.setPhaseStatus({
-      phaseId: startingPhase.id,
-      status: "BRANCHING",
-    });
-    console.info(
-      `Execution loop: preparing branch ${startingPhase.branchName}.`,
-    );
-    try {
-      await git.ensureCleanWorkingTree(cwd);
-      const currentBranch = await git.getCurrentBranch(cwd);
-      if (currentBranch === startingPhase.branchName) {
-        console.info(
-          `Execution loop: already on branch ${startingPhase.branchName}.`,
-        );
-      } else {
-        try {
-          await git.checkout(startingPhase.branchName, cwd);
-          console.info(
-            `Execution loop: checked out existing branch ${startingPhase.branchName}.`,
-          );
-        } catch {
-          await privilegedGit.createBranch({
-            branchName: startingPhase.branchName,
-            cwd,
-            fromRef: "HEAD",
-          });
-          console.info(
-            `Execution loop: created and checked out branch ${startingPhase.branchName}.`,
-          );
-        }
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await control.setPhaseStatus({
-        phaseId: startingPhase.id,
-        status: "CI_FAILED",
-        ciStatusContext: `Branching failed: ${message}`,
-      });
-      throw error;
-    }
-
-    await control.setPhaseStatus({
-      phaseId: startingPhase.id,
-      status: "CODING",
-    });
-
-    let iteration = 0;
-    let resumeSession = false;
-    let completedPhase:
-      | Awaited<ReturnType<ControlCenterService["getState"]>>["phases"][number]
-      | undefined;
-    while (true) {
-      if (loopControl.isStopRequested()) {
-        console.info("Execution loop stopped.");
-        break;
-      }
-
-      const state = await control.getState();
-      const phase = resolveActivePhaseFromState(state);
-      const nextTaskIndex = phase.tasks.findIndex(
-        (task) => task.status === "TODO",
-      );
-      if (nextTaskIndex < 0) {
-        console.info(
-          `Execution loop finished. No TODO tasks in active phase ${phase.name}.`,
-        );
-        completedPhase = phase;
-        break;
-      }
-
-      const nextTaskNumber = nextTaskIndex + 1;
-      const nextTask = phase.tasks[nextTaskIndex];
-      const nextTaskLabel = `task #${nextTaskNumber} ${nextTask.title}`;
-
-      if (iteration > 0) {
-        const decision =
-          mode === "AUTO"
-            ? await waitForAutoAdvance(
-                loopControl,
-                countdownSeconds,
-                nextTaskLabel,
-              )
-            : await waitForManualAdvance(rl, loopControl, nextTaskLabel);
-        if (decision === "STOP") {
-          loopControl.requestStop();
-          console.info("Execution loop stopped before starting the next task.");
-          break;
-        }
-      }
-
-      iteration += 1;
-      console.info(
-        `Execution loop: starting ${nextTaskLabel} with ${activeAssignee}.`,
-      );
-      const updatedState = await control.startActiveTaskAndWait({
-        taskNumber: nextTaskNumber,
-        assignee: activeAssignee,
-        resume: resumeSession,
-      });
-      const updatedPhase = resolveActivePhaseFromState(updatedState);
-      const resultTask = updatedPhase.tasks[nextTaskNumber - 1];
-      if (!resultTask) {
-        throw new Error(
-          `Task #${nextTaskNumber} not found after loop execution.`,
-        );
-      }
-
-      console.info(
-        `Execution loop: ${nextTaskLabel} finished with status ${resultTask.status}.`,
-      );
-      if (resultTask.status === "FAILED") {
-        resumeSession = false;
-        if (resultTask.errorLogs) {
-          console.info(`Failure details: ${resultTask.errorLogs}`);
-        }
-        await control.setPhaseStatus({
-          phaseId: updatedPhase.id,
-          status: "CI_FAILED",
-          ciStatusContext:
-            resultTask.errorLogs ??
-            `Execution failed for task #${nextTaskNumber} ${resultTask.title}.`,
-        });
-        throw new Error(
-          `Execution loop stopped after FAILED task #${nextTaskNumber}. Resolve it or reset the task before continuing.`,
-        );
-      }
-
-      await notifyLoopEvent(
-        `Task Done: ${updatedPhase.name} #${nextTaskNumber} ${resultTask.title} (${resultTask.status}).`,
-      );
-
-      const testerResult = await runTesterWorkflow({
-        phaseId: updatedPhase.id,
-        phaseName: updatedPhase.name,
-        completedTask: {
-          id: resultTask.id,
-          title: resultTask.title,
-        },
-        cwd: projectRootDir,
-        testerCommand: settings.executionLoop.testerCommand,
-        testerArgs: settings.executionLoop.testerArgs,
-        testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
-        runner: testerRunner,
-        createFixTask: async (input) => {
-          await control.createTask({
-            phaseId: input.phaseId,
-            title: input.title,
-            description: input.description,
-            assignee: activeAssignee,
-            dependencies: input.dependencies,
-          });
-        },
-      });
-      if (testerResult.status === "FAILED") {
-        resumeSession = false;
-        console.info(
-          `Tester workflow failed after ${nextTaskLabel}. Created fix task: ${testerResult.fixTaskTitle}.`,
-        );
-        await notifyLoopEvent(
-          `Test Fail: ${updatedPhase.name} after ${resultTask.title}. Created fix task: ${testerResult.fixTaskTitle}.`,
-        );
-        await control.setPhaseStatus({
-          phaseId: updatedPhase.id,
-          status: "CI_FAILED",
-          ciStatusContext:
-            `${testerResult.errorMessage}\n\n${testerResult.fixTaskDescription}`.trim(),
-        });
-        throw new Error(
-          "Execution loop stopped after tester failure. Fix task has been created.",
-        );
-      }
-
-      console.info(`Tester workflow passed after ${nextTaskLabel}.`);
-      resumeSession = true;
-    }
-
-    if (completedPhase && settings.executionLoop.ciEnabled) {
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "CREATING_PR",
-      });
-      console.info(
-        "Optional CI integration enabled. Pushing branch and creating PR via gh.",
-      );
-      const ciResult = await runCiIntegration({
-        phaseId: completedPhase.id,
-        phaseName: completedPhase.name,
-        cwd,
-        baseBranch: settings.executionLoop.ciBaseBranch,
-        runner: testerRunner,
-        role: "admin",
-        policy,
-        setPhasePrUrl: async (input) => {
-          await control.setPhasePrUrl(input);
-        },
-      });
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "AWAITING_CI",
-      });
-      console.info(
-        `Optional CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`,
-      );
-      await notifyLoopEvent(
-        `PR Created: ${completedPhase.name} -> ${ciResult.prUrl}`,
-      );
-
-      const latestState = await control.getState();
-      const validationPhase = latestState.phases.find(
-        (phase) => phase.id === completedPhase.id,
-      );
-      if (!validationPhase) {
-        throw new Error(
-          `Completed phase not found for CI validation: ${completedPhase.id}`,
-        );
-      }
-
-      console.info(
-        `Starting CI validation loop (max retries: ${settings.executionLoop.validationMaxRetries}).`,
-      );
-      const validationResult = await runCiValidationLoop({
-        projectName: latestState.projectName,
-        rootDir: latestState.rootDir,
-        phase: validationPhase,
-        assignee: activeAssignee,
-        maxRetries: settings.executionLoop.validationMaxRetries,
-        readGitDiff: async () => {
-          const diff = await testerRunner.run({
-            command: "git",
-            args: ["diff", "--no-color"],
-            cwd,
-          });
-
-          return diff.stdout;
-        },
-        runInternalWork: async (input) => {
-          const result = await control.runInternalWork({
-            assignee: input.assignee,
-            prompt: input.prompt,
-            phaseId: input.phaseId,
-            resume: input.resume,
-          });
-
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        },
-      });
-
-      if (validationResult.status === "MAX_RETRIES_EXCEEDED") {
-        await control.setPhaseStatus({
-          phaseId: completedPhase.id,
-          status: "CI_FAILED",
-          ciStatusContext: validationResult.pendingComments.join("\n"),
-        });
-        console.info(
-          `CI validation loop reached max retries (${validationResult.maxRetries}). Pending comments: ${validationResult.pendingComments.join(" | ")}`,
-        );
-        await notifyLoopEvent(
-          `Review: ${completedPhase.name} needs fixes after ${validationResult.fixAttempts} attempts. Pending: ${validationResult.pendingComments.join(" | ")}`,
-        );
-        throw new Error(
-          "Execution loop stopped after CI validation max retries.",
-        );
-      }
-
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "READY_FOR_REVIEW",
-      });
-
-      console.info(
-        `CI validation loop approved after ${validationResult.reviews.length} review round(s) and ${validationResult.fixAttempts} fix attempt(s).`,
-      );
-      await notifyLoopEvent(
-        `Review: ${completedPhase.name} approved after ${validationResult.reviews.length} round(s).`,
-      );
-    } else if (completedPhase) {
-      await control.setPhaseStatus({
-        phaseId: completedPhase.id,
-        status: "DONE",
-      });
-    }
+    await runner.run();
   } finally {
-    rl.close();
-    runtime?.stop();
+    await runLock.release();
+    telegramRuntime?.stop();
   }
 }
 
-async function runPhaseActiveCommand(args: string[]): Promise<void> {
-  const phaseId = args[2]?.trim() ?? "";
+async function runPhaseActiveCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const phaseId = args[0]?.trim() ?? "";
   if (!phaseId) {
-    throw new Error("Usage: ixado phase active <phaseNumber|phaseId>");
+    throw new ValidationError(
+      "Missing required argument: <phaseNumber|phaseId>.",
+      {
+        usage: "ixado phase active <phaseNumber|phaseId>",
+        hint: "Run 'ixado phase list' to see available phases.",
+      },
+    );
   }
 
   const settingsFilePath = resolveSettingsFilePath();
@@ -1450,28 +1784,139 @@ async function runPhaseActiveCommand(args: string[]): Promise<void> {
   );
   await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.setActivePhase({ phaseId });
-  const active = state.phases.find((phase) => phase.id === state.activePhaseId);
+  const active = state.phases.find(
+    (phase) => phase.id === state.activePhaseIds[0],
+  );
   if (!active) {
     throw new Error(`Active phase not found after update: ${phaseId}`);
   }
 
   console.info(`Active phase set to ${active.name} (${active.id}).`);
+  console.info(`Status:  ${active.status} — ${active.tasks.length} task(s)`);
+  console.info(
+    `Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.`,
+  );
 }
 
-async function runPhaseCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-  if (subcommand === "run") {
-    await runPhaseRunCommand(args);
+async function runWorktreeListCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  if (args.length > 0) {
+    throw new ValidationError(`Unexpected argument: '${args[0]}'.`, {
+      usage: "ixado worktree list",
+      hint: "This command does not accept additional arguments.",
+    });
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const manager = createWorktreeManager(
+    projectRootDir,
+    settings.worktrees.baseDir,
+  );
+  const active = await manager.listActive();
+
+  if (active.length === 0) {
+    console.info("No active managed worktrees found.");
     return;
   }
 
-  if (subcommand === "active") {
-    await runPhaseActiveCommand(args);
+  console.info(`Active managed worktrees (${active.length}):`);
+  for (const worktree of active) {
+    console.info(
+      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${worktree.path}`,
+    );
+  }
+}
+
+async function runWorktreePruneCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  if (args.length > 0) {
+    throw new ValidationError(`Unexpected argument: '${args[0]}'.`, {
+      usage: "ixado worktree prune",
+      hint: "This command does not accept additional arguments.",
+    });
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const state = await control.getState();
+  const manager = createWorktreeManager(
+    projectRootDir,
+    settings.worktrees.baseDir,
+  );
+  const pruned = await manager.pruneOrphaned({
+    phases: state.phases.map((phase) => ({
+      id: phase.id,
+      status: phase.status,
+    })),
+  });
+
+  if (pruned.length === 0) {
+    console.info("No orphaned worktrees found.");
     return;
   }
 
-  throw new Error(
-    "Unknown phase command. Use `ixado phase active <phaseNumber|phaseId>` or `ixado phase run [auto|manual] [countdownSeconds]`.",
+  console.info(`Pruned orphaned worktrees (${pruned.length}):`);
+  for (const worktree of pruned) {
+    console.info(`${worktree.phaseId} ${worktree.path}`);
+  }
+}
+
+async function runPhaseCreateCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const name = args[0]?.trim() ?? "";
+  const branchName = args[1]?.trim() ?? "";
+  if (!name || !branchName) {
+    throw new ValidationError(
+      "Missing required arguments: <name> and <branchName>.",
+      {
+        usage: "ixado phase create <name> <branchName>",
+        hint: "Provide a human-readable name and a valid git branch name.",
+      },
+    );
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const nextState = await control.createPhase({
+    name,
+    branchName,
+  });
+  const createdPhase = nextState.phases[nextState.phases.length - 1];
+  if (!createdPhase) {
+    throw new Error("Phase creation failed.");
+  }
+
+  console.info(`Created phase ${createdPhase.name} (${createdPhase.id}).`);
+  console.info(
+    `Status:  ${createdPhase.status} — branch: ${branchName}, ${createdPhase.tasks.length} task(s)`,
+  );
+  console.info(
+    `Next:    Add tasks with 'ixado task create <title> <description>', then run 'ixado phase run'.`,
   );
 }
 
@@ -1494,6 +1939,15 @@ function resolveAssignedTaskLabel(
   return taskId;
 }
 
+function resolveAgentRuntimeSummary(agent: AgentView): string | undefined {
+  const diagnostic = resolveLatestAgentRuntimeDiagnostic(agent.outputTail);
+  if (!diagnostic) {
+    return undefined;
+  }
+
+  return summarizeAgentRuntimeDiagnostic(diagnostic);
+}
+
 async function runStatusCommand(): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
@@ -1509,7 +1963,7 @@ async function runStatusCommand(): Promise<void> {
   await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.getState();
   const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
+    (phase) => phase.id === state.activePhaseIds[0],
   );
   const runningAgents = agents
     .list()
@@ -1519,9 +1973,33 @@ async function runStatusCommand(): Promise<void> {
   console.info(`Project: ${state.projectName}`);
   console.info(`Root: ${state.rootDir}`);
   console.info(`Phases: ${state.phases.length}`);
-  console.info(
-    `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
-  );
+  if (activePhase?.status === "CI_FAILED") {
+    const kindLabel = resolvePhaseFailureKindLabel(activePhase.failureKind);
+    console.info(
+      `Active: ${activePhase.name} (${activePhase.status} — ${kindLabel})`,
+    );
+    console.info(
+      `Guidance: ${resolvePhaseFailureGuidance(activePhase.failureKind)}`,
+    );
+  } else {
+    console.info(
+      `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
+    );
+  }
+  if (activePhase) {
+    const deadLetterTasks = activePhase.tasks
+      .map((task, index) => ({ task, number: index + 1 }))
+      .filter((entry) => entry.task.status === "DEAD_LETTER");
+    if (deadLetterTasks.length > 0) {
+      const labels = deadLetterTasks
+        .map((entry) => `#${entry.number} ${entry.task.title}`)
+        .join(" | ");
+      console.info(`Dead-letter tasks (${deadLetterTasks.length}): ${labels}`);
+      console.info(
+        "Remediation: fix root cause manually, then run 'ixado task reset <n>' and restart the task.",
+      );
+    }
+  }
   console.info(`Available agents: ${availableAgents.join(", ")}`);
   console.info(`Running Agents (${runningAgents.length}):`);
   if (runningAgents.length === 0) {
@@ -1530,8 +2008,9 @@ async function runStatusCommand(): Promise<void> {
   }
 
   for (const [index, agent] of runningAgents.entries()) {
+    const runtimeSummary = resolveAgentRuntimeSummary(agent);
     console.info(
-      `${index + 1}. ${agent.name} -> ${resolveAssignedTaskLabel(agent, state)}`,
+      `${index + 1}. ${agent.name} -> ${resolveAssignedTaskLabel(agent, state)}${runtimeSummary ? ` | ${runtimeSummary}` : ""}`,
     );
   }
 }
@@ -1545,10 +2024,20 @@ function parseConfigMode(rawMode: string): boolean {
     return false;
   }
 
-  throw new Error("Usage: ixado config mode <auto|manual>");
+  throw new ValidationError(
+    `Invalid mode: '${rawMode}'. Expected 'auto' or 'manual'.`,
+    {
+      usage: "ixado config mode <auto|manual>",
+      hint: "Use 'auto' for automatic execution or 'manual' for step-by-step.",
+    },
+  );
 }
 
-function parseConfigToggle(rawValue: string, usage: string): boolean {
+function parseConfigToggle(
+  rawValue: string,
+  usage: string,
+  hint: string,
+): boolean {
   const normalized = rawValue.trim().toLowerCase();
   if (normalized === "on") {
     return true;
@@ -1557,83 +2046,182 @@ function parseConfigToggle(rawValue: string, usage: string): boolean {
     return false;
   }
 
-  throw new Error(usage);
+  throw new ValidationError(
+    `Invalid toggle value: '${rawValue}'. Expected 'on' or 'off'.`,
+    { usage, hint },
+  );
 }
 
-async function runConfigShowCommand(): Promise<void> {
+function parseConfigRecoveryMaxAttempts(rawValue: string): number {
+  const maxAttempts = Number(rawValue.trim());
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 0 || maxAttempts > 10) {
+    throw new ValidationError(
+      `Invalid recovery max attempts: '${rawValue}'. Expected an integer from 0 to 10.`,
+      {
+        usage: "ixado config recovery <maxAttempts:0-10>",
+        hint: "Use 0 to disable recovery, or a value from 1-10 for the attempt limit.",
+      },
+    );
+  }
+
+  return maxAttempts;
+}
+
+function getSettingsPrecedenceMessage(settingsFilePath: string): string {
+  return `Scope: global defaults (${settingsFilePath}).`;
+}
+
+async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   const settingsFilePath = resolveSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
-  console.info(`Settings: ${settingsFilePath}`);
-  console.info(
-    `Execution loop mode: ${settings.executionLoop.autoMode ? "AUTO" : "MANUAL"}`,
+  const projectName = await resolveProjectName();
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
   );
-  console.info(`Default coding CLI: ${settings.internalWork.assignee}`);
+  console.info(`Settings file: ${settingsFilePath}`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Execution loop mode: ${projectExecutionSettings.autoMode ? "AUTO" : "MANUAL"}`,
+  );
+  console.info(
+    `Default coding CLI: ${projectExecutionSettings.defaultAssignee}`,
+  );
+  console.info(
+    `Exception recovery max attempts: ${settings.exceptionRecovery.maxAttempts}`,
+  );
   console.info(
     `Codexbar usage telemetry: ${settings.usage.codexbarEnabled ? "ON" : "OFF"}`,
   );
 }
 
-async function runConfigModeCommand(args: string[]): Promise<void> {
-  const rawMode = args[2]?.trim() ?? "";
+async function runConfigModeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawMode = args[0]?.trim() ?? "";
   if (!rawMode) {
-    throw new Error("Usage: ixado config mode <auto|manual>");
+    throw new ValidationError("Missing required argument: <auto|manual>.", {
+      usage: "ixado config mode <auto|manual>",
+      hint: "Use 'auto' for automatic execution or 'manual' for step-by-step.",
+    });
   }
 
   const autoMode = parseConfigMode(rawMode);
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
+  const targetProjectIndex = resolveConfigTargetProjectIndex(settings);
+  const projects = settings.projects.map((project, index) =>
+    index !== targetProjectIndex
+      ? project
+      : {
+          ...project,
+          executionSettings: {
+            autoMode,
+            defaultAssignee:
+              project.executionSettings?.defaultAssignee ??
+              settings.internalWork.assignee,
+          },
+        },
+  );
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
     executionLoop: {
       ...settings.executionLoop,
       autoMode,
     },
+    projects,
   });
+  const resolvedMode =
+    targetProjectIndex === undefined
+      ? saved.executionLoop.autoMode
+      : (saved.projects[targetProjectIndex]?.executionSettings?.autoMode ??
+        saved.executionLoop.autoMode);
   console.info(
-    `Execution loop mode set to ${saved.executionLoop.autoMode ? "AUTO" : "MANUAL"}.`,
+    `Execution loop mode set to ${resolvedMode ? "AUTO" : "MANUAL"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(`Next:    Run 'ixado phase run' to apply the new mode.`);
 }
 
-async function runConfigAssigneeCommand(args: string[]): Promise<void> {
-  const rawAssignee = args[2]?.trim() ?? "";
+async function runConfigAssigneeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawAssignee = args[0]?.trim() ?? "";
   if (!rawAssignee) {
-    throw new Error(
-      "Usage: ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+    throw new ValidationError(
+      "Missing required argument: <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>.",
+      {
+        usage:
+          "ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+        hint: "Run 'ixado config' to see available adapters.",
+      },
     );
   }
 
-  const assignee = CLIAdapterIdSchema.parse(rawAssignee);
-  const settingsFilePath = resolveSettingsFilePath();
+  const parsedAssignee = CLIAdapterIdSchema.safeParse(rawAssignee);
+  if (!parsedAssignee.success) {
+    throw new ValidationError(`Invalid assignee: '${rawAssignee}'.`, {
+      usage: "ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+      hint: "Valid values: CODEX_CLI, CLAUDE_CLI, GEMINI_CLI, MOCK_CLI.",
+    });
+  }
+  const assignee = parsedAssignee.data;
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   if (!settings.agents[assignee].enabled) {
-    throw new Error(
-      `Agent '${assignee}' is disabled. Enable it before setting as default.`,
-    );
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: "Enable the agent in settings before setting it as default.",
+    });
   }
 
+  const targetProjectIndex = resolveConfigTargetProjectIndex(settings);
+  const projects = settings.projects.map((project, index) =>
+    index !== targetProjectIndex
+      ? project
+      : {
+          ...project,
+          executionSettings: {
+            autoMode:
+              project.executionSettings?.autoMode ??
+              settings.executionLoop.autoMode,
+            defaultAssignee: assignee,
+          },
+        },
+  );
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
     internalWork: {
       ...settings.internalWork,
       assignee,
     },
+    projects,
   });
-  console.info(`Default coding CLI set to ${saved.internalWork.assignee}.`);
+  console.info(`Default coding CLI set to ${assignee}.`);
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' or 'ixado task start <n>' to use the new default.`,
+  );
 }
 
-async function runConfigUsageCommand(args: string[]): Promise<void> {
-  const rawValue = args[2]?.trim() ?? "";
+async function runConfigUsageCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
   if (!rawValue) {
-    throw new Error("Usage: ixado config usage <on|off>");
+    throw new ValidationError("Missing required argument: <on|off>.", {
+      usage: "ixado config usage <on|off>",
+      hint: "Use 'on' to enable usage tracking or 'off' to disable it.",
+    });
   }
 
   const codexbarEnabled = parseConfigToggle(
     rawValue,
-    "Usage: ixado config usage <on|off>",
+    "ixado config usage <on|off>",
+    "Use 'on' to enable usage tracking or 'off' to disable it.",
   );
-  const settingsFilePath = resolveSettingsFilePath();
+  const settingsFilePath = resolveGlobalSettingsFilePath();
   const settings = await loadCliSettings(settingsFilePath);
   const saved = await saveCliSettings(settingsFilePath, {
     ...settings,
@@ -1647,32 +2235,44 @@ async function runConfigUsageCommand(args: string[]): Promise<void> {
     `Codexbar usage telemetry set to ${saved.usage.codexbarEnabled ? "ON" : "OFF"}.`,
   );
   console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Usage data will ${saved.usage.codexbarEnabled ? "be collected" : "not be collected"} on next run.`,
+  );
 }
 
-async function runConfigCommand(args: string[]): Promise<void> {
-  const subcommand = args[1];
-  if (!subcommand || subcommand === "show") {
-    await runConfigShowCommand();
-    return;
+async function runConfigRecoveryCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
+  if (!rawValue) {
+    throw new ValidationError(
+      "Missing required argument: <maxAttempts:0-10>.",
+      {
+        usage: "ixado config recovery <maxAttempts:0-10>",
+        hint: "Use 0 to disable recovery, or a value from 1-10 for the attempt limit.",
+      },
+    );
   }
 
-  if (subcommand === "mode") {
-    await runConfigModeCommand(args);
-    return;
-  }
+  const maxAttempts = parseConfigRecoveryMaxAttempts(rawValue);
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    exceptionRecovery: {
+      ...settings.exceptionRecovery,
+      maxAttempts,
+    },
+  });
 
-  if (subcommand === "assignee") {
-    await runConfigAssigneeCommand(args);
-    return;
-  }
-
-  if (subcommand === "usage") {
-    await runConfigUsageCommand(args);
-    return;
-  }
-
-  throw new Error(
-    "Unknown config command. Use `ixado config`, `ixado config mode <auto|manual>`, `ixado config assignee <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>`, or `ixado config usage <on|off>`.",
+  console.info(
+    `Exception recovery max attempts set to ${saved.exceptionRecovery.maxAttempts}.`,
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated recovery limit.`,
   );
 }
 
@@ -1683,73 +2283,205 @@ async function runCompletionCommand(args: string[]): Promise<void> {
 }
 
 async function runCli(args: string[]): Promise<void> {
-  const command = args[0];
-
-  if (!command) {
-    await runDefaultCommand();
+  if (process.env.IXADO_WEB_DAEMON_MODE?.trim() === "1") {
+    await runWebServeCommand({ args: [], fullArgs: [] });
     return;
   }
 
-  if (command === "init") {
-    await runInitCommand();
-    return;
-  }
+  const registry = new CommandRegistry([
+    {
+      name: "",
+      description: "Run IxADO with stored settings",
+      action: async () => runDefaultCommand(),
+    },
+    {
+      name: "status",
+      description: "Show project status and running agents",
+      action: runStatusCommand,
+    },
+    {
+      name: "init",
+      description: "Register current directory as project in global config",
+      action: runInitCommand,
+    },
+    {
+      name: "list",
+      description: "Show all registered projects",
+      action: runListCommand,
+    },
+    {
+      name: "switch",
+      description: "Switch active project context",
+      usage: "switch <project-name>",
+      action: runSwitchCommand,
+    },
+    {
+      name: "onboard",
+      description: "Configure global CLI settings",
+      action: runOnboardCommand,
+    },
+    {
+      name: "discover",
+      description: "Discover ranked task candidates from TODO/FIXME and issues",
+      usage: "discover [--dry-run|--queue]",
+      action: runDiscoverCommand,
+    },
+    {
+      name: "task",
+      description: "Manage tasks",
+      subcommands: [
+        {
+          name: "list",
+          description: "List tasks in active phase with numbers",
+          action: runTaskListCommand,
+        },
+        {
+          name: "create",
+          description: "Create task in active phase",
+          usage: "create <title> <description> [assignee] [--type <taskType>]",
+          action: runTaskCreateCommand,
+        },
+        {
+          name: "start",
+          description: "Start active-phase task",
+          usage: "start <taskNumber> [assignee]",
+          action: runTaskStartCommand,
+        },
+        {
+          name: "retry",
+          description: "Retry FAILED task with same assignee/session",
+          usage: "retry <taskNumber>",
+          action: runTaskRetryCommand,
+        },
+        {
+          name: "logs",
+          description: "Show logs/result for task in active phase",
+          usage: "logs <taskNumber>",
+          action: runTaskLogsCommand,
+        },
+        {
+          name: "reset",
+          description: "Reset FAILED task to TODO and hard-reset repo",
+          usage: "reset <taskNumber>",
+          action: runTaskResetCommand,
+        },
+      ],
+    },
+    {
+      name: "phase",
+      description: "Manage phases",
+      subcommands: [
+        {
+          name: "create",
+          description: "Create phase and set it active",
+          usage: "create <name> <branchName>",
+          action: runPhaseCreateCommand,
+        },
+        {
+          name: "active",
+          description: "Set active phase",
+          usage: "active <phaseNumber|phaseId>",
+          action: runPhaseActiveCommand,
+        },
+        {
+          name: "run",
+          description: "Run TODO/CI_FIX tasks in active phase sequentially",
+          usage:
+            "run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
+          action: runPhaseRunCommand,
+        },
+      ],
+    },
+    {
+      name: "config",
+      description: "Manage configuration",
+      usage: "config",
+      action: runConfigShowCommand,
+      subcommands: [
+        {
+          name: "show",
+          description: "Show current global config",
+          action: runConfigShowCommand,
+        },
+        {
+          name: "mode",
+          description: "Set default phase-loop mode",
+          usage: "mode <auto|manual>",
+          action: runConfigModeCommand,
+        },
+        {
+          name: "assignee",
+          description: "Set default coding CLI",
+          usage: "assignee <CLI_ADAPTER>",
+          action: runConfigAssigneeCommand,
+        },
+        {
+          name: "recovery",
+          description: "Set exception recovery max attempts",
+          usage: "recovery <maxAttempts:0-10>",
+          action: runConfigRecoveryCommand,
+        },
+        {
+          name: "usage",
+          description: "Enable/disable codexbar usage telemetry",
+          usage: "usage <on|off>",
+          action: runConfigUsageCommand,
+        },
+      ],
+    },
+    {
+      name: "worktree",
+      description: "Manage phase worktrees",
+      subcommands: [
+        {
+          name: "list",
+          description: "List active managed worktrees",
+          action: runWorktreeListCommand,
+        },
+        {
+          name: "prune",
+          description: "Prune orphaned/terminal managed worktrees",
+          action: runWorktreePruneCommand,
+        },
+      ],
+    },
+    {
+      name: "completion",
+      description: "Generate shell completion script",
+      usage: "completion <bash|zsh|fish>",
+      action: async ({ args }: CommandActionContext) => {
+        const shell = parseCompletionShell(args[0]);
+        console.info(generateCompletionScript(shell));
+      },
+    },
+    {
+      name: "web",
+      description: "Manage web control center",
+      subcommands: [
+        {
+          name: "start",
+          description: "Start local web control center in background",
+          usage: "start [port]",
+          action: runWebStartCommand,
+        },
+        {
+          name: "stop",
+          description: "Stop local web control center",
+          action: runWebStopCommand,
+        },
+      ],
+    },
+  ]);
 
-  if (command === "list") {
-    await runListCommand();
-    return;
-  }
-
-  if (command === "switch") {
-    await runSwitchCommand(args);
-    return;
-  }
-
-  if (command === "onboard") {
-    await runOnboardCommand();
-    return;
-  }
-
-  if (command === "status") {
-    await runStatusCommand();
-    return;
-  }
-
-  if (command === "web") {
-    await runWebCommand(args);
-    return;
-  }
-
-  if (command === "task") {
-    await runTaskCommand(args);
-    return;
-  }
-
-  if (command === "phase") {
-    await runPhaseCommand(args);
-    return;
-  }
-
-  if (command === "config") {
-    await runConfigCommand(args);
-    return;
-  }
-
-  if (command === "completion") {
-    await runCompletionCommand(args);
-    return;
-  }
-
-  if (command === "help" || command === "--help" || command === "-h") {
-    printHelp();
-    return;
-  }
-
-  throw new Error(`Unknown command: ${command}`);
+  await registry.run(args);
 }
 
 await runCli(process.argv.slice(2)).catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Startup failed: ${message}`);
+  if (error instanceof ValidationError) {
+    console.error(error.format());
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+  }
   process.exitCode = 1;
 });

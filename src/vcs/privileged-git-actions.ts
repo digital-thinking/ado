@@ -23,6 +23,7 @@ import {
 import {
   GitHubManager,
   type CreatePullRequestInput,
+  type MarkPullRequestReadyInput,
   type MergePullRequestInput,
 } from "./github-manager";
 
@@ -209,6 +210,22 @@ export class PrivilegedGitActions {
     await this.github.mergePullRequest(input);
     await this.logPrivilegedCommand({
       action: ACTIONS.GIT_PR_MERGE,
+      target,
+      command,
+      decision: "allow",
+      reason: "executed",
+      auditCwd: input.cwd,
+    });
+  }
+
+  /** Marks a draft pull request as ready for review. Requires `git:privileged:pr-open`. */
+  async markPullRequestReady(input: MarkPullRequestReadyInput): Promise<void> {
+    const target = `pr:${input.prNumber}`;
+    const command = `gh pr ready ${input.prNumber}`;
+    await this.assertAuthorized(ACTIONS.GIT_PR_OPEN, target, input.cwd);
+    await this.github.markPullRequestReady(input);
+    await this.logPrivilegedCommand({
+      action: ACTIONS.GIT_PR_OPEN,
       target,
       command,
       decision: "allow",

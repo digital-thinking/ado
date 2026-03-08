@@ -8,6 +8,12 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { AgentSupervisor } from "./agent-supervisor";
+import {
+  parseAgentRuntimeDiagnostic,
+  type AgentIdleDiagnostic,
+} from "../agent-runtime-diagnostics";
+import { ProcessStdinUnavailableError } from "../process/manager";
+import { RuntimeEventSchema } from "../types/runtime-events";
 
 type FakeChild = ChildProcess & {
   stdout: PassThrough;
@@ -130,6 +136,61 @@ describe("AgentSupervisor", () => {
     expect(listed?.lastExitCode).toBe(2);
   });
 
+  test("P22-006: emits structured telemetry events with expected runtime contract fields", () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+    const started = supervisor.start({
+      name: "Telemetry worker",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp/repo",
+      adapterId: "CODEX_CLI",
+      phaseId: "phase-1",
+      taskId: "task-1",
+      projectName: "ixado",
+      approvedAdapterSpawn: true,
+    });
+
+    const events: unknown[] = [];
+    supervisor.subscribe(started.id, (event) => {
+      events.push(event);
+    });
+
+    child.stdout.write("stdout line\n");
+    child.stderr.write("stderr line\n");
+    child.emit("close", 0, null);
+
+    const parsed = events.map((event) => RuntimeEventSchema.parse(event));
+    expect(parsed.some((event) => event.type === "adapter.output")).toBe(true);
+    expect(parsed.some((event) => event.type === "terminal.outcome")).toBe(
+      true,
+    );
+
+    const stdoutEvent = parsed.find(
+      (event) =>
+        event.type === "adapter.output" &&
+        event.payload.stream === "stdout" &&
+        event.payload.line === "stdout line",
+    );
+    expect(stdoutEvent?.source).toBe("AGENT_SUPERVISOR");
+    expect(stdoutEvent?.family).toBe("adapter-output");
+    expect(stdoutEvent?.adapterId).toBe("CODEX_CLI");
+    expect(stdoutEvent?.projectName).toBe("ixado");
+    expect(stdoutEvent?.phaseId).toBe("phase-1");
+    expect(stdoutEvent?.taskId).toBe("task-1");
+
+    const terminalEvent = parsed.find(
+      (event) => event.type === "terminal.outcome",
+    );
+    if (!terminalEvent || terminalEvent.type !== "terminal.outcome") {
+      throw new Error("Expected terminal.outcome event.");
+    }
+    expect(terminalEvent.family).toBe("terminal-outcome");
+    expect(terminalEvent.payload.outcome).toBe("success");
+    expect(terminalEvent.payload.agentStatus).toBe("STOPPED");
+    expect(terminalEvent.payload.exitCode).toBe(0);
+  });
+
   test("assigns and clears task ownership", () => {
     const child = createFakeChild();
     const supervisor = new AgentSupervisor(() => child);
@@ -216,5 +277,611 @@ describe("AgentSupervisor", () => {
     expect(found).toBeDefined();
     expect(found?.status).toBe("RUNNING");
     expect(found?.taskId).toBe("task-shared");
+  });
+
+  test("calls onFailure hook when agent fails", (done) => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => child,
+      onFailure: (agent) => {
+        try {
+          expect(agent.status).toBe("FAILED");
+          expect(agent.name).toBe("Failing worker");
+          done();
+        } catch (error) {
+          done(error);
+        }
+      },
+    });
+
+    supervisor.start({
+      name: "Failing worker",
+      command: "bun",
+      cwd: "C:/repo",
+      approvedAdapterSpawn: true,
+    });
+
+    child.emit("close", 1, null);
+  });
+
+  test("throws ProcessStdinUnavailableError when stdin content is required but pipe is null", async () => {
+    const emitter = new EventEmitter() as ChildProcess;
+    const child = Object.assign(emitter, {
+      pid: 9999,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      stdin: null,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+
+    const supervisor = new AgentSupervisor(() => child);
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Stdin test worker",
+        command: "codex",
+        args: ["exec", "-"],
+        cwd: "/tmp",
+        approvedAdapterSpawn: true,
+        stdin: "the prompt payload",
+      }),
+    ).rejects.toBeInstanceOf(ProcessStdinUnavailableError);
+  });
+
+  test("delivers stdin via atomic end(data) when pipe is available", async () => {
+    const child = createFakeChild();
+    const received: string[] = [];
+    let ended = false;
+
+    child.stdin.on("data", (chunk: Buffer | string) => {
+      received.push(chunk.toString());
+    });
+    child.stdin.on("end", () => {
+      ended = true;
+    });
+
+    const supervisor = new AgentSupervisor(() => {
+      queueMicrotask(() => {
+        child.emit("close", 0, null);
+      });
+      return child;
+    });
+
+    await supervisor.runToCompletion({
+      name: "Atomic stdin worker",
+      command: "codex",
+      args: ["exec", "-"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+      stdin: "atomic-payload",
+    });
+
+    expect(received.join("")).toBe("atomic-payload");
+    expect(ended).toBe(true);
+  });
+
+  test("appends startup-silence diagnostic to outputTail when no output arrives within startupSilenceTimeoutMs", async () => {
+    const child = createFakeChild();
+
+    const supervisor = new AgentSupervisor(() => {
+      // Emit close after the silence timer fires (no output emitted)
+      setTimeout(() => {
+        child.emit("close", 0, null);
+      }, 50);
+      return child;
+    });
+
+    await supervisor.runToCompletion({
+      name: "Silent worker",
+      command: "claude",
+      args: ["--print"],
+      cwd: "/tmp",
+      adapterId: "CLAUDE_CLI",
+      approvedAdapterSpawn: true,
+      startupSilenceTimeoutMs: 10,
+    });
+
+    const listed = supervisor.list().find((a) => a.name === "Silent worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"event":"startup-silence-timeout"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"adapterId":"CLAUDE_CLI"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) => line.includes('"command":"claude"')),
+    ).toBe(true);
+  });
+
+  test("emits heartbeat diagnostics while agent is running", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        setTimeout(() => {
+          child.emit("close", 0, null);
+        }, 40);
+        return child;
+      },
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 5,
+        idleThresholdMs: 1_000,
+      },
+    });
+
+    await supervisor.runToCompletion({
+      name: "Heartbeat worker",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+    });
+
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Heartbeat worker");
+    const heartbeatDiagnostics = (listed?.outputTail ?? [])
+      .map((line) => parseAgentRuntimeDiagnostic(line))
+      .filter((diagnostic) => diagnostic?.event === "heartbeat");
+    expect(heartbeatDiagnostics.length).toBeGreaterThan(0);
+  });
+
+  test("emits idle diagnostics when idle threshold is exceeded", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        setTimeout(() => {
+          child.stdout.write("initial output\n");
+        }, 5);
+        setTimeout(() => {
+          child.emit("close", 0, null);
+        }, 70);
+        return child;
+      },
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 20,
+      },
+    });
+
+    await supervisor.runToCompletion({
+      name: "Idle worker",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+    });
+
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Idle worker");
+    const idleDiagnostics = (listed?.outputTail ?? [])
+      .map((line) => parseAgentRuntimeDiagnostic(line))
+      .filter(
+        (diagnostic): diagnostic is AgentIdleDiagnostic =>
+          diagnostic?.event === "idle-diagnostic",
+      );
+    expect(idleDiagnostics.length).toBeGreaterThan(0);
+    expect(idleDiagnostics.every((item) => item.idleThresholdMs === 20)).toBe(
+      true,
+    );
+  });
+
+  test("appends structured execution-timeout diagnostic with adapter hint", async () => {
+    const child = createFakeChild();
+    child.kill = () => {
+      queueMicrotask(() => {
+        child.emit("close", null, "SIGTERM");
+      });
+      return true;
+    };
+
+    const supervisor = new AgentSupervisor(() => child);
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Timeout worker",
+        command: "codex",
+        args: ["exec"],
+        cwd: "/tmp",
+        adapterId: "CODEX_CLI",
+        approvedAdapterSpawn: true,
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow("Command timed out");
+
+    const listed = supervisor.list().find((a) => a.name === "Timeout worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"event":"execution-timeout"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"adapterId":"CODEX_CLI"'),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes('"hint":"Run \'codex auth login\''),
+      ),
+    ).toBe(true);
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("[ixado][adapter-runtime]"),
+      ),
+    ).toBe(true);
+  });
+
+  test("P22-006: maps runtime non-zero exit with auth-like output to AGENT_FAILURE/auth taxonomy", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+
+    const runPromise = supervisor.runToCompletion({
+      name: "Auth failure worker",
+      command: "claude",
+      args: ["--print"],
+      cwd: "/tmp",
+      adapterId: "CLAUDE_CLI",
+      approvedAdapterSpawn: true,
+    });
+
+    child.stderr.write("unauthorized: token expired\n");
+    child.emit("close", 1, null);
+
+    await expect(runPromise).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "auth",
+    });
+  });
+
+  test("P22-006: maps runtime non-zero exit with unknown output to AGENT_FAILURE/unknown taxonomy fallback", async () => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor(() => child);
+
+    const runPromise = supervisor.runToCompletion({
+      name: "Unknown failure worker",
+      command: "gemini",
+      args: ["--yolo"],
+      cwd: "/tmp",
+      adapterId: "GEMINI_CLI",
+      approvedAdapterSpawn: true,
+    });
+
+    child.stderr.write("unexpected fatal condition\n");
+    child.emit("close", 7, null);
+
+    await expect(runPromise).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "unknown",
+    });
+  });
+
+  test("does NOT append startup-silence diagnostic when output arrives before silence window expires", async () => {
+    const child = createFakeChild();
+
+    const supervisor = new AgentSupervisor(() => {
+      // Emit output immediately, before the silence timer would fire
+      queueMicrotask(() => {
+        child.stdout.write("some output\n");
+        child.emit("close", 0, null);
+      });
+      return child;
+    });
+
+    await supervisor.runToCompletion({
+      name: "Active worker",
+      command: "gemini",
+      args: ["--yolo"],
+      cwd: "/tmp",
+      approvedAdapterSpawn: true,
+      startupSilenceTimeoutMs: 5000,
+    });
+
+    const listed = supervisor.list().find((a) => a.name === "Active worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("[ixado][adapter-runtime]"),
+      ),
+    ).toBe(false);
+  });
+
+  test("calls onFailure hook when agent is killed", (done) => {
+    const child = createFakeChild();
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => child,
+      onFailure: (agent) => {
+        try {
+          expect(agent.status).toBe("STOPPED");
+          expect(agent.name).toBe("Killed worker");
+          done();
+        } catch (error) {
+          done(error);
+        }
+      },
+    });
+
+    const agent = supervisor.start({
+      name: "Killed worker",
+      command: "bun",
+      cwd: "C:/repo",
+      approvedAdapterSpawn: true,
+    });
+
+    supervisor.kill(agent.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P20-002: reconcileStaleRunningAgents – restart/resume reliability
+// ---------------------------------------------------------------------------
+
+describe("AgentSupervisor – reconcileStaleRunningAgents (P20-002)", () => {
+  let sandboxDir: string;
+  let registryFilePath: string;
+
+  beforeEach(async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-agents-"));
+    registryFilePath = join(sandboxDir, "agents.json");
+  });
+
+  afterEach(async () => {
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  test("returns 0 when there is no registry file", () => {
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(0);
+  });
+
+  test("returns 0 when no agents exist in the registry", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(registryFilePath, "[]", "utf8");
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(0);
+  });
+
+  test("returns 0 when all persisted agents are already in a terminal status", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Done worker",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "STOPPED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Failed worker",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "FAILED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(0);
+
+    // Registry should be unchanged
+    const { readFileSync } = await import("node:fs");
+    const persisted = JSON.parse(readFileSync(registryFilePath, "utf8"));
+    expect(persisted[0].status).toBe("STOPPED");
+    expect(persisted[1].status).toBe("FAILED");
+  });
+
+  test("marks all RUNNING agents as STOPPED and returns the count", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Running worker 1",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 1234,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Running worker 2",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 5678,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(2);
+
+    // Reconciled agents must be listed as STOPPED
+    const listed = supervisor.list();
+    expect(listed.every((a) => a.status === "STOPPED")).toBe(true);
+    expect(listed.every((a) => a.stoppedAt !== undefined)).toBe(true);
+  });
+
+  test("leaves terminal-status agents untouched while reconciling RUNNING ones", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Already stopped",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "STOPPED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Stale runner",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 9999,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const count = supervisor.reconcileStaleRunningAgents();
+    expect(count).toBe(1);
+
+    const listed = supervisor.list();
+    const stoppedAgent = listed.find((a) => a.name === "Already stopped");
+    const reconciledAgent = listed.find((a) => a.name === "Stale runner");
+    expect(stoppedAgent?.status).toBe("STOPPED");
+    expect(reconciledAgent?.status).toBe("STOPPED");
+  });
+
+  test("is idempotent: second call on already-STOPPED agents returns 0", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Stale runner",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        pid: 1234,
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+    const firstCount = supervisor.reconcileStaleRunningAgents();
+    const secondCount = supervisor.reconcileStaleRunningAgents();
+    expect(firstCount).toBe(1);
+    expect(secondCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P26-005: reconcileRunningAgentsWhere – cross-store consistency hook
+// ---------------------------------------------------------------------------
+
+describe("AgentSupervisor – reconcileRunningAgentsWhere (P26-005)", () => {
+  let sandboxDir: string;
+  let registryFilePath: string;
+
+  beforeEach(async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-reconcile-where-"));
+    registryFilePath = join(sandboxDir, "agents.json");
+  });
+
+  afterEach(async () => {
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  test("reconciles only RUNNING agents matching predicate", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const agents = [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "running-match",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        taskId: "task-terminal",
+        projectName: "alpha",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "running-no-match",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "RUNNING",
+        taskId: "task-open",
+        projectName: "alpha",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        outputTail: [],
+      },
+      {
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        name: "already-stopped",
+        command: "bun",
+        args: [],
+        cwd: "/tmp",
+        status: "STOPPED",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        stoppedAt: "2024-01-01T00:01:00.000Z",
+        outputTail: [],
+      },
+    ];
+    await writeFile(registryFilePath, JSON.stringify(agents), "utf8");
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => createFakeChild(),
+      registryFilePath,
+    });
+
+    const count = supervisor.reconcileRunningAgentsWhere(
+      (agent) => agent.taskId === "task-terminal",
+    );
+
+    expect(count).toBe(1);
+    const listed = supervisor.list();
+    expect(listed.find((a) => a.name === "running-match")?.status).toBe(
+      "STOPPED",
+    );
+    expect(listed.find((a) => a.name === "running-no-match")?.status).toBe(
+      "RUNNING",
+    );
+    expect(listed.find((a) => a.name === "already-stopped")?.status).toBe(
+      "STOPPED",
+    );
   });
 });

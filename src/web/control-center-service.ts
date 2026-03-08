@@ -1,29 +1,60 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import {
+  classifyAdapterFailure,
+  type AdapterFailureKind,
+} from "../adapters/failure-taxonomy";
+import { inferTaskType } from "../engine/task-type-classifier";
 import { buildWorkerPrompt } from "../engine/worker-prompts";
+import { parseJsonFromModelOutput } from "../engine/json-parser";
+import {
+  ProcessExecutionError,
+  ProcessManager,
+  type ProcessRunner,
+} from "../process";
+import {
+  ActivePhaseResolutionError,
+  resolveActivePhaseStrict,
+} from "../state/active-phase";
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
+  ExceptionMetadataSchema,
+  ExceptionRecoveryResultSchema,
+  PhaseFailureKindSchema,
   PhaseSchema,
   PhaseStatusSchema,
+  RecoveryAttemptRecordSchema,
+  TaskCompletionVerificationSchema,
   TaskSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
+  type ExceptionMetadata,
+  type ExceptionRecoveryResult,
   type Phase,
+  type PhaseFailureKind,
   type PhaseStatus,
   type ProjectState,
+  type RecoveryAttemptRecord,
+  type SideEffectContract,
   type Task,
+  type TaskType,
+  type TaskCompletionVerification,
+  type TaskRoutingReason,
   type WorkerAssignee,
 } from "../types";
+import { parsePullRequestNumberFromUrl } from "../vcs";
 
 const DEFAULT_TASKS_MARKDOWN_PATH = "TASKS.md";
 const TASKS_IMPORT_TIMEOUT_MS = 180_000;
 const TASK_EXECUTION_TIMEOUT_MS = 3_600_000;
 const MAX_STORED_CONTEXT_LENGTH = 4_000;
+const TRUNCATION_MARKER = "\n... [truncated]";
 
 const ImportedTaskPlanSchema = z.object({
   code: z.string().min(1),
@@ -58,7 +89,17 @@ export type CreateTaskInput = {
   title: string;
   description: string;
   assignee?: WorkerAssignee;
+  taskType?: TaskType;
   dependencies?: string[];
+  status?: Task["status"];
+};
+
+export type UpdateTaskInput = {
+  phaseId: string;
+  taskId: string;
+  title: string;
+  description: string;
+  dependencies: string[];
 };
 
 export type RunInternalWorkInput = {
@@ -68,6 +109,8 @@ export type RunInternalWorkInput = {
   phaseId?: string;
   taskId?: string;
   resume?: boolean;
+  /** Working directory for the agent process. When set, overrides the server default cwd. */
+  cwd?: string;
 };
 
 export type RunInternalWorkResult = {
@@ -87,11 +130,23 @@ export type ImportTasksMarkdownResult = {
   assignee: CLIAdapterId;
 };
 
+export type SyncTasksMarkdownResult = {
+  state: ProjectState;
+  addedPhases: number;
+  addedTasks: number;
+  updatedTasks: number;
+  sourceFilePath: string;
+};
+
 export type StartTaskInput = {
   phaseId: string;
   taskId: string;
   assignee: CLIAdapterId;
+  resolvedAssignee?: CLIAdapterId;
+  routingReason?: TaskRoutingReason;
   resume?: boolean;
+  taskDescriptionOverride?: string;
+  resultContextPrefix?: string;
 };
 
 export type SetActivePhaseInput = {
@@ -107,17 +162,37 @@ export type SetPhaseStatusInput = {
   phaseId: string;
   status: PhaseStatus;
   ciStatusContext?: string;
+  failureKind?: PhaseFailureKind;
+  worktreePath?: string | null;
+};
+
+export type RecordRecoveryAttemptInput = {
+  phaseId: string;
+  taskId?: string;
+  attemptNumber: number;
+  exception: ExceptionMetadata;
+  result: ExceptionRecoveryResult;
 };
 
 export type StartActiveTaskInput = {
   taskNumber: number;
   assignee: CLIAdapterId;
+  resolvedAssignee?: CLIAdapterId;
+  routingReason?: TaskRoutingReason;
   resume?: boolean;
+  taskDescriptionOverride?: string;
+  resultContextPrefix?: string;
 };
 
 export type ResetTaskInput = {
   phaseId: string;
   taskId: string;
+};
+
+export type MarkTaskDeadLetterInput = {
+  phaseId: string;
+  taskId: string;
+  reason: string;
 };
 
 export type ActivePhaseTaskItem = {
@@ -143,6 +218,15 @@ export type StateEngineFactory = (
   projectName: string,
 ) => StateEngine | Promise<StateEngine>;
 
+export type ControlCenterServiceOptions = {
+  stateEngine: StateEngine | StateEngineFactory;
+  tasksMarkdownFilePath?: string;
+  internalWorkRunner?: InternalWorkRunner;
+  repositoryResetRunner?: RepositoryResetRunner;
+  onStateChange?: (projectName: string, state: ProjectState) => void;
+  sideEffectProbeRunner?: ProcessRunner;
+};
+
 type ImportedTaskDraft = ImportedTaskPlan & {
   id: string;
 };
@@ -151,6 +235,83 @@ type ImportedPhaseDraft = Omit<ImportedPhasePlan, "tasks"> & {
   id: string;
   tasks: ImportedTaskDraft[];
 };
+
+type ParsedTaskPlan = {
+  code: string;
+  title: string;
+  description: string;
+  status: "TODO" | "DONE";
+  dependencies: string[];
+};
+
+type ParsedPhasePlan = {
+  name: string;
+  branchName: string;
+  tasks: ParsedTaskPlan[];
+};
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function extractTaskCode(title: string): string | undefined {
+  return /^(P\d+-\d+)\s/.exec(title)?.[1];
+}
+
+function parseTasksMarkdown(markdown: string): { phases: ParsedPhasePlan[] } {
+  const phases: ParsedPhasePlan[] = [];
+  let currentPhase: ParsedPhasePlan | null = null;
+
+  for (const line of markdown.split("\n")) {
+    const phaseMatch = /^#{2,3}\s+(Phase \d+:\s*.+)$/.exec(line);
+    if (phaseMatch) {
+      const rawName = phaseMatch[1]
+        .trim()
+        .replace(/\s*\(.*\)\s*$/, "")
+        .trim();
+      currentPhase = { name: rawName, branchName: slugify(rawName), tasks: [] };
+      phases.push(currentPhase);
+      continue;
+    }
+
+    if (!currentPhase) continue;
+
+    const taskMatch = /^-\s+\[([x ])\]\s+`?(P\d+-\d+)`?\s+(.+)$/.exec(line);
+    if (!taskMatch) continue;
+
+    const status = taskMatch[1] === "x" ? "DONE" : ("TODO" as const);
+    const code = taskMatch[2];
+    const rest = taskMatch[3];
+
+    const depsIdx = rest.search(/\.?\s+Deps?:\s+/i);
+    const taskText = (depsIdx >= 0 ? rest.slice(0, depsIdx) : rest).replace(
+      /\.$/,
+      "",
+    );
+    const depsRaw = depsIdx >= 0 ? rest.slice(depsIdx) : "";
+
+    const dependencies: string[] = [];
+    const depCodeRe = /`(P\d+-\d+)`/g;
+    let m: RegExpExecArray | null;
+    while ((m = depCodeRe.exec(depsRaw)) !== null) {
+      dependencies.push(m[1]);
+    }
+
+    currentPhase.tasks.push({
+      code,
+      title: `${code} ${taskText}`,
+      description: taskText,
+      status,
+      dependencies,
+    });
+  }
+
+  return { phases };
+}
 
 function buildTasksMarkdownImportPrompt(markdown: string): string {
   return [
@@ -167,88 +328,6 @@ function buildTasksMarkdownImportPrompt(markdown: string): string {
     "TASKS.md:",
     markdown,
   ].join("\n\n");
-}
-
-function extractFirstJsonObject(raw: string): string | null {
-  const startIndex = raw.indexOf("{");
-  if (startIndex < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-
-  for (let index = startIndex; index < raw.length; index += 1) {
-    const char = raw[index];
-
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaping = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return raw.slice(startIndex, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseJsonFromModelOutput(rawOutput: string): unknown {
-  const direct = rawOutput.trim();
-  if (!direct) {
-    throw new Error("Internal work returned empty output.");
-  }
-
-  try {
-    return JSON.parse(direct);
-  } catch {
-    // Continue.
-  }
-
-  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(rawOutput);
-  if (fencedMatch) {
-    try {
-      return JSON.parse(fencedMatch[1].trim());
-    } catch {
-      // Continue.
-    }
-  }
-
-  const objectPayload = extractFirstJsonObject(rawOutput);
-  if (objectPayload) {
-    try {
-      return JSON.parse(objectPayload);
-    } catch {
-      // Continue.
-    }
-  }
-
-  throw new Error("Internal work did not return valid JSON.");
 }
 
 function createDraftsFromPlan(plan: ImportedTasksPlan): ImportedPhaseDraft[] {
@@ -281,28 +360,40 @@ function taskExecutionKey(phaseId: string, taskId: string): string {
   return `${phaseId}:${taskId}`;
 }
 
+function isRecoveringFixTaskStatus(status: Task["status"]): boolean {
+  return status === "CI_FIX";
+}
+
 function truncateForState(value: string): string {
   if (value.length <= MAX_STORED_CONTEXT_LENGTH) {
     return value;
   }
 
-  return value.slice(0, MAX_STORED_CONTEXT_LENGTH);
+  return (
+    value.slice(0, MAX_STORED_CONTEXT_LENGTH - TRUNCATION_MARKER.length) +
+    TRUNCATION_MARKER
+  );
 }
 
 function resolveActivePhaseOrThrow(state: ProjectState): Phase {
-  const explicitActive = state.activePhaseId
-    ? state.phases.find((phase) => phase.id === state.activePhaseId)
-    : undefined;
-  if (explicitActive) {
-    return explicitActive;
+  try {
+    return resolveActivePhaseStrict(state);
+  } catch (error) {
+    if (!(error instanceof ActivePhaseResolutionError)) {
+      throw error;
+    }
+    if (error.code === "NO_PHASES") {
+      throw new Error("No phases found.");
+    }
+    if (error.code === "ACTIVE_PHASE_ID_MISSING") {
+      throw new Error(
+        "Active phase ID is not set. Run 'ixado phase active <phaseNumber|phaseId>'.",
+      );
+    }
+    throw new Error(
+      `Active phase ID "${error.activePhaseId}" not found in project state.`,
+    );
   }
-
-  const firstPhase = state.phases[0];
-  if (!firstPhase) {
-    throw new Error("No phases found.");
-  }
-
-  return firstPhase;
 }
 
 function resolvePhaseIdForReference(
@@ -325,29 +416,155 @@ function resolvePhaseIdForReference(
   throw new Error(`Phase not found: ${phaseReference}`);
 }
 
+const SIDE_EFFECT_CONTRACT_PATTERNS: ReadonlyArray<{
+  contract: SideEffectContract;
+  patterns: ReadonlyArray<RegExp>;
+}> = [
+  {
+    contract: "PR_CREATION",
+    patterns: [
+      /\bcreate pr task\b/i,
+      /\bcreate pull request\b/i,
+      /\bopen pr\b/i,
+      /\bpull request\b/i,
+    ],
+  },
+  {
+    contract: "REMOTE_PUSH",
+    patterns: [
+      /\bremote push\b/i,
+      /\bpush branch\b/i,
+      /\bpush to origin\b/i,
+      /\bpush changes\b/i,
+    ],
+  },
+  {
+    contract: "CI_TRIGGERED_UPDATE",
+    patterns: [
+      /\bci-triggered updates?\b/i,
+      /\bci triggered updates?\b/i,
+      /\btrigger ci\b/i,
+      /\bci status updates?\b/i,
+    ],
+  },
+];
+
+const GITHUB_BOUND_SIDE_EFFECT_CONTRACTS: readonly SideEffectContract[] = [
+  "PR_CREATION",
+  "REMOTE_PUSH",
+  "CI_TRIGGERED_UPDATE",
+];
+
+type SideEffectProbeResult = TaskCompletionVerification["probes"][number];
+
+type SideEffectProbeRunResult = {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  details: string;
+  failureKind?: AdapterFailureKind;
+};
+
+type GitHubCapabilityPreflightFailure = {
+  completionVerification: TaskCompletionVerification;
+  adapterFailureKind: AdapterFailureKind;
+};
+
+export function resolveTaskCompletionSideEffectContracts(
+  task: Pick<Task, "title" | "description">,
+): SideEffectContract[] {
+  const text = `${task.title}\n${task.description}`;
+
+  return SIDE_EFFECT_CONTRACT_PATTERNS.flatMap((entry) => {
+    const matches = entry.patterns.some((pattern) => pattern.test(text));
+    return matches ? [entry.contract] : [];
+  });
+}
+
+function resolveGitHubBoundContracts(
+  contracts: SideEffectContract[],
+): SideEffectContract[] {
+  return contracts.filter((contract) =>
+    GITHUB_BOUND_SIDE_EFFECT_CONTRACTS.includes(contract),
+  );
+}
+
+function hasCiTriggeredUpdateSignal(phase: Phase): boolean {
+  if (
+    phase.status === "AWAITING_CI" ||
+    phase.status === "CI_FAILED" ||
+    phase.status === "READY_FOR_REVIEW"
+  ) {
+    return true;
+  }
+
+  if (Boolean(phase.ciStatusContext?.trim())) {
+    return true;
+  }
+
+  return phase.tasks.some((task) => task.status === "CI_FIX");
+}
+
+function summarizeVerificationFailure(
+  verification: TaskCompletionVerification,
+): string {
+  const details =
+    verification.missingSideEffects.length > 0
+      ? verification.missingSideEffects.join(" | ")
+      : "Missing side effects were detected.";
+  return `Completion side-effect verification failed: ${details}`;
+}
+
+function summarizeCapabilityPreflightFailure(
+  verification: TaskCompletionVerification,
+): string {
+  const details =
+    verification.missingSideEffects.length > 0
+      ? verification.missingSideEffects.join(" | ")
+      : "GitHub runtime capability mismatch detected.";
+  return `Runtime capability preflight failed for GitHub-bound task: ${details}`;
+}
+
 export class ControlCenterService {
   private readonly stateEngineFactory: StateEngineFactory;
   private readonly projectStateEngines = new Map<string, StateEngine>();
-  private readonly tasksMarkdownFilePath: string;
+  private readonly tasksMarkdownFilePath: string | undefined;
   private readonly internalWorkRunner?: InternalWorkRunner;
   private readonly repositoryResetRunner?: RepositoryResetRunner;
   private readonly runningTaskExecutions = new Map<string, Promise<void>>();
+  private readonly onStateChange?: (
+    projectName: string,
+    state: ProjectState,
+  ) => void;
+  private readonly sideEffectProbeRunner: ProcessRunner;
   private defaultProjectName?: string;
 
-  constructor(
-    stateOrFactory: StateEngine | StateEngineFactory,
-    tasksMarkdownFilePath = resolve(process.cwd(), DEFAULT_TASKS_MARKDOWN_PATH),
-    internalWorkRunner?: InternalWorkRunner,
-    repositoryResetRunner?: RepositoryResetRunner,
-  ) {
-    if (typeof stateOrFactory === "function") {
-      this.stateEngineFactory = stateOrFactory;
+  constructor(options: ControlCenterServiceOptions) {
+    const {
+      stateEngine,
+      tasksMarkdownFilePath,
+      internalWorkRunner,
+      repositoryResetRunner,
+      onStateChange,
+      sideEffectProbeRunner = new ProcessManager(),
+    } = options;
+    if (typeof stateEngine === "function") {
+      this.stateEngineFactory = stateEngine;
     } else {
-      this.stateEngineFactory = () => stateOrFactory;
+      this.stateEngineFactory = () => stateEngine;
     }
     this.tasksMarkdownFilePath = tasksMarkdownFilePath;
     this.internalWorkRunner = internalWorkRunner;
     this.repositoryResetRunner = repositoryResetRunner;
+    this.onStateChange = onStateChange;
+    this.sideEffectProbeRunner = sideEffectProbeRunner;
+  }
+
+  private resolveTasksMdPath(rootDir: string): string {
+    return (
+      this.tasksMarkdownFilePath ??
+      resolve(rootDir, DEFAULT_TASKS_MARKDOWN_PATH)
+    );
   }
 
   private async getEngine(projectName?: string): Promise<StateEngine> {
@@ -411,11 +628,13 @@ export class ControlCenterService {
       tasks: [],
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
-      activePhaseId: phase.id,
+      activePhaseIds: [phase.id],
       phases: [...state.phases, phase],
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async createTask(
@@ -440,13 +659,18 @@ export class ControlCenterService {
       throw new Error(`Phase not found: ${input.phaseId}`);
     }
 
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const taskType = input.taskType ?? inferTaskType({ title, description });
+
     const task = TaskSchema.parse({
       id: randomUUID(),
-      title: input.title.trim(),
-      description: input.description.trim(),
+      title,
+      description,
+      taskType,
       assignee: input.assignee ?? "UNASSIGNED",
       dependencies: input.dependencies ?? [],
-      status: "TODO",
+      status: input.status ?? "TODO",
     });
 
     const nextPhases = [...state.phases];
@@ -455,10 +679,102 @@ export class ControlCenterService {
       tasks: [...nextPhases[phaseIndex].tasks, task],
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async updateTask(
+    input: UpdateTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const dependencies = input.dependencies
+      .map((dependencyId) => dependencyId.trim())
+      .filter(
+        (dependencyId, index, values) =>
+          dependencyId.length > 0 && values.indexOf(dependencyId) === index,
+      );
+
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!title) {
+      throw new Error("task title must not be empty.");
+    }
+    if (!description) {
+      throw new Error("task description must not be empty.");
+    }
+    if (dependencies.includes(taskId)) {
+      throw new Error("Task cannot depend on itself.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot edit a running task.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const task = phase.tasks[taskIndex];
+    if (task.status === "IN_PROGRESS") {
+      throw new Error("Cannot edit task while it is IN_PROGRESS.");
+    }
+
+    const knownTaskIds = new Set(
+      state.phases.flatMap((candidatePhase) =>
+        candidatePhase.tasks.map((candidateTask) => candidateTask.id),
+      ),
+    );
+    const missingDependency = dependencies.find(
+      (dependencyId) => !knownTaskIds.has(dependencyId),
+    );
+    if (missingDependency) {
+      throw new Error(
+        `Task has invalid dependency reference: ${missingDependency}`,
+      );
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      title,
+      description,
+      dependencies,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setActivePhase(
@@ -473,10 +789,12 @@ export class ControlCenterService {
     const state = await engine.readProjectState();
     const phaseId = resolvePhaseIdForReference(state, phaseReference);
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setPhasePrUrl(
@@ -505,10 +823,12 @@ export class ControlCenterService {
       prUrl,
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async setPhaseStatus(
@@ -533,17 +853,38 @@ export class ControlCenterService {
       status === "CI_FAILED"
         ? normalizedContext || phase.ciStatusContext
         : undefined;
+    const rawFailureKind = input.failureKind
+      ? PhaseFailureKindSchema.parse(input.failureKind)
+      : undefined;
+    const failureKind =
+      status === "CI_FAILED"
+        ? (rawFailureKind ?? phase.failureKind)
+        : undefined;
+    let worktreePath = phase.worktreePath;
+    if (input.worktreePath === null) {
+      worktreePath = null;
+    } else if (typeof input.worktreePath === "string") {
+      const normalizedWorktreePath = input.worktreePath.trim();
+      if (!normalizedWorktreePath) {
+        throw new Error("worktreePath must not be empty when provided.");
+      }
+      worktreePath = normalizedWorktreePath;
+    }
     const nextPhases = [...state.phases];
     nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
       status,
       ciStatusContext,
+      failureKind,
+      worktreePath,
     });
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async listActivePhaseTasks(
@@ -563,6 +904,72 @@ export class ControlCenterService {
         assignee: task.assignee,
       })),
     };
+  }
+
+  async recordRecoveryAttempt(
+    input: RecordRecoveryAttemptInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId?.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+
+    const attemptNumber = Number(input.attemptNumber);
+    if (!Number.isInteger(attemptNumber) || attemptNumber <= 0) {
+      throw new Error("attemptNumber must be a positive integer.");
+    }
+
+    const exception = ExceptionMetadataSchema.parse(input.exception);
+    const result = ExceptionRecoveryResultSchema.parse(input.result);
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const record = RecoveryAttemptRecordSchema.parse({
+      id: randomUUID(),
+      occurredAt: new Date().toISOString(),
+      attemptNumber,
+      exception,
+      result,
+    });
+
+    const nextPhases = [...state.phases];
+    if (taskId) {
+      const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+      if (taskIndex < 0) {
+        throw new Error(`Task not found: ${taskId}`);
+      }
+      const nextTasks = [...phase.tasks];
+      nextTasks[taskIndex] = TaskSchema.parse({
+        ...nextTasks[taskIndex],
+        recoveryAttempts: [
+          ...(nextTasks[taskIndex].recoveryAttempts ?? []),
+          record,
+        ],
+      });
+      nextPhases[phaseIndex] = PhaseSchema.parse({
+        ...phase,
+        tasks: nextTasks,
+      });
+    } else {
+      nextPhases[phaseIndex] = PhaseSchema.parse({
+        ...phase,
+        recoveryAttempts: [...(phase.recoveryAttempts ?? []), record],
+      });
+    }
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async startActiveTask(
@@ -587,7 +994,11 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resolvedAssignee: input.resolvedAssignee,
+      routingReason: input.routingReason,
       resume: input.resume,
+      taskDescriptionOverride: input.taskDescriptionOverride,
+      resultContextPrefix: input.resultContextPrefix,
       projectName: input.projectName,
     });
   }
@@ -614,7 +1025,11 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resolvedAssignee: input.resolvedAssignee,
+      routingReason: input.routingReason,
       resume: input.resume,
+      taskDescriptionOverride: input.taskDescriptionOverride,
+      resultContextPrefix: input.resultContextPrefix,
       projectName: input.projectName,
     });
   }
@@ -625,6 +1040,12 @@ export class ControlCenterService {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
+    const resolvedAssignee = input.resolvedAssignee
+      ? CLIAdapterIdSchema.parse(input.resolvedAssignee)
+      : undefined;
+    const routingReason = input.routingReason;
+    const taskDescriptionOverride = input.taskDescriptionOverride?.trim();
+    const resultContextPrefix = input.resultContextPrefix?.trim();
     if (!phaseId) {
       throw new Error("phaseId must not be empty.");
     }
@@ -633,6 +1054,30 @@ export class ControlCenterService {
     }
     if (!this.internalWorkRunner) {
       throw new Error("Internal work runner is not configured.");
+    }
+    if (
+      input.taskDescriptionOverride !== undefined &&
+      !taskDescriptionOverride
+    ) {
+      throw new Error("taskDescriptionOverride must not be empty when set.");
+    }
+    if (input.resultContextPrefix !== undefined && !resultContextPrefix) {
+      throw new Error("resultContextPrefix must not be empty when set.");
+    }
+    if (!resolvedAssignee && routingReason) {
+      throw new Error(
+        "routingReason requires resolvedAssignee in task start input.",
+      );
+    }
+    if (resolvedAssignee && !routingReason) {
+      throw new Error(
+        "resolvedAssignee requires routingReason in task start input.",
+      );
+    }
+    if (resolvedAssignee && resolvedAssignee !== assignee) {
+      throw new Error(
+        `resolvedAssignee must match assignee. Received ${resolvedAssignee} and ${assignee}.`,
+      );
     }
 
     const runKey = taskExecutionKey(phaseId, taskId);
@@ -654,9 +1099,13 @@ export class ControlCenterService {
     }
 
     const task = phase.tasks[taskIndex];
-    if (task.status !== "TODO" && task.status !== "FAILED") {
+    if (
+      task.status !== "TODO" &&
+      task.status !== "FAILED" &&
+      task.status !== "CI_FIX"
+    ) {
       throw new Error(
-        `Task must be TODO or FAILED before start. Current status: ${task.status}`,
+        `Task must be TODO, FAILED, or CI_FIX before start. Current status: ${task.status}`,
       );
     }
     if (task.status === "FAILED" && task.assignee !== assignee) {
@@ -694,20 +1143,29 @@ export class ControlCenterService {
       );
     }
 
+    const taskForPrompt: Task = taskDescriptionOverride
+      ? {
+          ...task,
+          description: taskDescriptionOverride,
+        }
+      : task;
     const prompt = buildWorkerPrompt({
       archetype: "CODER",
       projectName: state.projectName,
       rootDir: state.rootDir,
       phase,
-      task,
+      task: taskForPrompt,
     });
 
     const updatedTask = TaskSchema.parse({
       ...task,
       assignee,
+      resolvedAssignee,
+      routingReason,
       status: "IN_PROGRESS",
       resultContext: undefined,
       errorLogs: undefined,
+      completionVerification: undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -722,6 +1180,7 @@ export class ControlCenterService {
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
 
     const shouldResume =
       Boolean(input.resume) ||
@@ -733,7 +1192,10 @@ export class ControlCenterService {
       assignee,
       prompt,
       resume: shouldResume,
+      startedFromStatus: task.status,
+      resultContextPrefix,
       projectName: input.projectName,
+      cwd: state.rootDir,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });
@@ -775,6 +1237,7 @@ export class ControlCenterService {
       phaseId: input.phaseId,
       taskId: input.taskId,
       resume: input.resume,
+      cwd: input.cwd,
     });
 
     return {
@@ -792,7 +1255,12 @@ export class ControlCenterService {
     projectName?: string,
   ): Promise<ImportTasksMarkdownResult> {
     const validAssignee = CLIAdapterIdSchema.parse(assignee);
-    const markdown = await readFile(this.tasksMarkdownFilePath, "utf8");
+
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
+    const tasksMdPath = this.resolveTasksMdPath(state.rootDir);
+
+    const markdown = await readFile(tasksMdPath, "utf8");
     const prompt = buildTasksMarkdownImportPrompt(markdown);
     const internalResult = await this.runInternalWork({
       assignee: validAssignee,
@@ -800,7 +1268,10 @@ export class ControlCenterService {
       timeoutMs: TASKS_IMPORT_TIMEOUT_MS,
     });
 
-    const parsed = parseJsonFromModelOutput(internalResult.stdout);
+    const parsed = parseJsonFromModelOutput(
+      internalResult.stdout,
+      "Internal work did not return valid JSON.",
+    );
     const plan = ImportedTasksPlanSchema.parse(parsed);
     const draftPhases = createDraftsFromPlan(plan);
 
@@ -810,18 +1281,17 @@ export class ControlCenterService {
         taskCodeToId.set(draftTask.code, draftTask.id);
       }
     }
-
-    const engine = await this.getEngine(projectName);
-    const state = await engine.readProjectState();
     let importedPhaseCount = 0;
     let importedTaskCount = 0;
     let lastImportedPhaseId: string | undefined;
-    const nextPhases = [...state.phases];
+    // Reset: start from a clean slate so reimport is idempotent
+    const nextPhases: typeof state.phases = [];
 
     for (const draftPhase of draftPhases) {
       const mappedTasks = draftPhase.tasks.map((draftTask) =>
         TaskSchema.parse({
           id: draftTask.id,
+          code: draftTask.code,
           title: draftTask.title,
           description: draftTask.description,
           status: draftTask.status,
@@ -832,57 +1302,609 @@ export class ControlCenterService {
         }),
       );
 
-      const existingPhaseIndex = nextPhases.findIndex(
-        (phase) => phase.name === draftPhase.name,
-      );
-      if (existingPhaseIndex < 0) {
-        const createdPhase = PhaseSchema.parse({
-          id: draftPhase.id,
-          name: draftPhase.name,
-          branchName: draftPhase.branchName,
-          status: "PLANNING",
-          tasks: mappedTasks,
-        });
+      const createdPhase = PhaseSchema.parse({
+        id: draftPhase.id,
+        name: draftPhase.name,
+        branchName: draftPhase.branchName,
+        status: "PLANNING",
+        tasks: mappedTasks,
+      });
 
-        nextPhases.push(createdPhase);
-        importedPhaseCount += 1;
-        importedTaskCount += mappedTasks.length;
-        lastImportedPhaseId = createdPhase.id;
-        continue;
-      }
-
-      const existingPhase = nextPhases[existingPhaseIndex];
-      const existingTaskTitles = new Set(
-        existingPhase.tasks.map((task) => task.title),
-      );
-      const tasksToAppend = mappedTasks.filter(
-        (task) => !existingTaskTitles.has(task.title),
-      );
-      if (tasksToAppend.length === 0) {
-        continue;
-      }
-
-      nextPhases[existingPhaseIndex] = {
-        ...existingPhase,
-        tasks: [...existingPhase.tasks, ...tasksToAppend],
-      };
-      importedTaskCount += tasksToAppend.length;
-      lastImportedPhaseId = existingPhase.id;
+      nextPhases.push(createdPhase);
+      importedPhaseCount += 1;
+      importedTaskCount += mappedTasks.length;
+      lastImportedPhaseId = createdPhase.id;
     }
 
     const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
-      activePhaseId: state.activePhaseId ?? lastImportedPhaseId,
+      activePhaseIds: lastImportedPhaseId ? [lastImportedPhaseId] : [],
     });
+    this.onStateChange?.(nextState.projectName, nextState);
 
     return {
       state: nextState,
       importedPhaseCount,
       importedTaskCount,
-      sourceFilePath: this.tasksMarkdownFilePath,
+      sourceFilePath: tasksMdPath,
       assignee: validAssignee,
     };
+  }
+
+  async syncFromTasksMarkdown(
+    projectName?: string,
+  ): Promise<SyncTasksMarkdownResult> {
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
+    const tasksMdPath = this.resolveTasksMdPath(state.rootDir);
+
+    const markdown = await readFile(tasksMdPath, "utf8");
+    const plan = parseTasksMarkdown(markdown);
+
+    // Build code→id map for all tasks currently in state
+    const existingCodeToId = new Map<string, string>();
+    for (const phase of state.phases) {
+      for (const task of phase.tasks) {
+        const code = task.code ?? extractTaskCode(task.title);
+        if (code) existingCodeToId.set(code, task.id);
+      }
+    }
+
+    // Assign IDs to new tasks not yet in state
+    const allCodeToId = new Map<string, string>(existingCodeToId);
+    for (const parsedPhase of plan.phases) {
+      for (const pt of parsedPhase.tasks) {
+        if (!allCodeToId.has(pt.code)) {
+          allCodeToId.set(pt.code, randomUUID());
+        }
+      }
+    }
+
+    let addedPhases = 0;
+    let addedTasks = 0;
+    let updatedTasks = 0;
+    const nextPhases = [...state.phases];
+
+    for (const parsedPhase of plan.phases) {
+      const resolvedTasks = parsedPhase.tasks.map((pt) => ({
+        ...pt,
+        id: allCodeToId.get(pt.code)!,
+        resolvedDeps: pt.dependencies
+          .map((code) => allCodeToId.get(code))
+          .filter((id): id is string => typeof id === "string"),
+      }));
+
+      const existingPhaseIndex = nextPhases.findIndex(
+        (p) => p.branchName === parsedPhase.branchName,
+      );
+
+      if (existingPhaseIndex < 0) {
+        nextPhases.push(
+          PhaseSchema.parse({
+            id: randomUUID(),
+            name: parsedPhase.name,
+            branchName: parsedPhase.branchName,
+            status: "PLANNING",
+            tasks: resolvedTasks.map((t) =>
+              TaskSchema.parse({
+                id: t.id,
+                code: t.code,
+                title: t.title,
+                description: t.description,
+                status: t.status,
+                dependencies: t.resolvedDeps,
+              }),
+            ),
+          }),
+        );
+        addedPhases += 1;
+        addedTasks += resolvedTasks.length;
+        continue;
+      }
+
+      const existingPhase = nextPhases[existingPhaseIndex];
+      const existingByCode = new Map<string, Task>();
+      for (const task of existingPhase.tasks) {
+        const code = task.code ?? extractTaskCode(task.title);
+        if (code) existingByCode.set(code, task);
+      }
+
+      const nextTasks = [...existingPhase.tasks];
+      for (const resolved of resolvedTasks) {
+        const existing = existingByCode.get(resolved.code);
+        if (!existing) {
+          nextTasks.push(
+            TaskSchema.parse({
+              id: resolved.id,
+              code: resolved.code,
+              title: resolved.title,
+              description: resolved.description,
+              status: resolved.status,
+              dependencies: resolved.resolvedDeps,
+            }),
+          );
+          addedTasks += 1;
+        } else {
+          const idx = nextTasks.findIndex((t) => t.id === existing.id);
+          if (idx >= 0) {
+            nextTasks[idx] = {
+              ...existing,
+              code: resolved.code,
+              title: resolved.title,
+              description: resolved.description,
+              status: resolved.status,
+              dependencies: resolved.resolvedDeps,
+            };
+            updatedTasks += 1;
+          }
+        }
+      }
+
+      nextPhases[existingPhaseIndex] = { ...existingPhase, tasks: nextTasks };
+    }
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+
+    return {
+      state: nextState,
+      addedPhases,
+      addedTasks,
+      updatedTasks,
+      sourceFilePath: tasksMdPath,
+    };
+  }
+
+  private async runSideEffectProbe(
+    cwd: string,
+    args: string[],
+  ): Promise<SideEffectProbeRunResult> {
+    return this.runCommandProbe(cwd, "git", args);
+  }
+
+  private async runCommandProbe(
+    cwd: string,
+    command: string,
+    args: string[],
+  ): Promise<SideEffectProbeRunResult> {
+    try {
+      const result = await this.sideEffectProbeRunner.run({
+        command,
+        args,
+        cwd,
+      });
+      return {
+        success: true,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        details: "ok",
+      };
+    } catch (error) {
+      const failureKind = classifyAdapterFailure(error);
+      if (error instanceof ProcessExecutionError) {
+        const stderr = error.result.stderr.trim();
+        const details = stderr
+          ? `${command} ${args.join(" ")} failed: ${stderr}`
+          : `${command} ${args.join(" ")} failed with exit code ${error.result.exitCode}.`;
+        return {
+          success: false,
+          stdout: error.result.stdout,
+          stderr: error.result.stderr,
+          details,
+          failureKind,
+        };
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        details: `${command} ${args.join(" ")} failed: ${message}`,
+        failureKind,
+      };
+    }
+  }
+
+  private async runGitHubRuntimeCapabilityPreflight(input: {
+    phaseId: string;
+    taskId: string;
+    projectName?: string;
+  }): Promise<GitHubCapabilityPreflightFailure | undefined> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find(
+      (candidate) => candidate.id === input.phaseId,
+    );
+    if (!phase) {
+      throw new Error(
+        `Phase not found while running GitHub capability preflight: ${input.phaseId}`,
+      );
+    }
+
+    const task = phase.tasks.find((candidate) => candidate.id === input.taskId);
+    if (!task) {
+      throw new Error(
+        `Task not found while running GitHub capability preflight: ${input.taskId}`,
+      );
+    }
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    const githubContracts = resolveGitHubBoundContracts(contracts);
+    if (githubContracts.length === 0) {
+      return undefined;
+    }
+
+    const probes: SideEffectProbeResult[] = [];
+    const missingSideEffects: string[] = [];
+    const envFingerprint: Record<string, string> = {
+      hostname: hostname(),
+      platform: process.platform,
+      arch: process.arch,
+    };
+
+    let adapterFailureKind: AdapterFailureKind = "unknown";
+    const setFailureKind = (kind?: AdapterFailureKind) => {
+      if (!kind || kind === "unknown" || adapterFailureKind !== "unknown") {
+        return;
+      }
+      adapterFailureKind = kind;
+    };
+
+    // 1. Tooling Probe
+    const ghToolingProbe = await this.runCommandProbe(state.rootDir, "gh", [
+      "--version",
+    ]);
+    if (ghToolingProbe.success) {
+      const versionLine =
+        ghToolingProbe.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length > 0) ?? "gh is available.";
+      probes.push({
+        name: "gh --version",
+        success: true,
+        details: `Tooling available: ${versionLine}`,
+      });
+      envFingerprint["gh_version"] = versionLine;
+    } else {
+      setFailureKind(ghToolingProbe.failureKind);
+      probes.push({
+        name: "gh --version",
+        success: false,
+        details: ghToolingProbe.details,
+      });
+      missingSideEffects.push(
+        `Tooling preflight failed: ${ghToolingProbe.details} Install GitHub CLI and ensure 'gh' is available on PATH.`,
+      );
+    }
+
+    // 2. Auth Probe
+    if (!ghToolingProbe.success) {
+      probes.push({
+        name: "gh auth status --hostname github.com",
+        success: false,
+        details:
+          "Skipped because GitHub CLI tooling check failed (gh is unavailable).",
+      });
+    } else {
+      const ghAuthProbe = await this.runCommandProbe(state.rootDir, "gh", [
+        "auth",
+        "status",
+        "--hostname",
+        "github.com",
+      ]);
+      if (ghAuthProbe.success) {
+        probes.push({
+          name: "gh auth status --hostname github.com",
+          success: true,
+          details: "GitHub CLI authentication is valid for github.com.",
+        });
+        const userMatch = /as ([a-zA-Z0-9-]+)/.exec(
+          ghAuthProbe.stderr + ghAuthProbe.stdout,
+        );
+        if (userMatch) {
+          envFingerprint["gh_user"] = userMatch[1];
+        }
+      } else {
+        setFailureKind(ghAuthProbe.failureKind);
+        probes.push({
+          name: "gh auth status --hostname github.com",
+          success: false,
+          details: ghAuthProbe.details,
+        });
+        missingSideEffects.push(
+          `Auth preflight failed: ${ghAuthProbe.details} Run 'gh auth login --hostname github.com' and verify access to this repository.`,
+        );
+      }
+    }
+
+    // 3. Git Identity Probes
+    const gitNameProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "config",
+      "user.name",
+    ]);
+    const gitEmailProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "config",
+      "user.email",
+    ]);
+    if (gitNameProbe.success && gitNameProbe.stdout.trim()) {
+      envFingerprint["git_user_name"] = gitNameProbe.stdout.trim();
+    }
+    if (gitEmailProbe.success && gitEmailProbe.stdout.trim()) {
+      envFingerprint["git_user_email"] = gitEmailProbe.stdout.trim();
+    }
+
+    // 4. Network/Access Probe (Corrected semantics: use actual remote if available)
+    const remoteProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    const remoteUrl = remoteProbe.success
+      ? remoteProbe.stdout.trim()
+      : "https://github.com/github/gitignore.git";
+
+    const networkProbe = await this.runCommandProbe(state.rootDir, "git", [
+      "ls-remote",
+      remoteUrl,
+      "HEAD",
+    ]);
+
+    if (networkProbe.success && networkProbe.stdout.trim().length > 0) {
+      probes.push({
+        name: `git ls-remote ${remoteUrl}`,
+        success: true,
+        details: `Network reachability and access to ${remoteUrl} verified.`,
+      });
+    } else {
+      setFailureKind(networkProbe.failureKind);
+      const isAuthIssue =
+        networkProbe.stderr.includes("Permission denied") ||
+        networkProbe.stderr.includes(
+          "fatal: Could not read from remote repository",
+        );
+
+      probes.push({
+        name: `git ls-remote ${remoteUrl}`,
+        success: false,
+        details: networkProbe.success
+          ? `git ls-remote returned no output for ${remoteUrl}.`
+          : networkProbe.details,
+      });
+
+      const diagnostic = isAuthIssue
+        ? `Access denied to ${remoteUrl}. Verify your SSH keys or HTTPS credentials and repository permissions.`
+        : `Network preflight failed for ${remoteUrl}: ${networkProbe.details} Verify outbound connectivity to github.com (VPN/proxy/firewall).`;
+
+      missingSideEffects.push(diagnostic);
+    }
+
+    if (missingSideEffects.length === 0) {
+      return undefined;
+    }
+
+    return {
+      completionVerification: TaskCompletionVerificationSchema.parse({
+        checkedAt: new Date().toISOString(),
+        contracts: githubContracts,
+        status: "FAILED",
+        probes,
+        missingSideEffects,
+        envFingerprint,
+      }),
+      adapterFailureKind,
+    };
+  }
+
+  private async verifyTaskCompletionSideEffects(input: {
+    phaseId: string;
+    taskId: string;
+    projectName?: string;
+  }): Promise<TaskCompletionVerification | undefined> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find(
+      (candidate) => candidate.id === input.phaseId,
+    );
+    if (!phase) {
+      throw new Error(
+        `Phase not found while verifying completion side effects: ${input.phaseId}`,
+      );
+    }
+
+    const task = phase.tasks.find((candidate) => candidate.id === input.taskId);
+    if (!task) {
+      throw new Error(
+        `Task not found while verifying completion side effects: ${input.taskId}`,
+      );
+    }
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    if (contracts.length === 0) {
+      return undefined;
+    }
+
+    const probes: SideEffectProbeResult[] = [];
+    const missingSideEffects: string[] = [];
+
+    if (contracts.includes("PR_CREATION")) {
+      let prUrl = phase.prUrl?.trim();
+      // If prUrl is not recorded yet, try to discover it from GitHub by branch name
+      if (!prUrl) {
+        try {
+          const ghProbe = await this.runCommandProbe(state.rootDir, "gh", [
+            "pr",
+            "list",
+            "--head",
+            phase.branchName,
+            "--json",
+            "url",
+            "--jq",
+            ".[0].url",
+          ]);
+          if (ghProbe.success && ghProbe.stdout.trim().startsWith("http")) {
+            prUrl = ghProbe.stdout.trim();
+            // Persist the discovered URL so subsequent checks and the CI loop can use it
+            const engine2 = await this.getEngine(input.projectName);
+            const state2 = await engine2.readProjectState();
+            const phaseIndex = state2.phases.findIndex(
+              (p) => p.id === phase.id,
+            );
+            if (phaseIndex >= 0) {
+              const nextPhases = [...state2.phases];
+              nextPhases[phaseIndex] = PhaseSchema.parse({
+                ...state2.phases[phaseIndex],
+                prUrl,
+              });
+              await engine2.writeProjectState({
+                ...state2,
+                phases: nextPhases,
+              });
+            }
+          }
+        } catch {
+          // gh lookup failed; fall through to missing-prUrl failure
+        }
+      }
+      if (!prUrl) {
+        probes.push({
+          name: "phase.prUrl",
+          success: false,
+          details:
+            "Missing phase PR URL and no open PR found for branch on GitHub.",
+        });
+        missingSideEffects.push(
+          "PR creation was not verified because phase.prUrl is missing.",
+        );
+      } else {
+        try {
+          parsePullRequestNumberFromUrl(prUrl);
+          probes.push({
+            name: "phase.prUrl",
+            success: true,
+            details: `PR URL present: ${prUrl}`,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          probes.push({
+            name: "phase.prUrl",
+            success: false,
+            details: `Invalid PR URL: ${prUrl}`,
+          });
+          missingSideEffects.push(
+            `PR creation was not verified because phase.prUrl is invalid (${message}).`,
+          );
+        }
+      }
+    }
+
+    if (contracts.includes("REMOTE_PUSH")) {
+      const branchProbe = await this.runSideEffectProbe(state.rootDir, [
+        "branch",
+        "--show-current",
+      ]);
+      const branchName = branchProbe.stdout.trim();
+      if (!branchProbe.success || !branchName) {
+        probes.push({
+          name: "git branch --show-current",
+          success: false,
+          details: branchProbe.success
+            ? "Current branch is empty."
+            : branchProbe.details,
+        });
+        missingSideEffects.push(
+          "Remote push was not verified because current branch could not be resolved.",
+        );
+      } else {
+        probes.push({
+          name: "git branch --show-current",
+          success: true,
+          details: `Current branch: ${branchName}`,
+        });
+
+        const upstreamProbe = await this.runSideEffectProbe(state.rootDir, [
+          "for-each-ref",
+          "--format=%(upstream:short)",
+          `refs/heads/${branchName}`,
+        ]);
+        const upstream = upstreamProbe.stdout.trim();
+        if (!upstreamProbe.success || !upstream) {
+          probes.push({
+            name: "git upstream",
+            success: false,
+            details: upstreamProbe.success
+              ? "No upstream configured."
+              : upstreamProbe.details,
+          });
+          missingSideEffects.push(
+            `Remote push was not verified because branch "${branchName}" has no upstream tracking ref.`,
+          );
+        } else {
+          probes.push({
+            name: "git upstream",
+            success: true,
+            details: `Upstream: ${upstream}`,
+          });
+        }
+
+        const remoteHeadProbe = await this.runSideEffectProbe(state.rootDir, [
+          "ls-remote",
+          "--heads",
+          "origin",
+          branchName,
+        ]);
+        const hasRemoteHead = remoteHeadProbe.stdout.trim().length > 0;
+        if (!remoteHeadProbe.success || !hasRemoteHead) {
+          probes.push({
+            name: "git ls-remote",
+            success: false,
+            details: remoteHeadProbe.success
+              ? `Remote branch origin/${branchName} not found.`
+              : remoteHeadProbe.details,
+          });
+          missingSideEffects.push(
+            `Remote push was not verified because origin/${branchName} is missing.`,
+          );
+        } else {
+          probes.push({
+            name: "git ls-remote",
+            success: true,
+            details: `Remote branch origin/${branchName} exists.`,
+          });
+        }
+      }
+    }
+
+    if (contracts.includes("CI_TRIGGERED_UPDATE")) {
+      const hasSignal = hasCiTriggeredUpdateSignal(phase);
+      probes.push({
+        name: "phase CI signal",
+        success: hasSignal,
+        details: hasSignal
+          ? `Detected CI signal from phase status ${phase.status}.`
+          : "No CI signal detected (status/context/CI_FIX task).",
+      });
+      if (!hasSignal) {
+        missingSideEffects.push(
+          "CI-triggered update was not verified because phase has no CI signal.",
+        );
+      }
+    }
+
+    const verification = TaskCompletionVerificationSchema.parse({
+      checkedAt: new Date().toISOString(),
+      contracts,
+      status: missingSideEffects.length === 0 ? "PASSED" : "FAILED",
+      probes,
+      missingSideEffects,
+    });
+    return verification;
   }
 
   private async executeTaskRun(input: {
@@ -891,9 +1913,46 @@ export class ControlCenterService {
     assignee: CLIAdapterId;
     prompt: string;
     resume: boolean;
+    startedFromStatus: Task["status"];
+    resultContextPrefix?: string;
     projectName?: string;
+    cwd?: string;
   }): Promise<void> {
     try {
+      const capabilityPreflight =
+        await this.runGitHubRuntimeCapabilityPreflight({
+          phaseId: input.phaseId,
+          taskId: input.taskId,
+          projectName: input.projectName,
+        });
+      if (capabilityPreflight) {
+        try {
+          await this.updateTaskResult(
+            input.phaseId,
+            input.taskId,
+            "FAILED",
+            undefined,
+            summarizeCapabilityPreflightFailure(
+              capabilityPreflight.completionVerification,
+            ),
+            "AGENT_FAILURE",
+            capabilityPreflight.adapterFailureKind,
+            input.startedFromStatus,
+            capabilityPreflight.completionVerification,
+            input.projectName,
+          );
+        } catch (updateError) {
+          const message =
+            updateError instanceof Error
+              ? updateError.message
+              : String(updateError);
+          console.error(
+            `Failed to persist FAILED preflight state for task ${input.taskId}: ${message}`,
+          );
+        }
+        return;
+      }
+
       const result = await this.runInternalWork({
         assignee: input.assignee,
         prompt: input.prompt,
@@ -901,19 +1960,55 @@ export class ControlCenterService {
         phaseId: input.phaseId,
         taskId: input.taskId,
         resume: input.resume,
+        cwd: input.cwd,
       });
 
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
         .filter((value) => value.length > 0)
         .join("\n\n");
+      const completionVerification = await this.verifyTaskCompletionSideEffects(
+        {
+          phaseId: input.phaseId,
+          taskId: input.taskId,
+          projectName: input.projectName,
+        },
+      );
 
       try {
+        if (completionVerification?.status === "FAILED") {
+          await this.updateTaskResult(
+            input.phaseId,
+            input.taskId,
+            "FAILED",
+            undefined,
+            summarizeVerificationFailure(completionVerification),
+            "UNKNOWN",
+            undefined,
+            input.startedFromStatus,
+            completionVerification,
+            input.projectName,
+          );
+          return;
+        }
+
+        const resultContextBody =
+          combinedResult || "Task finished without textual output.";
+        const resultContext =
+          input.resultContextPrefix &&
+          input.resultContextPrefix.trim().length > 0
+            ? `${input.resultContextPrefix.trimEnd()}\n\n${resultContextBody}`
+            : resultContextBody;
+
         await this.updateTaskResult(
           input.phaseId,
           input.taskId,
           "DONE",
-          combinedResult || "Task finished without textual output.",
+          resultContext,
           undefined,
+          undefined,
+          undefined,
+          input.startedFromStatus,
+          completionVerification,
           input.projectName,
         );
       } catch (updateError) {
@@ -927,6 +2022,8 @@ export class ControlCenterService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const category = (error as any).category;
+      const adapterFailureKind = (error as any).adapterFailureKind;
       try {
         await this.updateTaskResult(
           input.phaseId,
@@ -934,6 +2031,10 @@ export class ControlCenterService {
           "FAILED",
           undefined,
           message,
+          category,
+          adapterFailureKind,
+          input.startedFromStatus,
+          undefined,
           input.projectName,
         );
       } catch (updateError) {
@@ -954,6 +2055,10 @@ export class ControlCenterService {
     status: "DONE" | "FAILED",
     resultContext: string | undefined,
     errorLogs: string | undefined,
+    errorCategory: any, // Use any for now or import ExceptionCategory
+    adapterFailureKind: any,
+    startedFromStatus: Task["status"],
+    completionVerification: TaskCompletionVerification | undefined,
     projectName?: string,
   ): Promise<void> {
     const engine = await this.getEngine(projectName);
@@ -976,18 +2081,31 @@ export class ControlCenterService {
     const normalizedErrorLogs = errorLogs
       ? truncateForState(errorLogs)
       : undefined;
+    const normalizedCompletionVerification = completionVerification
+      ? TaskCompletionVerificationSchema.parse(completionVerification)
+      : undefined;
+    const currentVerificationJson = currentTask.completionVerification
+      ? JSON.stringify(currentTask.completionVerification)
+      : undefined;
+    const nextVerificationJson = normalizedCompletionVerification
+      ? JSON.stringify(normalizedCompletionVerification)
+      : undefined;
 
     if (currentTask.status === status) {
       if (status === "DONE") {
         if (
-          !normalizedResultContext ||
-          currentTask.resultContext === normalizedResultContext
+          (!normalizedResultContext ||
+            currentTask.resultContext === normalizedResultContext) &&
+          currentVerificationJson === nextVerificationJson
         ) {
           return;
         }
       } else if (
-        !normalizedErrorLogs ||
-        currentTask.errorLogs === normalizedErrorLogs
+        (!normalizedErrorLogs ||
+          currentTask.errorLogs === normalizedErrorLogs) &&
+        currentTask.errorCategory === errorCategory &&
+        (currentTask as any).adapterFailureKind === adapterFailureKind &&
+        currentVerificationJson === nextVerificationJson
       ) {
         return;
       }
@@ -1009,20 +2127,152 @@ export class ControlCenterService {
         status === "FAILED"
           ? (normalizedErrorLogs ?? currentTask.errorLogs)
           : undefined,
+      errorCategory:
+        status === "FAILED"
+          ? (errorCategory ?? currentTask.errorCategory)
+          : undefined,
+      adapterFailureKind:
+        status === "FAILED"
+          ? (adapterFailureKind ?? (currentTask as any).adapterFailureKind)
+          : undefined,
+      completionVerification: normalizedCompletionVerification,
     });
 
     const nextPhases = [...state.phases];
     const nextTasks = [...phase.tasks];
     nextTasks[taskIndex] = updatedTask;
-    nextPhases[phaseIndex] = {
+    const shouldRecoverFromCiFailed =
+      status === "DONE" &&
+      phase.status === "CI_FAILED" &&
+      isRecoveringFixTaskStatus(startedFromStatus);
+    nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
+      status: shouldRecoverFromCiFailed ? "CODING" : phase.status,
+      ciStatusContext: shouldRecoverFromCiFailed
+        ? undefined
+        : phase.ciStatusContext,
       tasks: nextTasks,
-    };
+    });
 
-    await engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+  }
+
+  /**
+   * Reconciles any IN_PROGRESS tasks across all phases back to TODO.
+   *
+   * Called at startup (before the phase execution loop begins) to recover from
+   * a prior process crash that left tasks stuck in IN_PROGRESS. Returns the
+   * number of tasks that were reset.
+   */
+  async reconcileInProgressTasks(projectName?: string): Promise<number> {
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
+
+    let reconcileCount = 0;
+    const nextPhases = state.phases.map((phase) => {
+      let phaseChanged = false;
+      const nextTasks = phase.tasks.map((task) => {
+        if (task.status !== "IN_PROGRESS") {
+          return task;
+        }
+        reconcileCount += 1;
+        phaseChanged = true;
+        return TaskSchema.parse({
+          ...task,
+          status: "TODO",
+          resultContext: undefined,
+          errorLogs: undefined,
+          errorCategory: undefined,
+          adapterFailureKind: undefined,
+          completionVerification: undefined,
+        });
+      });
+
+      if (!phaseChanged) {
+        return phase;
+      }
+
+      return { ...phase, tasks: nextTasks };
+    });
+
+    if (reconcileCount === 0) {
+      return 0;
+    }
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return reconcileCount;
+  }
+
+  /**
+   * Resets a single IN_PROGRESS task back to TODO by task ID.
+   *
+   * Called when a UI-initiated agent restart abandons the previous run so the
+   * task is not left permanently stuck in IN_PROGRESS. Idempotent: if the task
+   * is not found or is not IN_PROGRESS, the call is a no-op.
+   */
+  async reconcileInProgressTaskToTodo(input: {
+    taskId: string;
+    projectName?: string;
+  }): Promise<void> {
+    const taskId = input.taskId.trim();
+    if (!taskId) {
+      return;
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+
+    let phaseIndex = -1;
+    let taskIndex = -1;
+    for (let index = 0; index < state.phases.length; index += 1) {
+      const foundTaskIndex = state.phases[index].tasks.findIndex(
+        (task) => task.id === taskId,
+      );
+      if (foundTaskIndex >= 0) {
+        phaseIndex = index;
+        taskIndex = foundTaskIndex;
+        break;
+      }
+    }
+
+    if (phaseIndex < 0 || taskIndex < 0) {
+      return;
+    }
+
+    const phase = state.phases[phaseIndex];
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "IN_PROGRESS") {
+      return;
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "TODO",
+      resultContext: undefined,
+      errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      completionVerification: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = { ...phase, tasks: nextTasks };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
   }
 
   async failTaskIfInProgress(input: {
@@ -1068,6 +2318,7 @@ export class ControlCenterService {
       status: "FAILED",
       resultContext: undefined,
       errorLogs: truncateForState(reason),
+      completionVerification: undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -1078,10 +2329,12 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async resetTaskToTodo(
@@ -1116,9 +2369,9 @@ export class ControlCenterService {
       throw new Error(`Task not found: ${taskId}`);
     }
     const task = phase.tasks[taskIndex];
-    if (task.status !== "FAILED") {
+    if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
       throw new Error(
-        `Task must be FAILED before reset. Current status: ${task.status}`,
+        `Task must be FAILED or DEAD_LETTER before reset. Current status: ${task.status}`,
       );
     }
 
@@ -1130,6 +2383,9 @@ export class ControlCenterService {
       assignee: "UNASSIGNED",
       resultContext: undefined,
       errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      completionVerification: undefined,
     });
 
     const nextPhases = [...state.phases];
@@ -1140,9 +2396,74 @@ export class ControlCenterService {
       tasks: nextTasks,
     };
 
-    return engine.writeProjectState({
+    const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
     });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async markTaskDeadLetter(
+    input: MarkTaskDeadLetterInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const reason = input.reason.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!reason) {
+      throw new Error("reason must not be empty.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot mark a running task as DEAD_LETTER.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "FAILED") {
+      throw new Error(
+        `Task must be FAILED before dead-lettering. Current status: ${task.status}`,
+      );
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "DEAD_LETTER",
+      resultContext: reason,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 }

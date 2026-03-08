@@ -1,46 +1,54 @@
 # IxADO Development Roadmap
 
-## Phase 1: Foundation & State Management
-- [x] Initialize TypeScript/Bun project.
-- [x] Define core Zod schemas for `Task`, `Phase`, `ProjectState`, and `CLIAdapter`.
-- [ ] Build the file-backed State Engine to read/write task lists.
+This roadmap contains only forward-looking work from the current project state.
+Done/completed history is tracked in `TASKS.md`.
 
-## Phase 2: Git & Subprocess Orchestration
-- [ ] Implement the async Process Manager using child processes.
-- [ ] Create the `GitManager` to handle automated branching via shell commands.
-- [ ] Create the `GitHubManager` to handle PR creation and CI status polling via `gh` CLI.
+## Guiding Scope
 
-## Phase 3: Telegram Command Center
-- [ ] Install `grammY` and configure strict owner-ID environment variables.
-- [ ] Implement the `src/bot/telegram.ts` adapter.
-- [ ] Build read-only commands: `/status` and `/tasks`.
-- [ ] Wire the bot instance to run alongside the core engine in `src/cli/index.ts`.
+- Keep roadmap strategic and concise.
+- Derive executable implementation backlog in `TASKS.md`.
+- Track defects and evidence in `BUGS.md`.
 
-## Phase 4: Vendor Adapters
-- [ ] Implement the `MockCLIAdapter` for initial testing.
-- [ ] Implement `ClaudeAdapter`.
-  - We need always --dangerously-skip-permissions
-- [ ] Implement `GeminiAdapter`.
-  - We need always --yolo 
-- [ ] Implement `CodexAdapter`.
-  - We need always--dangerously-bypass-approvals-and-sandbox
-- [ ] Track usage and quota by using the optional available codexbar CLI (codexbar --source cli --provider all)
-  - poll every 5 min, keep track of results
+## Major Item 1: Reliability & Traceability Enhancements
 
-## Phase 5: The CI Execution Loop
-- [ ] Connect the State Engine to the Process Manager.
-- [ ] Implement the "Phase Start -> Branch" trigger.
-- [ ] Implement the task execution loop ("read task -> spawn adapter -> await result").
-- [ ] Implement the automated PR Review and CI polling loop.
-- [ ] Build the iterative fix loop that reads failing CI logs and spawns workers to fix them.
-- [ ] Add Telegram push notifications for CI failures and PR readiness.
-- [ ] Use usage and quota data for smart delegation of tasks (if available) 
+Goal: Harden failure handling and improve end-to-end traceability of orchestrated work.
 
-## Phase 6: Web Interface
-- [ ] Create a simple, local web interface as a control center for Phase/Task Creating and Tracking
-- [ ] Show current running agents and assigned tasks
-- [ ] Make it possible to kill/restart agents
-- [ ] Show usage and quota data (if available)
+- Dead-letter queue for tasks that exhaust all recovery attempts: surface them explicitly for manual review instead of silent failure.
+- Circuit breaker per adapter: auto-pause an adapter after a configurable failure threshold and route to fallback, resuming after a cooldown window.
+- Inject git trailers (`Originated-By: <phase-id>/<task-id>`, `Executed-By: <adapter>`) into commits for full traceability from commit history back to the orchestration context.
 
-## Phase 7: Polish & Distribution
-- [x] Package for global distribution as a single binary using Bun.
+## Major Item 2: Deliberation Mode
+
+Goal: Prevent costly mistakes on high-risk tasks by requiring multi-pass review before implementation.
+
+- Add an opt-in council mode that runs propose → critique → refine → implement passes using configurable adapter pairings.
+- Allow tasks to be tagged `deliberate: true` to trigger council automatically.
+- Surface deliberation summary in PR description and Telegram notifications so reviewers see the reasoning, not just the diff.
+
+## Major Item 3: Autonomous Task Discovery
+
+Goal: Reduce manual backlog grooming by surfacing actionable work automatically.
+
+- Scheduled/nightly scan of TODO/FIXME comments and open issues, producing ranked task candidates.
+- Dry-run mode: preview discovered tasks and their priority scores before any queuing.
+- Configurable priority weights (recency, frequency, tag filters) so noise stays low.
+
+## Major Item 4: Parallel Phase Execution via Worktrees
+
+Goal: Allow multiple phases to run concurrently, each isolated in its own git worktree, without interfering with the main working tree or each other.
+
+- Provision a dedicated git worktree per phase under `.ixado/worktrees/<phase-id>/` and execute all phase tasks inside it.
+- Make the execution run lock per-phase (not global) so multiple `PhaseRunner` instances can coexist.
+- Guard `StateEngine` writes against concurrent writers from parallel phase processes.
+- Expand `activePhaseId` to `activePhaseIds` (set) in project state, with CLI support to add/remove phases from the active set.
+- Add `ixado worktree list|prune` for operator visibility and orphan cleanup.
+- Tear down worktrees automatically on phase completion or terminal failure.
+
+## Major Item 5: Semantic Task Routing
+
+Goal: Route tasks to the best-fit adapter automatically based on their nature, reducing manual assignee decisions.
+
+- Define a task-type taxonomy (e.g., `implementation`, `code-review`, `test-writing`, `security-audit`, `documentation`) with configurable adapter affinities per type.
+- Classify tasks at creation time using local heuristics (title/description keywords, tags) with zero extra agent calls.
+- Allow per-project affinity overrides and learn from outcomes to refine routing over time.
+- Fall back to the default assignee when no affinity match is found, preserving existing behavior.

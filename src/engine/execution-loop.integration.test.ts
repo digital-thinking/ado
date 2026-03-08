@@ -7,6 +7,21 @@ import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
 import { runTesterWorkflow } from "./tester-workflow";
 
+const DEFAULT_PULL_REQUEST_SETTINGS = {
+  defaultTemplatePath: null,
+  templateMappings: [],
+  labels: [],
+  assignees: [],
+  createAsDraft: false,
+  markReadyOnApproval: false,
+};
+
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy:
+    "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+  executedBy: "CODEX_CLI",
+};
+
 const TEST_PHASE: Phase = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Phase 5: CI Execution Loop",
@@ -19,6 +34,9 @@ describe("execution loop integration", () => {
   test("runs tester, creates PR, and completes review validation", async () => {
     const runner = new MockProcessRunner([
       { stdout: "tests passed\n" },
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "phase-5-ci-execution-loop\n" },
       { stdout: "" },
       { stdout: "https://github.com/org/repo/pull/555\n" },
@@ -48,8 +66,11 @@ describe("execution loop integration", () => {
     const ciResult = await runCiIntegration({
       phaseId: TEST_PHASE.id,
       phaseName: TEST_PHASE.name,
+      tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
+      pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {
@@ -100,8 +121,11 @@ describe("execution loop integration", () => {
       runCiIntegration({
         phaseId: TEST_PHASE.id,
         phaseName: TEST_PHASE.name,
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: null,
         policy: {

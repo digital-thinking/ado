@@ -1,53 +1,133 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { TestSandbox } from "./test-helpers";
 
 import {
   DEFAULT_CLI_SETTINGS,
   loadCliSettings,
+  resolveOnboardSettingsFilePath,
+  resolveOnboardSoulFilePath,
+  resolveSettingsFilePath,
   saveSoulFile,
   runOnboard,
   saveCliSettings,
 } from "./settings";
 
 const DEFAULT_AGENT_SETTINGS = {
-  CODEX_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  CLAUDE_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  GEMINI_CLI: { enabled: true, timeoutMs: 3_600_000 },
-  MOCK_CLI: { enabled: true, timeoutMs: 3_600_000 },
+  CODEX_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
+    bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
+  },
+  CLAUDE_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
+    bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
+  },
+  GEMINI_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
+    bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
+  },
+  MOCK_CLI: {
+    enabled: true,
+    timeoutMs: 3_600_000,
+    startupSilenceTimeoutMs: 60_000,
+    bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
+  },
 };
 
 const DEFAULT_LOOP_SETTINGS = {
   autoMode: false,
   countdownSeconds: 10,
-  testerCommand: "npm",
-  testerArgs: ["run", "test"],
+  testerCommand: null,
+  testerArgs: null,
   testerTimeoutMs: 600000,
   ciEnabled: false,
   ciBaseBranch: "main",
   validationMaxRetries: 3,
+  ciFixMaxFanOut: 10,
+  ciFixMaxDepth: 3,
+  deliberation: {
+    reviewerAdapter: "CODEX_CLI" as const,
+    maxRefinePasses: 1,
+  },
+  pullRequest: {
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  },
+};
+const DEFAULT_EXCEPTION_RECOVERY_SETTINGS = {
+  maxAttempts: 1,
 };
 const DEFAULT_USAGE_SETTINGS = {
   codexbarEnabled: true,
 };
+const DEFAULT_DISCOVERY_SETTINGS = {
+  includePatterns: ["**/*"],
+  excludePatterns: [
+    ".git/**",
+    ".ixado/**",
+    "node_modules/**",
+    "dist/**",
+    "coverage/**",
+  ],
+  priorityWeights: {
+    recency: 0.4,
+    frequency: 0.3,
+    tags: 0.3,
+  },
+  maxCandidates: 25,
+};
+const DEFAULT_WORKTREES_SETTINGS = {
+  enabled: false,
+  baseDir: ".ixado/worktrees",
+};
+const DEFAULT_TELEGRAM_NOTIFICATIONS = {
+  level: "all" as const,
+  suppressDuplicates: true,
+};
 
 describe("cli settings", () => {
-  let sandboxDir: string;
+  let sandbox: TestSandbox;
   let settingsFilePath: string;
-  let globalSettingsFilePath: string;
   let soulFilePath: string;
   const originalHome = process.env.HOME;
   const originalGlobalConfigPath = process.env.IXADO_GLOBAL_CONFIG_FILE;
+  const originalSettingsPath = process.env.IXADO_SETTINGS_FILE;
+  const originalSoulPath = process.env.IXADO_SOUL_FILE;
 
   beforeEach(async () => {
-    sandboxDir = await mkdtemp(join(tmpdir(), "ixado-cli-settings-"));
-    settingsFilePath = join(sandboxDir, "settings.json");
-    globalSettingsFilePath = join(sandboxDir, "global-config.json");
-    soulFilePath = join(sandboxDir, "SOUL.md");
-    process.env.HOME = sandboxDir;
-    process.env.IXADO_GLOBAL_CONFIG_FILE = globalSettingsFilePath;
+    sandbox = await TestSandbox.create("ixado-cli-settings-");
+    settingsFilePath = join(sandbox.projectDir, "settings.json");
+    soulFilePath = join(sandbox.projectDir, "SOUL.md");
+    process.env.HOME = sandbox.projectDir;
+    process.env.IXADO_GLOBAL_CONFIG_FILE = sandbox.globalConfigFile;
+    delete process.env.IXADO_SETTINGS_FILE;
+    delete process.env.IXADO_SOUL_FILE;
   });
 
   afterEach(async () => {
@@ -61,7 +141,49 @@ describe("cli settings", () => {
     } else {
       process.env.IXADO_GLOBAL_CONFIG_FILE = originalGlobalConfigPath;
     }
-    await rm(sandboxDir, { recursive: true, force: true });
+    if (originalSettingsPath === undefined) {
+      delete process.env.IXADO_SETTINGS_FILE;
+    } else {
+      process.env.IXADO_SETTINGS_FILE = originalSettingsPath;
+    }
+    if (originalSoulPath === undefined) {
+      delete process.env.IXADO_SOUL_FILE;
+    } else {
+      process.env.IXADO_SOUL_FILE = originalSoulPath;
+    }
+    await sandbox.cleanup();
+  });
+
+  test("onboard defaults to global settings path", () => {
+    expect(resolveOnboardSettingsFilePath()).toBe(sandbox.globalConfigFile);
+  });
+
+  test("default settings path resolves to global config path", () => {
+    expect(resolveSettingsFilePath()).toBe(sandbox.globalConfigFile);
+  });
+
+  test("onboard defaults SOUL path next to settings file", () => {
+    expect(resolveOnboardSoulFilePath()).toBe(
+      join(sandbox.projectDir, ".ixado", "SOUL.md"),
+    );
+  });
+
+  test("onboard settings and SOUL paths honor environment overrides", () => {
+    const customSettingsPath = join(
+      sandbox.projectDir,
+      "custom",
+      "settings.json",
+    );
+    const customSoulPath = join(sandbox.projectDir, "custom", "profile.md");
+
+    process.env.IXADO_SETTINGS_FILE = customSettingsPath;
+    expect(resolveOnboardSettingsFilePath()).toBe(customSettingsPath);
+    expect(resolveOnboardSoulFilePath()).toBe(
+      join(sandbox.projectDir, "custom", "SOUL.md"),
+    );
+
+    process.env.IXADO_SOUL_FILE = customSoulPath;
+    expect(resolveOnboardSoulFilePath()).toBe(customSoulPath);
   });
 
   test("returns defaults when settings file is missing", async () => {
@@ -76,11 +198,15 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "abc",
         ownerId: 123,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -92,19 +218,23 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "abc",
         ownerId: 123,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
   });
 
-  test("loads settings from global config when local file is missing", async () => {
+  test("loads defaults when requested settings file is missing", async () => {
     await Bun.write(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       JSON.stringify({
         executionLoop: {
           autoMode: true,
@@ -117,27 +247,20 @@ describe("cli settings", () => {
     );
 
     const settings = await loadCliSettings(settingsFilePath);
-    expect(settings).toEqual({
-      ...DEFAULT_CLI_SETTINGS,
-      internalWork: {
-        assignee: "CLAUDE_CLI",
-      },
-      executionLoop: {
-        ...DEFAULT_CLI_SETTINGS.executionLoop,
-        autoMode: true,
-        countdownSeconds: 42,
-      },
-    });
+    expect(settings).toEqual(DEFAULT_CLI_SETTINGS);
   });
 
-  test("local settings override global config values", async () => {
+  test("loads settings from the provided file only", async () => {
     await Bun.write(
-      globalSettingsFilePath,
+      sandbox.globalConfigFile,
       JSON.stringify({
         executionLoop: {
           testerCommand: "bun",
           testerArgs: ["test"],
           countdownSeconds: 99,
+        },
+        exceptionRecovery: {
+          maxAttempts: 2,
         },
         agents: {
           CODEX_CLI: {
@@ -152,6 +275,9 @@ describe("cli settings", () => {
         executionLoop: {
           countdownSeconds: 3,
         },
+        exceptionRecovery: {
+          maxAttempts: 4,
+        },
         agents: {
           CODEX_CLI: {
             timeoutMs: 7000,
@@ -161,15 +287,36 @@ describe("cli settings", () => {
     );
 
     const settings = await loadCliSettings(settingsFilePath);
-    expect(settings.executionLoop.testerCommand).toBe("bun");
-    expect(settings.executionLoop.testerArgs).toEqual(["test"]);
+    expect(settings.executionLoop.testerCommand).toBeNull();
+    expect(settings.executionLoop.testerArgs).toBeNull();
     expect(settings.executionLoop.countdownSeconds).toBe(3);
+    expect(settings.exceptionRecovery.maxAttempts).toBe(4);
     expect(settings.agents.CODEX_CLI.timeoutMs).toBe(7000);
   });
 
-  test("supports overriding codexbar usage telemetry from global and local config", async () => {
+  test("loads adapter affinities from settings file", async () => {
     await Bun.write(
-      globalSettingsFilePath,
+      settingsFilePath,
+      JSON.stringify({
+        agents: {
+          adapterAffinities: {
+            documentation: "CLAUDE_CLI",
+            "code-review": "GEMINI_CLI",
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.agents.adapterAffinities).toEqual({
+      documentation: "CLAUDE_CLI",
+      "code-review": "GEMINI_CLI",
+    });
+  });
+
+  test("reads codexbar usage telemetry from the provided file only", async () => {
+    await Bun.write(
+      sandbox.globalConfigFile,
       JSON.stringify({
         usage: {
           codexbarEnabled: false,
@@ -187,6 +334,95 @@ describe("cli settings", () => {
 
     const settings = await loadCliSettings(settingsFilePath);
     expect(settings.usage.codexbarEnabled).toBe(true);
+  });
+
+  test("deep-merges executionLoop.pullRequest overrides in a single config file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          pullRequest: {
+            createAsDraft: true,
+            labels: ["ixado"],
+            templateMappings: [
+              {
+                branchPrefix: "phase-23-",
+                templatePath: ".github/pr_phase23.md",
+              },
+            ],
+            assignees: ["octocat"],
+            markReadyOnApproval: true,
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.pullRequest).toEqual({
+      defaultTemplatePath: null,
+      templateMappings: [
+        {
+          branchPrefix: "phase-23-",
+          templatePath: ".github/pr_phase23.md",
+        },
+      ],
+      labels: ["ixado"],
+      assignees: ["octocat"],
+      createAsDraft: true,
+      markReadyOnApproval: true,
+    });
+  });
+
+  test("deep-merges executionLoop.deliberation overrides in a single config file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          deliberation: {
+            maxRefinePasses: 3,
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.deliberation).toEqual({
+      reviewerAdapter: "CODEX_CLI",
+      maxRefinePasses: 3,
+    });
+  });
+
+  test("deep-merges discovery overrides in a single config file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        discovery: {
+          includePatterns: ["src/**/*.ts"],
+          priorityWeights: {
+            tags: 0.9,
+          },
+          maxCandidates: 12,
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.discovery).toEqual({
+      includePatterns: ["src/**/*.ts"],
+      excludePatterns: [
+        ".git/**",
+        ".ixado/**",
+        "node_modules/**",
+        "dist/**",
+        "coverage/**",
+      ],
+      priorityWeights: {
+        recency: 0.4,
+        frequency: 0.3,
+        tags: 0.9,
+      },
+      maxCandidates: 12,
+    });
   });
 
   test("fails for invalid settings json", async () => {
@@ -238,17 +474,57 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "my-token",
         ownerId: 123456,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CLAUDE_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
-        CODEX_CLI: { enabled: true, timeoutMs: 600000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 600000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 600000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 600000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 600000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
       },
     });
     expect(output[0]).toContain("Setup: Telegram mode enables remote");
@@ -294,15 +570,57 @@ describe("cli settings", () => {
 
     expect(settings).toEqual({
       projects: [],
-      telegram: { enabled: false },
+      telegram: {
+        enabled: false,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
+      },
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
-        CODEX_CLI: { enabled: true, timeoutMs: 700000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 700000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 700000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 700000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 700000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
       },
     });
   });
@@ -341,17 +659,57 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "token",
         ownerId: 42,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "MOCK_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
-        CODEX_CLI: { enabled: true, timeoutMs: 800000 },
-        CLAUDE_CLI: { enabled: true, timeoutMs: 800000 },
-        GEMINI_CLI: { enabled: true, timeoutMs: 800000 },
-        MOCK_CLI: { enabled: true, timeoutMs: 800000 },
+        CODEX_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        CLAUDE_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        GEMINI_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
+        MOCK_CLI: {
+          enabled: true,
+          timeoutMs: 800000,
+          startupSilenceTimeoutMs: 60_000,
+          bypassApprovalsAndSandbox: false,
+          circuitBreaker: {
+            failureThreshold: 3,
+            cooldownMs: 300_000,
+          },
+        },
       },
     });
   });
@@ -363,11 +721,15 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "existing-token",
         ownerId: 999,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -389,11 +751,15 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "existing-token",
         ownerId: 999,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "GEMINI_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });
@@ -439,11 +805,15 @@ describe("cli settings", () => {
         enabled: true,
         botToken: "token",
         ownerId: 123,
+        notifications: DEFAULT_TELEGRAM_NOTIFICATIONS,
       },
       internalWork: {
         assignee: "CODEX_CLI",
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
+      discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
+      exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
     });

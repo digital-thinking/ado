@@ -1,6 +1,7 @@
+import { createServer } from "node:net";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -10,6 +11,7 @@ import {
   resolveWebLogFilePath,
   readWebRuntimeRecord,
   resolveWebRuntimeFilePath,
+  startWebDaemon,
   stopWebDaemon,
   writeWebRuntimeRecord,
   type WebRuntimeRecord,
@@ -102,7 +104,7 @@ describe("web-control helpers", () => {
     await writeFile(runtimeFilePath, "{invalid", "utf8");
 
     await expect(readWebRuntimeRecord(runtimeFilePath)).rejects.toThrow(
-      "Web runtime file contains invalid JSON"
+      "Web runtime file contains invalid JSON",
     );
   });
 
@@ -126,9 +128,14 @@ describe("web-control helpers", () => {
     });
 
     const originalKill = process.kill;
-    (process as unknown as { kill: typeof process.kill }).kill = ((pid: number, signal?: number | NodeJS.Signals) => {
+    (process as unknown as { kill: typeof process.kill }).kill = ((
+      pid: number,
+      signal?: number | NodeJS.Signals,
+    ) => {
       if (pid === 999999) {
-        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        const error = new Error(
+          "operation not permitted",
+        ) as NodeJS.ErrnoException;
         error.code = "EPERM";
         throw error;
       }
@@ -152,29 +159,50 @@ describe("web-control helpers", () => {
     await mkdir(dirname(entryScriptPath), { recursive: true });
     await writeFile(entryScriptPath, "console.log('ixado');\n", "utf8");
 
-    expect(buildWebDaemonSpawnArgs(entryScriptPath, 8787)).toEqual([
-      entryScriptPath,
-      "web",
-      "serve",
-      "8787",
-    ]);
+    expect(buildWebDaemonSpawnArgs(entryScriptPath)).toEqual([entryScriptPath]);
   });
 
   test("buildWebDaemonSpawnArgs omits script path when it does not exist", () => {
     const missingEntryScriptPath = join(sandboxDir, "missing-entry.ts");
 
-    expect(buildWebDaemonSpawnArgs(missingEntryScriptPath, 8787)).toEqual([
-      "web",
-      "serve",
-      "8787",
-    ]);
+    expect(buildWebDaemonSpawnArgs(missingEntryScriptPath)).toEqual([]);
   });
 
   test("buildWebDaemonSpawnArgs omits virtual Bun entry path", () => {
-    expect(buildWebDaemonSpawnArgs("/$bunfs/root/ixado", 8787)).toEqual([
-      "web",
-      "serve",
-      "8787",
-    ]);
+    expect(buildWebDaemonSpawnArgs("/$bunfs/root/ixado")).toEqual([]);
+  });
+
+  test("startWebDaemon includes startup error details when child exits", async () => {
+    const holder = createServer();
+    const occupiedPort = await new Promise<number>(
+      (resolvePort, rejectPort) => {
+        holder.once("error", rejectPort);
+        holder.listen(0, "127.0.0.1", () => {
+          const address = holder.address();
+          if (!address || typeof address === "string") {
+            rejectPort(new Error("Failed to resolve occupied test port."));
+            return;
+          }
+          resolvePort(address.port);
+        });
+      },
+    );
+
+    try {
+      await expect(
+        startWebDaemon({
+          cwd: sandboxDir,
+          stateFilePath: join(sandboxDir, "state.json"),
+          settingsFilePath: join(sandboxDir, "settings.json"),
+          projectName: "IxADO",
+          entryScriptPath: resolve("src/cli/index.ts"),
+          port: occupiedPort,
+        }),
+      ).rejects.toThrow("Cause: Failed to start server. Is port");
+    } finally {
+      await new Promise<void>((resolveClose) => {
+        holder.close(() => resolveClose());
+      });
+    }
   });
 });

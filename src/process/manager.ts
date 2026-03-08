@@ -14,6 +14,21 @@ export class ProcessExecutionError extends Error {
 }
 
 /**
+ * Thrown when stdin content is required for a command but the child process
+ * stdin pipe is unavailable (null).  This indicates the process was not
+ * spawned with `stdio: "pipe"` or the runtime withheld the stream.
+ */
+export class ProcessStdinUnavailableError extends Error {
+  constructor(command: string) {
+    super(
+      `stdin pipe is unavailable for command "${command}" but stdin content is required. ` +
+        "Ensure the process is spawned with stdio: 'pipe'.",
+    );
+    this.name = "ProcessStdinUnavailableError";
+  }
+}
+
+/**
  * Thrown when code attempts to spawn a child process without going through an
  * approved command builder (e.g. GitManager, GitHubManager, BaseCliAdapter).
  * Set `approvedCommandBuilder: true` in {@link ProcessRunOptions} only from
@@ -112,9 +127,13 @@ export class ProcessManager {
       });
 
       if (options.stdin !== undefined) {
-        child.stdin?.write(options.stdin);
+        if (!child.stdin) {
+          throw new ProcessStdinUnavailableError(command);
+        }
+        child.stdin.end(options.stdin);
+      } else {
+        child.stdin?.end();
       }
-      child.stdin?.end();
 
       if (options.timeoutMs !== undefined) {
         timeoutHandle = setTimeout(() => {

@@ -51,7 +51,7 @@ describe("StateEngine", () => {
           tasks: [],
         },
       ],
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -74,11 +74,172 @@ describe("StateEngine", () => {
     expect(tasks[0]?.status).toBe("DONE");
   });
 
+  test("maps legacy activePhaseId to activePhaseIds on load", async () => {
+    const phaseId = randomUUID();
+    const now = new Date().toISOString();
+    const engine = new StateEngine(stateFilePath);
+
+    await writeFile(
+      stateFilePath,
+      JSON.stringify(
+        {
+          projectName: "IxADO",
+          rootDir: "C:/Users/chris/scm/ado",
+          phases: [
+            {
+              id: phaseId,
+              name: "Phase Legacy",
+              branchName: "phase-legacy",
+              status: "PLANNING",
+              tasks: [],
+            },
+          ],
+          activePhaseId: phaseId,
+          createdAt: now,
+          updatedAt: now,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const loaded = await engine.readProjectState();
+    expect(loaded.activePhaseIds).toEqual([phaseId]);
+  });
+
+  test("serializes concurrent writeTasks across engine instances for the same file", async () => {
+    const firstEngine = new StateEngine(stateFilePath);
+    const secondEngine = new StateEngine(stateFilePath);
+    const phaseAId = randomUUID();
+    const phaseBId = randomUUID();
+    const taskAId = randomUUID();
+    const taskBId = randomUUID();
+
+    await firstEngine.writeProjectState({
+      projectName: "IxADO",
+      rootDir: "C:/Users/chris/scm/ado",
+      phases: [
+        {
+          id: phaseAId,
+          name: "Phase A",
+          branchName: "phase-a",
+          status: "CODING",
+          tasks: [],
+        },
+        {
+          id: phaseBId,
+          name: "Phase B",
+          branchName: "phase-b",
+          status: "CODING",
+          tasks: [],
+        },
+      ],
+      activePhaseIds: [phaseAId],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await Promise.all([
+      firstEngine.writeTasks(phaseAId, [
+        {
+          id: taskAId,
+          title: "Task A",
+          description: "Update phase A",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+      secondEngine.writeTasks(phaseBId, [
+        {
+          id: taskBId,
+          title: "Task B",
+          description: "Update phase B",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+    ]);
+
+    const loaded = await firstEngine.readProjectState();
+    const phaseA = loaded.phases.find((phase) => phase.id === phaseAId);
+    const phaseB = loaded.phases.find((phase) => phase.id === phaseBId);
+    expect(phaseA?.tasks).toHaveLength(1);
+    expect(phaseA?.tasks[0]?.id).toBe(taskAId);
+    expect(phaseB?.tasks).toHaveLength(1);
+    expect(phaseB?.tasks[0]?.id).toBe(taskBId);
+  });
+
+  test("serializes concurrent writeTasks for three phases without dropping updates", async () => {
+    const firstEngine = new StateEngine(stateFilePath);
+    const secondEngine = new StateEngine(stateFilePath);
+    const thirdEngine = new StateEngine(stateFilePath);
+    const phaseIds = [randomUUID(), randomUUID(), randomUUID()];
+    const taskIds = [randomUUID(), randomUUID(), randomUUID()];
+
+    await firstEngine.writeProjectState({
+      projectName: "IxADO",
+      rootDir: "C:/Users/chris/scm/ado",
+      phases: phaseIds.map((phaseId, index) => ({
+        id: phaseId,
+        name: `Phase ${index + 1}`,
+        branchName: `phase-${index + 1}`,
+        status: "CODING",
+        tasks: [],
+      })),
+      activePhaseIds: [phaseIds[0]],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await Promise.all([
+      firstEngine.writeTasks(phaseIds[0], [
+        {
+          id: taskIds[0],
+          title: "Task A",
+          description: "Update phase A",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+      secondEngine.writeTasks(phaseIds[1], [
+        {
+          id: taskIds[1],
+          title: "Task B",
+          description: "Update phase B",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+      thirdEngine.writeTasks(phaseIds[2], [
+        {
+          id: taskIds[2],
+          title: "Task C",
+          description: "Update phase C",
+          status: "DONE",
+          assignee: "CODEX_CLI",
+          dependencies: [],
+        },
+      ]),
+    ]);
+
+    const loaded = await firstEngine.readProjectState();
+    for (const [index, phaseId] of phaseIds.entries()) {
+      const phase = loaded.phases.find((candidate) => candidate.id === phaseId);
+      expect(phase?.tasks).toHaveLength(1);
+      expect(phase?.tasks[0]?.id).toBe(taskIds[index]);
+    }
+  });
+
   test("fails fast when state file is missing", async () => {
     const engine = new StateEngine(stateFilePath);
 
     await expect(engine.readProjectState()).rejects.toThrow(
-      `State file not found: ${stateFilePath}`
+      `State file not found: ${stateFilePath}`,
     );
   });
 
@@ -87,13 +248,17 @@ describe("StateEngine", () => {
     await writeFile(stateFilePath, "{invalid", "utf8");
 
     await expect(engine.readProjectState()).rejects.toThrow(
-      `State file contains invalid JSON: ${stateFilePath}`
+      `State file contains invalid JSON: ${stateFilePath}`,
     );
   });
 
   test("fails fast when state file does not match schema", async () => {
     const engine = new StateEngine(stateFilePath);
-    await writeFile(stateFilePath, JSON.stringify({ projectName: "IxADO" }), "utf8");
+    await writeFile(
+      stateFilePath,
+      JSON.stringify({ projectName: "IxADO" }),
+      "utf8",
+    );
 
     await expect(engine.readProjectState()).rejects.toThrow();
   });

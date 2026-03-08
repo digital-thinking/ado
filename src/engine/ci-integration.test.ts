@@ -2,22 +2,167 @@ import { describe, expect, test } from "bun:test";
 
 import { OrchestrationAuthorizationDeniedError } from "../security/orchestration-authorizer";
 import { MockProcessRunner } from "../vcs/test-utils";
-import { runCiIntegration } from "./ci-integration";
+import { derivePullRequestMetadata, runCiIntegration } from "./ci-integration";
+import { type Task } from "../types";
+
+const DEFAULT_PULL_REQUEST_SETTINGS = {
+  defaultTemplatePath: null,
+  templateMappings: [],
+  labels: [],
+  assignees: [],
+  createAsDraft: false,
+  markReadyOnApproval: false,
+};
+
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy:
+    "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+  executedBy: "CODEX_CLI",
+};
+
+describe("derivePullRequestMetadata", () => {
+  test("formats title and body with DONE tasks sorted by ID and excludes CI_FIX", () => {
+    const tasks: Task[] = [
+      {
+        id: "t2",
+        title: "Task 2",
+        description: "Desc 2",
+        status: "CI_FIX",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+      {
+        id: "t1",
+        title: "Task 1",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+      {
+        id: "t3",
+        title: "Task 3",
+        description: "Desc 3",
+        status: "TODO",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+    ];
+
+    const { title, body } = derivePullRequestMetadata("Phase 1", tasks);
+
+    expect(title).toBe("Phase 1");
+    expect(body).toContain("## Phase: Phase 1");
+    expect(body).toContain("### Completed Tasks");
+    expect(body).toContain("- **Task 1**: Desc 1");
+    expect(body).not.toContain("Task 2");
+    expect(body).not.toContain("Task 3");
+    expect(body).toContain(
+      "*Automated PR created by [IxADO](https://github.com/digital-thinking/ado).*",
+    );
+  });
+
+  test("handles empty tasks", () => {
+    const { body } = derivePullRequestMetadata("Phase 1", []);
+    expect(body).toContain("_No tasks recorded._");
+  });
+
+  test("adds deliberation summaries in a collapsible section", () => {
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        title: "Deliberate task",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+        resultContext: [
+          "Deliberation summary:",
+          '{"taskId":"t1","taskTitle":"Deliberate task","implementerAssignee":"CODEX_CLI","reviewerAssignee":"CLAUDE_CLI","maxRefinePasses":2,"refinePassesUsed":1,"finalVerdict":"APPROVED","rounds":[{"round":1,"proposal":"p1","verdict":"CHANGES_REQUESTED","comments":["c1"]},{"round":2,"proposal":"p2","verdict":"APPROVED","comments":[]}],"pendingComments":[]}',
+          "",
+          "Implementation complete.",
+        ].join("\n"),
+      },
+    ];
+
+    const { body } = derivePullRequestMetadata("Phase 30", tasks);
+    expect(body).toContain("<summary>Deliberation Summary</summary>");
+    expect(body).toContain("| Deliberate task | APPROVED | 2 | 1/2 | 0 |");
+  });
+
+  test("truncates long title but keeps full name in body", () => {
+    const longName = "A".repeat(300);
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        title: "Task 1",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+    ];
+
+    const { title, body } = derivePullRequestMetadata(longName, tasks);
+    expect(title.length).toBeLessThanOrEqual(250);
+    expect(title).toMatch(/\.\.\.$/);
+    expect(body).toContain(`## Phase: ${longName}`);
+  });
+
+  test("replaces newlines with spaces in title", () => {
+    const nameWithNewlines = "Phase 1\nSubtitle\r\nMore";
+    const { title } = derivePullRequestMetadata(nameWithNewlines, []);
+    expect(title).toBe("Phase 1 Subtitle More");
+  });
+
+  test("truncates long body", () => {
+    const tasks: Task[] = Array.from({ length: 1000 }).map((_, i) => ({
+      id: `t${i.toString().padStart(4, "0")}`,
+      title: `Task ${i}`,
+      description: "D".repeat(100),
+      status: "DONE",
+      assignee: "UNASSIGNED",
+      dependencies: [],
+    }));
+
+    const { body } = derivePullRequestMetadata("Phase 1", tasks);
+    expect(body.length).toBeLessThanOrEqual(60000);
+    expect(body).toMatch(/\.\.\. \(body truncated\)$/);
+  });
+});
 
 describe("runCiIntegration", () => {
   test("pushes branch and creates PR", async () => {
     const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "phase-5-ci-execution-loop\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/123\n" },
     ]);
     const setPrCalls: Array<{ phaseId: string; prUrl: string }> = [];
 
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        title: "Task 1",
+        description: "Desc 1",
+        status: "DONE",
+        assignee: "UNASSIGNED",
+        dependencies: [],
+      },
+    ];
+
     const result = await runCiIntegration({
       phaseId: "11111111-1111-4111-8111-111111111111",
       phaseName: "Phase 5: CI Execution Loop",
+      tasks,
       cwd: "C:/repo",
       baseBranch: "main",
+      pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {
@@ -42,18 +187,50 @@ describe("runCiIntegration", () => {
 
     expect(result.prUrl).toBe("https://github.com/org/repo/pull/123");
     expect(result.headBranch).toBe("phase-5-ci-execution-loop");
-    expect(runner.calls).toHaveLength(3);
+    expect(runner.calls).toHaveLength(7);
     expect(runner.calls[0]).toEqual({
       command: "git",
-      args: ["branch", "--show-current"],
+      args: ["add", "--all"],
       cwd: "C:/repo",
     });
     expect(runner.calls[1]).toEqual({
       command: "git",
+      args: ["diff", "--cached", "--name-only"],
+      cwd: "C:/repo",
+    });
+    expect(runner.calls[2]).toEqual({
+      command: "git",
+      args: [
+        "commit",
+        "-m",
+        "chore(ixado): finalize Phase 5: CI Execution Loop",
+        "--trailer",
+        "Originated-By=11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        "--trailer",
+        "Executed-By=CODEX_CLI",
+      ],
+      cwd: "C:/repo",
+    });
+    expect(runner.calls[3]).toEqual({
+      command: "git",
+      args: ["branch", "--show-current"],
+      cwd: "C:/repo",
+    });
+    expect(runner.calls[4]).toEqual({
+      command: "git",
       args: ["push", "-u", "origin", "phase-5-ci-execution-loop"],
       cwd: "C:/repo",
     });
-    expect(runner.calls[2]?.command).toBe("gh");
+    expect(runner.calls[5]?.command).toBe("gh");
+    expect((runner.calls[5]?.args as string[])[1]).toBe("list"); // gh pr list (check existing)
+    expect(runner.calls[6]?.command).toBe("gh");
+    const ghArgs = runner.calls[6]?.args as string[];
+    expect(ghArgs[0]).toBe("pr");
+    expect(ghArgs[1]).toBe("create");
+    expect(ghArgs[7]).toBe("Phase 5: CI Execution Loop");
+    expect(ghArgs[9]).toContain("## Phase: Phase 5: CI Execution Loop");
+    expect(ghArgs[9]).toContain("- **Task 1**: Desc 1");
+
     expect(setPrCalls).toEqual([
       {
         phaseId: "11111111-1111-4111-8111-111111111111",
@@ -69,8 +246,11 @@ describe("runCiIntegration", () => {
       runCiIntegration({
         phaseId: "11111111-1111-4111-8111-111111111111",
         phaseName: "Phase 5",
+        tasks: [],
         cwd: "C:/repo",
         baseBranch: "   ",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -96,14 +276,20 @@ describe("runCiIntegration", () => {
 
   test("returns structured AuthorizationDenied when role lacks privileged permissions", async () => {
     const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "phase-5-ci-execution-loop\n" },
     ]);
 
     const err = await runCiIntegration({
       phaseId: "11111111-1111-4111-8111-111111111111",
       phaseName: "Phase 5",
+      tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
+      pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "operator",
       policy: {
@@ -129,5 +315,169 @@ describe("runCiIntegration", () => {
     expect(denied.action).toBe("orchestrator:ci-integration:run");
     expect(denied.reason).toBe("no-allowlist-match");
     expect(runner.calls).toHaveLength(0);
+  });
+
+  test("skips commit step and proceeds to push when there is nothing to stage", async () => {
+    // Provide enough responses to reach the push/PR step without throwing MissingCommitError.
+    // gh pr list (no existing), git add, git diff --cached (empty=nothing staged), git branch, git push, gh pr create (empty→parse error)
+    // Sequence: git add, git diff --cached (empty→skip commit), git branch --show-current, git push, gh pr list (no existing), gh pr create (empty→parse error)
+    const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "feat/phase-5" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "" },
+    ]);
+
+    await expect(
+      runCiIntegration({
+        phaseId: "11111111-1111-4111-8111-111111111111",
+        phaseName: "Phase 5",
+        tasks: [],
+        cwd: "C:/repo",
+        baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
+        runner,
+        role: "admin",
+        policy: {
+          version: "1",
+          roles: {
+            owner: { allowlist: ["*"], denylist: [] },
+            admin: { allowlist: ["*"], denylist: [] },
+            operator: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+            viewer: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+          },
+        },
+        setPhasePrUrl: async () => {},
+      }),
+    ).rejects.toThrow("Unable to parse pull request URL from gh output.");
+    const gitCommands = runner.calls
+      .filter((call) => call.command === "git")
+      .map((call) => ((call.args ?? [])[0] as string) ?? "");
+    expect(gitCommands).toContain("push");
+    expect(gitCommands).not.toContain("commit");
+
+    const ghSubcommands = runner.calls
+      .filter((call) => call.command === "gh")
+      .map((call) => {
+        const args = call.args ?? [];
+        return `${(args[0] as string) ?? ""} ${(args[1] as string) ?? ""}`.trim();
+      });
+    expect(ghSubcommands).toContain("pr list");
+    expect(ghSubcommands).toContain("pr create");
+  });
+
+  test("fails fast with actionable message when commit command fails", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      new Error("hooks rejected commit"),
+    ]);
+
+    await expect(
+      runCiIntegration({
+        phaseId: "11111111-1111-4111-8111-111111111111",
+        phaseName: "Phase 5",
+        tasks: [],
+        cwd: "C:/repo",
+        baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
+        runner,
+        role: "admin",
+        policy: {
+          version: "1",
+          roles: {
+            owner: { allowlist: ["*"], denylist: [] },
+            admin: { allowlist: ["*"], denylist: [] },
+            operator: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+            viewer: {
+              allowlist: ["status:read"],
+              denylist: ["git:privileged:*"],
+            },
+          },
+        },
+        setPhasePrUrl: async () => {},
+      }),
+    ).rejects.toThrow(
+      "CI integration could not create commit before push/PR: hooks rejected commit",
+    );
+    expect(runner.calls).toHaveLength(3);
+  });
+
+  test("applies configured template mapping, labels, assignees, and draft mode", async () => {
+    const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
+      { stdout: "phase-23-feature\n" },
+      { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
+      { stdout: "https://github.com/org/repo/pull/321\n" },
+    ]);
+
+    await runCiIntegration({
+      phaseId: "11111111-1111-4111-8111-111111111111",
+      phaseName: "Phase 23",
+      tasks: [],
+      cwd: "C:/repo",
+      baseBranch: "main",
+      pullRequest: {
+        defaultTemplatePath: ".github/pull_request_template.md",
+        templateMappings: [
+          {
+            branchPrefix: "phase-23-",
+            templatePath: ".github/pull_request_template_phase23.md",
+          },
+        ],
+        labels: ["ixado", "phase-23"],
+        assignees: ["octocat"],
+        createAsDraft: true,
+        markReadyOnApproval: false,
+      },
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
+      runner,
+      role: "admin",
+      policy: {
+        version: "1",
+        roles: {
+          owner: { allowlist: ["*"], denylist: [] },
+          admin: { allowlist: ["*"], denylist: [] },
+          operator: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+          viewer: {
+            allowlist: ["status:read"],
+            denylist: ["git:privileged:*"],
+          },
+        },
+      },
+      setPhasePrUrl: async () => {},
+    });
+
+    const ghArgs = runner.calls[6]?.args as string[];
+    expect(ghArgs[0]).toBe("pr");
+    expect(ghArgs[1]).toBe("create");
+    expect(ghArgs[7]).toBe("Phase 23");
+    expect(ghArgs[9]).toContain("## Phase: Phase 23");
+    expect(ghArgs).toContain("--template");
+    expect(ghArgs).toContain(".github/pull_request_template_phase23.md");
+    expect(ghArgs).toContain("--label");
+    expect(ghArgs).toContain("ixado,phase-23");
+    expect(ghArgs).toContain("--assignee");
+    expect(ghArgs).toContain("octocat");
+    expect(ghArgs).toContain("--draft");
   });
 });

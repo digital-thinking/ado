@@ -10,8 +10,8 @@ export type TesterWorkflowInput = {
     title: string;
   };
   cwd: string;
-  testerCommand: string;
-  testerArgs: string[];
+  testerCommand: string | null;
+  testerArgs: string[] | null;
   testerTimeoutMs: number;
   runner: ProcessRunner;
   createFixTask: (input: {
@@ -19,11 +19,16 @@ export type TesterWorkflowInput = {
     title: string;
     description: string;
     dependencies: string[];
+    status: "CI_FIX";
   }) => Promise<void>;
   maxOutputLength?: number;
 };
 
 export type TesterWorkflowResult =
+  | {
+      status: "SKIPPED";
+      reason: string;
+    }
   | {
       status: "PASSED";
       command: string;
@@ -48,7 +53,11 @@ function truncateOutput(value: string, maxLength: number): string {
 }
 
 function buildFixTaskTitle(triggerTaskTitle: string): string {
-  return `Fix tests after ${triggerTaskTitle}`;
+  const prefix = "Fix tests after ";
+  if (triggerTaskTitle.startsWith(prefix)) {
+    return triggerTaskTitle;
+  }
+  return `${prefix}${triggerTaskTitle}`;
 }
 
 function buildFixTaskDescription(input: {
@@ -70,15 +79,28 @@ function buildFixTaskDescription(input: {
   ].join("\n");
 }
 
-export async function runTesterWorkflow(input: TesterWorkflowInput): Promise<TesterWorkflowResult> {
-  const command = input.testerCommand.trim();
-  const args = [...input.testerArgs];
-  const maxOutputLength = input.maxOutputLength ?? DEFAULT_MAX_TESTER_OUTPUT_LENGTH;
-  if (!command) {
-    throw new Error("testerCommand must not be empty.");
+export async function runTesterWorkflow(
+  input: TesterWorkflowInput,
+): Promise<TesterWorkflowResult> {
+  let command = input.testerCommand?.trim() ?? "";
+  let args = input.testerArgs ? [...input.testerArgs] : [];
+  const maxOutputLength =
+    input.maxOutputLength ?? DEFAULT_MAX_TESTER_OUTPUT_LENGTH;
+
+  if (!command && args.length === 0) {
+    return {
+      status: "SKIPPED",
+      reason:
+        "No tester configured (executionLoop.testerCommand/testerArgs are null). Skipping tester step.",
+    };
   }
-  if (args.length === 0) {
-    throw new Error("testerArgs must not be empty.");
+
+  if (!command || args.length === 0) {
+    return {
+      status: "SKIPPED",
+      reason:
+        "No tester configured (executionLoop.testerCommand/testerArgs are null). Skipping tester step.",
+    };
   }
 
   try {
@@ -123,6 +145,7 @@ export async function runTesterWorkflow(input: TesterWorkflowInput): Promise<Tes
       title: fixTaskTitle,
       description: fixTaskDescription,
       dependencies: [input.completedTask.id],
+      status: "CI_FIX",
     });
 
     return {

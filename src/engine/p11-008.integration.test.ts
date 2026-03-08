@@ -17,9 +17,25 @@ import {
 import { ORCHESTRATOR_ACTIONS } from "../security/workflow-profiles";
 import { MockProcessRunner } from "../vcs/test-utils";
 
+const TEST_CWD = process.cwd();
+
 const PHASE = {
   id: "33333333-3333-4333-8333-333333333333",
   name: "Phase 11 Integration Security",
+};
+
+const DEFAULT_PULL_REQUEST_SETTINGS = {
+  defaultTemplatePath: null,
+  templateMappings: [],
+  labels: [],
+  assignees: [],
+  createAsDraft: false,
+  markReadyOnApproval: false,
+};
+
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy: `${PHASE.id}/22222222-2222-4222-8222-222222222222`,
+  executedBy: "CODEX_CLI",
 };
 
 function clonePolicy(policy: AuthPolicy): AuthPolicy {
@@ -35,7 +51,7 @@ describe("P11-008 integration coverage", () => {
     (adapter as unknown as { baseArgs: string[] }).baseArgs.push("chat");
 
     await expect(
-      adapter.run({ prompt: "continue", cwd: "/repo" }),
+      adapter.run({ prompt: "continue", cwd: TEST_CWD }),
     ).rejects.toBeInstanceOf(InteractiveModeError);
     expect(runner.calls).toHaveLength(0);
   });
@@ -49,8 +65,11 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "C:/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy,
@@ -62,8 +81,11 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "C:/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner([{ stdout: "feature/p11-008\n" }]),
         role: "admin",
         policy,
@@ -76,8 +98,12 @@ describe("P11-008 integration coverage", () => {
 
   test("privileged git actions are authorized and executed when policy allows", async () => {
     const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "feature/p11-008\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/1108\n" },
     ]);
 
@@ -85,8 +111,11 @@ describe("P11-008 integration coverage", () => {
     const result = await runCiIntegration({
       phaseId: PHASE.id,
       phaseName: PHASE.name,
-      cwd: "C:/repo",
+      tasks: [],
+      cwd: TEST_CWD,
       baseBranch: "main",
+      pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -98,16 +127,18 @@ describe("P11-008 integration coverage", () => {
     expect(result.prUrl).toBe("https://github.com/org/repo/pull/1108");
     expect(capturedPrUrls).toEqual(["https://github.com/org/repo/pull/1108"]);
 
-    expect(runner.calls[1]?.command).toBe("git");
-    expect(runner.calls[1]?.args).toEqual([
+    expect(runner.calls[4]?.command).toBe("git");
+    expect(runner.calls[4]?.args).toEqual([
       "push",
       "-u",
       "origin",
       "feature/p11-008",
     ]);
-    expect(runner.calls[2]?.command).toBe("gh");
-    expect(runner.calls[2]?.args).toContain("pr");
-    expect(runner.calls[2]?.args).toContain("create");
+    expect(runner.calls[5]?.command).toBe("gh");
+    expect(runner.calls[5]?.args).toContain("list"); // gh pr list (check existing)
+    expect(runner.calls[6]?.command).toBe("gh");
+    expect(runner.calls[6]?.args).toContain("pr");
+    expect(runner.calls[6]?.args).toContain("create");
   });
 
   test("audit log writes to target project cwd even when process cwd is elsewhere", async () => {
@@ -119,6 +150,9 @@ describe("P11-008 integration coverage", () => {
     const previousAuditPath = process.env.IXADO_AUDIT_LOG_FILE;
 
     const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "src/a.ts\n" },
+      { stdout: "" },
       { stdout: "feature/p11-008\n" },
       { stdout: "" },
       { stdout: "https://github.com/org/repo/pull/1108\n" },
@@ -131,8 +165,11 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
+        tasks: [],
         cwd: projectDir,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -162,7 +199,7 @@ describe("P11-008 integration coverage", () => {
   test("fail-closed startup/runtime paths deny on policy-load and role-resolution failures", async () => {
     const startupDecision = await authorizeOrchestratorAction({
       action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-      auditCwd: "/repo",
+      auditCwd: TEST_CWD,
       settingsFilePath: "/tmp/settings.json",
       session: { source: "cli" },
       roleConfig: {},
@@ -181,8 +218,11 @@ describe("P11-008 integration coverage", () => {
       runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "C:/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: null,
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -205,7 +245,7 @@ describe("P11-008 integration coverage", () => {
       baseArgs.splice(baseArgs.indexOf("--print"), 1);
 
       await expect(
-        adapter.run({ prompt: "do work", cwd: "/repo" }),
+        adapter.run({ prompt: "do work", cwd: TEST_CWD }),
       ).rejects.toBeInstanceOf(InteractiveModeError);
       expect(runner.calls).toHaveLength(0);
     });
@@ -219,7 +259,7 @@ describe("P11-008 integration coverage", () => {
       baseArgs.splice(baseArgs.indexOf("--yolo"), 1);
 
       await expect(
-        adapter.run({ prompt: "generate output", cwd: "/repo" }),
+        adapter.run({ prompt: "generate output", cwd: TEST_CWD }),
       ).rejects.toBeInstanceOf(InteractiveModeError);
       expect(runner.calls).toHaveLength(0);
     });
@@ -237,8 +277,11 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
-          cwd: "/repo",
+          tasks: [],
+          cwd: TEST_CWD,
           baseBranch: "main",
+          pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+          commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
           role: "operator",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -256,8 +299,11 @@ describe("P11-008 integration coverage", () => {
         runCiIntegration({
           phaseId: PHASE.id,
           phaseName: PHASE.name,
-          cwd: "/repo",
+          tasks: [],
+          cwd: TEST_CWD,
           baseBranch: "main",
+          pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+          commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
           role: "viewer",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -272,8 +318,11 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
         role: "operator",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -292,8 +341,11 @@ describe("P11-008 integration coverage", () => {
       const err = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
         role: "viewer",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -314,16 +366,23 @@ describe("P11-008 integration coverage", () => {
   describe("owner role — wildcard allowlist permits full CI integration flow", () => {
     test("owner succeeds: push and PR create execute, result contains prUrl", async () => {
       const runner = new MockProcessRunner([
+        { stdout: "" },
+        { stdout: "src/a.ts\n" },
+        { stdout: "" },
         { stdout: "feature/p11-008\n" },
         { stdout: "" },
+        { stdout: "" }, // gh pr list (no existing PR)
         { stdout: "https://github.com/org/repo/pull/42\n" },
       ]);
 
       const result = await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -333,14 +392,16 @@ describe("P11-008 integration coverage", () => {
       expect(result.prUrl).toBe("https://github.com/org/repo/pull/42");
       expect(result.phaseId).toBe(PHASE.id);
       expect(result.baseBranch).toBe("main");
-      // getCurrentBranch + pushBranch + createPullRequest = 3 subprocess calls
-      expect(runner.calls).toHaveLength(3);
-      expect(runner.calls[1]?.command).toBe("git");
-      expect(runner.calls[2]?.command).toBe("gh");
+      expect(runner.calls).toHaveLength(7);
+      expect(runner.calls[4]?.command).toBe("git");
+      expect(runner.calls[6]?.command).toBe("gh");
     });
 
     test("owner setPhasePrUrl callback receives the correct prUrl", async () => {
       const runner = new MockProcessRunner([
+        { stdout: "" },
+        { stdout: "src/a.ts\n" },
+        { stdout: "" },
         { stdout: "feature/p11-008\n" },
         { stdout: "" },
         { stdout: "https://github.com/org/repo/pull/99\n" },
@@ -350,8 +411,11 @@ describe("P11-008 integration coverage", () => {
       await runCiIntegration({
         phaseId: PHASE.id,
         phaseName: PHASE.name,
-        cwd: "/repo",
+        tasks: [],
+        cwd: TEST_CWD,
         baseBranch: "main",
+        pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -372,7 +436,7 @@ describe("P11-008 integration coverage", () => {
     test("role-resolution-failed when resolveSessionRole throws (not just returns null)", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -392,7 +456,7 @@ describe("P11-008 integration coverage", () => {
     test("evaluator-error when getRequiredActions throws during profile evaluation", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -415,7 +479,7 @@ describe("P11-008 integration coverage", () => {
         // Cast an unregistered action string into the typed parameter.
         action:
           "orchestrator:unknown:action" as typeof ORCHESTRATOR_ACTIONS.CI_INTEGRATION_RUN,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},
@@ -433,7 +497,7 @@ describe("P11-008 integration coverage", () => {
     test("policy-load-failed decision carries the original error message", async () => {
       const decision = await authorizeOrchestratorAction({
         action: ORCHESTRATOR_ACTIONS.STATUS_READ,
-        auditCwd: "/repo",
+        auditCwd: TEST_CWD,
         settingsFilePath: "<in-memory>",
         session: { source: "cli" },
         roleConfig: {},

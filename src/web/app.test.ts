@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createWebApp } from "./app";
+import { refreshRecoveryCache } from "./api/agents";
 import type { AgentView } from "./agent-supervisor";
 import type {
   CreatePhaseInput,
@@ -8,6 +9,7 @@ import type {
   RunInternalWorkInput,
   SetActivePhaseInput,
   StartTaskInput,
+  UpdateTaskInput,
 } from "./control-center-service";
 import type { CLIAdapterId, ProjectRecord } from "../types";
 
@@ -30,7 +32,7 @@ type TestState = {
       resultContext?: string;
     }>;
   }>;
-  activePhaseId?: string;
+  activePhaseIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -41,7 +43,7 @@ function createInitialState(): TestState {
     projectName: "IxADO",
     rootDir: "C:/repo",
     phases: [],
-    activePhaseId: undefined,
+    activePhaseIds: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -54,6 +56,13 @@ describe("web app api", () => {
     const runtimeConfig = {
       defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
       autoMode: false,
+    };
+    const executionStatus = {
+      running: false,
+      stopRequested: false,
+      projectName: "IxADO",
+      message: "Auto mode is idle.",
+      updatedAt: new Date().toISOString(),
     };
 
     const app = createWebApp({
@@ -71,7 +80,7 @@ describe("web app api", () => {
             tasks: [],
           };
           state.phases.push(phase);
-          state.activePhaseId = phase.id;
+          state.activePhaseIds = [phase.id];
           return state as never;
         },
         createTask: async (
@@ -91,6 +100,22 @@ describe("web app api", () => {
           });
           return state as never;
         },
+        updateTask: async (
+          input: UpdateTaskInput & { projectName?: string },
+        ) => {
+          const phase = state.phases.find((item) => item.id === input.phaseId);
+          if (!phase) {
+            throw new Error("Phase not found");
+          }
+          const task = phase.tasks.find((item) => item.id === input.taskId);
+          if (!task) {
+            throw new Error("Task not found");
+          }
+          task.title = input.title;
+          task.description = input.description;
+          task.dependencies = input.dependencies;
+          return state as never;
+        },
         setActivePhase: async (
           input: SetActivePhaseInput & { projectName?: string },
         ) => {
@@ -99,7 +124,7 @@ describe("web app api", () => {
             throw new Error("Phase not found");
           }
 
-          state.activePhaseId = phase.id;
+          state.activePhaseIds = [phase.id];
           return state as never;
         },
         startTask: async (input: StartTaskInput & { projectName?: string }) => {
@@ -150,16 +175,14 @@ describe("web app api", () => {
           }
           return state as never;
         },
+        recordRecoveryAttempt: async () => state as never,
         importFromTasksMarkdown: async (
           assignee: CLIAdapterId,
           _name?: string,
         ) => {
           expect(assignee).toBe("CODEX_CLI");
-          const existingPhase = state.phases.find(
-            (phase) => phase.id === "import-phase-1",
-          );
-          if (!existingPhase) {
-            state.phases.push({
+          state.phases = [
+            {
               id: "import-phase-1",
               name: "Phase 1: Foundation",
               branchName: "phase-1-foundation",
@@ -171,29 +194,34 @@ describe("web app api", () => {
                   description: "Initialize project",
                   status: "DONE",
                   assignee: "UNASSIGNED",
+                  dependencies: [],
                 },
               ],
-            });
-          }
-
+            },
+          ];
           return {
             state,
-            importedPhaseCount: existingPhase ? 0 : 1,
-            importedTaskCount: existingPhase ? 0 : 1,
+            importedPhaseCount: 1,
+            importedTaskCount: 1,
             sourceFilePath: "C:/repo/TASKS.md",
             assignee: "CODEX_CLI",
           } as never;
         },
+        syncFromTasksMarkdown: async (_name?: string) =>
+          ({
+            state,
+            addedPhases: 0,
+            addedTasks: 0,
+            updatedTasks: 0,
+            sourceFilePath: "C:/repo/TASKS.md",
+          }) as never,
         runInternalWork: async (input: RunInternalWorkInput) => {
           expect(input.assignee).toBe("CODEX_CLI");
           expect(input.prompt).toBe("do internal work");
           return {
             assignee: "CODEX_CLI",
             command: "codex",
-            args: [
-              "--dangerously-bypass-approvals-and-sandbox",
-              "do internal work",
-            ],
+            args: ["exec", "do internal work"],
             stdout: '{"ok":true}',
             stderr: "",
             durationMs: 45,
@@ -280,6 +308,33 @@ describe("web app api", () => {
       },
       getGlobalSettings: async () => ({}) as never,
       updateGlobalSettings: async (_patch) => ({}) as never,
+      execution: {
+        getStatus: async (projectName?: string) => ({
+          ...executionStatus,
+          projectName: projectName || executionStatus.projectName,
+        }),
+        startAuto: async ({ projectName }: { projectName?: string }) => {
+          executionStatus.running = true;
+          executionStatus.stopRequested = false;
+          executionStatus.projectName =
+            projectName || executionStatus.projectName;
+          executionStatus.message =
+            "Auto mode running for project " +
+            executionStatus.projectName +
+            ".";
+          executionStatus.updatedAt = new Date().toISOString();
+          return { ...executionStatus };
+        },
+        stop: async ({ projectName }: { projectName?: string }) => {
+          executionStatus.running = false;
+          executionStatus.stopRequested = false;
+          executionStatus.projectName =
+            projectName || executionStatus.projectName;
+          executionStatus.message = "Auto mode stopped.";
+          executionStatus.updatedAt = new Date().toISOString();
+          return { ...executionStatus };
+        },
+      },
       webLogFilePath: "C:/repo/.ixado/web.log",
       cliLogFilePath: "C:/repo/.ixado/cli.log",
     });
@@ -289,6 +344,7 @@ describe("web app api", () => {
     const htmlContent = await htmlResponse.text();
     expect(htmlContent).toContain("IxADO Control Center");
     expect(htmlContent).toContain("Phase Kanban");
+    expect(htmlContent).toContain("task-edit-toggle-button");
 
     const createPhaseResponse = await app.fetch(
       new Request("http://localhost/api/phases", {
@@ -322,6 +378,25 @@ describe("web app api", () => {
     expect(statePayload.phases).toHaveLength(1);
     expect(statePayload.phases[0].tasks).toHaveLength(1);
 
+    const updateTaskResponse = await app.fetch(
+      new Request("http://localhost/api/tasks/task-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          phaseId: "phase-1",
+          title: "Build page v2",
+          description: "Implement dashboard and editing",
+          dependencies: [],
+        }),
+      }),
+    );
+    expect(updateTaskResponse.status).toBe(200);
+    const updatedState = (await updateTaskResponse.json()) as TestState;
+    expect(updatedState.phases[0].tasks[0].title).toBe("Build page v2");
+    expect(updatedState.phases[0].tasks[0].description).toBe(
+      "Implement dashboard and editing",
+    );
+
     const runtimeConfigResponse = await app.fetch(
       new Request("http://localhost/api/runtime-config"),
     );
@@ -347,6 +422,38 @@ describe("web app api", () => {
     );
     expect(runtimeConfigUpdatePayload.autoMode).toBe(true);
 
+    const executionStatusResponse = await app.fetch(
+      new Request("http://localhost/api/execution?projectName=IxADO"),
+    );
+    expect(executionStatusResponse.status).toBe(200);
+    const executionStatusPayload = await executionStatusResponse.json();
+    expect(executionStatusPayload.running).toBe(false);
+    expect(executionStatusPayload.projectName).toBe("IxADO");
+
+    const executionStartResponse = await app.fetch(
+      new Request("http://localhost/api/execution/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectName: "IxADO" }),
+      }),
+    );
+    expect(executionStartResponse.status).toBe(202);
+    const executionStartPayload = await executionStartResponse.json();
+    expect(executionStartPayload.running).toBe(true);
+    expect(executionStartPayload.projectName).toBe("IxADO");
+
+    const executionStopResponse = await app.fetch(
+      new Request("http://localhost/api/execution/stop", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectName: "IxADO" }),
+      }),
+    );
+    expect(executionStopResponse.status).toBe(200);
+    const executionStopPayload = await executionStopResponse.json();
+    expect(executionStopPayload.running).toBe(false);
+    expect(executionStopPayload.message).toContain("stopped");
+
     const setActiveResponse = await app.fetch(
       new Request("http://localhost/api/phases/active", {
         method: "POST",
@@ -358,7 +465,7 @@ describe("web app api", () => {
     );
     expect(setActiveResponse.status).toBe(200);
     const activePayload = (await setActiveResponse.json()) as TestState;
-    expect(activePayload.activePhaseId).toBe("phase-1");
+    expect(activePayload.activePhaseIds[0]).toBe("phase-1");
 
     const startTaskResponse = await app.fetch(
       new Request("http://localhost/api/tasks/start", {
@@ -474,6 +581,7 @@ describe("multi-project api", () => {
     projectName: "alpha",
     rootDir: "/tmp/alpha",
     phases: [],
+    activePhaseIds: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -510,6 +618,7 @@ describe("multi-project api", () => {
             projectName: "alpha",
             rootDir: "/tmp/alpha",
             phases: [],
+            activePhaseIds: [],
             createdAt: now,
             updatedAt: now,
           }) as never,
@@ -517,12 +626,15 @@ describe("multi-project api", () => {
           ({}) as never,
         createPhase: async (_input: unknown) => ({}) as never,
         createTask: async (_input: unknown) => ({}) as never,
+        updateTask: async (_input: unknown) => ({}) as never,
         setActivePhase: async (_input: unknown) => ({}) as never,
         startTask: async (_input: unknown) => ({}) as never,
         resetTaskToTodo: async (_input: unknown) => ({}) as never,
         failTaskIfInProgress: async (_input: unknown) => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async (_assignee: unknown, _name?: string) =>
           ({}) as never,
+        syncFromTasksMarkdown: async (_name?: unknown) => ({}) as never,
         runInternalWork: async (_input: unknown) => ({}) as never,
       } as never,
       agents: {
@@ -715,6 +827,9 @@ describe("multi-project api", () => {
         list: () => [
           {
             id: "agent-1",
+            projectName: "test",
+            phaseId: "phase-1",
+            taskId: "task-1",
             status: "RUNNING",
             outputTail: ["line 1"],
           } as any,
@@ -744,8 +859,14 @@ describe("multi-project api", () => {
 
     // Initial backlog
     const chunk1 = await reader?.read();
-    expect(decoder.decode(chunk1?.value)).toContain(
-      'data: {"type":"output","agentId":"agent-1","line":"line 1"}',
+    const decodedChunk1 = decoder.decode(chunk1?.value);
+    expect(decodedChunk1).toContain('"type":"output"');
+    expect(decodedChunk1).toContain('"agentId":"agent-1"');
+    expect(decodedChunk1).toContain('"line":"line 1"');
+    expect(decodedChunk1).toContain('"runtimeEvent":{"version":1');
+    expect(decodedChunk1).toContain('"type":"adapter.output"');
+    expect(decodedChunk1).toContain(
+      '"formattedLine":"[phase-1 | task-1] line 1"',
     );
 
     // New output
@@ -758,8 +879,13 @@ describe("multi-project api", () => {
     }, 10);
 
     const chunk2 = await reader?.read();
-    expect(decoder.decode(chunk2?.value)).toContain(
-      'data: {"type":"output","agentId":"agent-1","line":"line 2"}',
+    const decodedChunk2 = decoder.decode(chunk2?.value);
+    expect(decodedChunk2).toContain('"type":"output"');
+    expect(decodedChunk2).toContain('"line":"line 2"');
+    expect(decodedChunk2).toContain('"runtimeEvent":{"version":1');
+    expect(decodedChunk2).toContain('"type":"adapter.output"');
+    expect(decodedChunk2).toContain(
+      '"formattedLine":"[phase-1 | task-1] line 2"',
     );
 
     // Terminal status
@@ -772,9 +898,12 @@ describe("multi-project api", () => {
     }, 10);
 
     const chunk3 = await reader?.read();
-    expect(decoder.decode(chunk3?.value)).toContain(
-      'data: {"type":"status","agentId":"agent-1","status":"STOPPED"}',
-    );
+    const decodedChunk3 = decoder.decode(chunk3?.value);
+    expect(decodedChunk3).toContain('"type":"status"');
+    expect(decodedChunk3).toContain('"agentId":"agent-1"');
+    expect(decodedChunk3).toContain('"status":"STOPPED"');
+    expect(decodedChunk3).toContain('"type":"terminal.outcome"');
+    expect(decodedChunk3).toContain('"recoveryLinks":[{"label":"Task card"');
 
     const chunk4 = await reader?.read();
     expect(chunk4?.done).toBe(true);
@@ -789,11 +918,14 @@ describe("project tabs frontend (P12-006)", () => {
         getState: async () => ({}) as never,
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
+        updateTask: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
         failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
+        syncFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
       agents: {
@@ -840,6 +972,31 @@ describe("project tabs frontend (P12-006)", () => {
     expect(html).toContain("switchProject");
   });
 
+  test("HTML injects runtime constants instead of raw template placeholders", async () => {
+    const html = await getHtml();
+    expect(html).toContain('const INITIAL_PROJECT_NAME = "TestProject";');
+    expect(html).not.toContain("${params.");
+    expect(html).not.toContain("${JSON.stringify(params.");
+  });
+
+  test("Import button logic refreshes agents while import is running", async () => {
+    const html = await getHtml();
+    expect(html).toContain("const agentTicker = setInterval(() => {");
+    expect(html).toContain("await globalRefresh().catch(handleRefreshError);");
+    expect(html).toContain("await globalRefresh();");
+  });
+
+  test("globalRefresh keeps rendering agents when usage endpoint fails", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Promise.allSettled");
+    expect(html).toContain('api("/api/agents", {}, 3000)');
+    expect(html).toContain('api("/api/usage", {}, 3000)');
+    expect(html).toContain('if (agentsResult.status === "fulfilled")');
+    expect(html).toContain(
+      'usageStatus.textContent = "Unavailable: failed to load usage snapshot.";',
+    );
+  });
+
   test("HTML includes + affordance with ixado init guidance", async () => {
     const html = await getHtml();
     expect(html).toContain("ixado init");
@@ -849,6 +1006,24 @@ describe("project tabs frontend (P12-006)", () => {
     const html = await getHtml();
     expect(html).toContain("5000");
     expect(html).toContain("refreshActiveProject");
+  });
+
+  test("HTML contains execution controls to run and stop auto mode", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="startAutoModeButton"');
+    expect(html).toContain('id="stopAutoModeButton"');
+    expect(html).toContain("Run Auto Mode");
+    expect(html).toContain("Stop Auto Mode");
+    expect(html).toContain('"/api/execution/start"');
+    expect(html).toContain('"/api/execution/stop"');
+  });
+
+  test("HTML polls execution status for the active project", async () => {
+    const html = await getHtml();
+    expect(html).toContain(
+      '"/api/execution?projectName=" + encodeURIComponent(activeProjectName)',
+    );
+    expect(html).toContain("refreshExecutionStatus");
   });
 
   test("HTML includes per-tab lazy-load state cache", async () => {
@@ -877,11 +1052,14 @@ describe("agent top bar frontend (P12-007)", () => {
         getState: async () => ({}) as never,
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
+        updateTask: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
         failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
         importFromTasksMarkdown: async () => ({}) as never,
+        syncFromTasksMarkdown: async () => ({}) as never,
         runInternalWork: async () => ({}) as never,
       } as never,
       agents: {
@@ -920,7 +1098,6 @@ describe("agent top bar frontend (P12-007)", () => {
   test("HTML contains sticky agent top bar container", async () => {
     const html = await getHtml();
     expect(html).toContain('id="agentTopBar"');
-    expect(html).toContain("sticky-top-bar");
   });
 
   test("HTML contains agent top bar table with required columns", async () => {
@@ -945,6 +1122,20 @@ describe("agent top bar frontend (P12-007)", () => {
     expect(html).toContain(
       'agentTopTableBody.addEventListener("click", handleAgentAction)',
     );
+  });
+
+  test("HTML includes recovery indicators for tasks and agent status", async () => {
+    const html = await getHtml();
+    expect(html).toContain("! recovery");
+    expect(html).toContain("agent.recoveryAttempted");
+    expect(html).toContain("agent.recoveryReasoning");
+  });
+
+  test("HTML includes DEAD_LETTER kanban surfacing with remediation hint", async () => {
+    const html = await getHtml();
+    expect(html).toContain("DEAD_LETTER");
+    expect(html).toContain("Dead-lettered after unfixable recovery.");
+    expect(html).toContain("Reset TODO");
   });
 });
 
@@ -1009,5 +1200,152 @@ describe("SSE log viewer frontend (P12-010)", () => {
     expect(html).toContain("function closeLogs");
     expect(html).toContain("currentEventSource.close()");
     expect(html).toContain('logOverlay.classList.add("hidden")');
+  });
+});
+
+describe("phase14 recovery surfacing", () => {
+  test("GET /api/agents includes recovery enrichment", async () => {
+    const app = createWebApp({
+      defaultAgentCwd: "/tmp",
+      control: {
+        failTaskIfInProgress: async () => ({}) as never,
+        recordRecoveryAttempt: async () => ({}) as never,
+      } as never,
+      agents: {
+        list: () =>
+          [
+            {
+              id: "agent-1",
+              name: "worker",
+              command: "mock",
+              args: [],
+              cwd: "/tmp/alpha",
+              phaseId: "11111111-1111-4111-8111-111111111111",
+              taskId: "22222222-2222-4222-8222-222222222222",
+              projectName: "alpha",
+              status: "RUNNING",
+              outputTail: [],
+              startedAt: "2026-02-23T00:00:00.000Z",
+            },
+          ] as any,
+        start: () => ({}) as any,
+        assign: () => ({}) as any,
+        kill: () => ({}) as any,
+        restart: () => ({}) as any,
+        subscribe: () => () => {},
+      },
+      usage: { getLatest: async () => ({ available: false }) } as never,
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      availableWorkerAssignees: ["MOCK_CLI"],
+      projectName: "alpha",
+      getRuntimeConfig: async () => ({}) as never,
+      updateRuntimeConfig: async () => ({}) as never,
+      getProjects: async () => [{ name: "alpha", rootDir: "/tmp/alpha" }],
+      getProjectState: async () =>
+        ({
+          projectName: "alpha",
+          rootDir: "/tmp/alpha",
+          phases: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              name: "Phase",
+              branchName: "phase",
+              status: "CODING",
+              recoveryAttempts: [],
+              tasks: [
+                {
+                  id: "22222222-2222-4222-8222-222222222222",
+                  title: "Task",
+                  description: "desc",
+                  status: "FAILED",
+                  assignee: "MOCK_CLI",
+                  dependencies: [],
+                  recoveryAttempts: [
+                    {
+                      id: "33333333-3333-4333-8333-333333333333",
+                      occurredAt: "2026-02-23T00:00:00.000Z",
+                      attemptNumber: 1,
+                      exception: {
+                        category: "AGENT_FAILURE",
+                        message: "worker failed",
+                      },
+                      result: {
+                        status: "fixed",
+                        reasoning: "retried successfully",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
+          createdAt: "2026-02-23T00:00:00.000Z",
+          updatedAt: "2026-02-23T00:00:00.000Z",
+        }) as any,
+      updateProjectSettings: async () => ({}) as never,
+      getGlobalSettings: async () => ({}) as never,
+      updateGlobalSettings: async () => ({}) as never,
+      webLogFilePath: "/tmp/web.log",
+      cliLogFilePath: "/tmp/cli.log",
+    });
+
+    const projectState = {
+      projectName: "alpha",
+      rootDir: "/tmp/alpha",
+      phases: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          name: "Phase",
+          branchName: "phase",
+          status: "CODING",
+          recoveryAttempts: [],
+          tasks: [
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              title: "Task",
+              description: "desc",
+              status: "FAILED",
+              assignee: "MOCK_CLI",
+              dependencies: [],
+              recoveryAttempts: [
+                {
+                  id: "33333333-3333-4333-8333-333333333333",
+                  occurredAt: "2026-02-23T00:00:00.000Z",
+                  attemptNumber: 1,
+                  exception: {
+                    category: "AGENT_FAILURE",
+                    message: "worker failed",
+                  },
+                  result: {
+                    status: "fixed",
+                    reasoning: "retried successfully",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
+      createdAt: "2026-02-23T00:00:00.000Z",
+      updatedAt: "2026-02-23T00:00:00.000Z",
+    } as any;
+
+    refreshRecoveryCache(projectState);
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/agents"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as Array<{
+      recoveryAttempted?: boolean;
+      recoveryStatus?: string;
+      recoveryReasoning?: string;
+    }>;
+    expect(payload[0]?.recoveryAttempted).toBe(true);
+    expect(payload[0]?.recoveryStatus).toBe("fixed");
+    expect(payload[0]?.recoveryReasoning).toBe("retried successfully");
   });
 });

@@ -66,6 +66,7 @@ describe("runTesterWorkflow", () => {
       title: string;
       description: string;
       dependencies: string[];
+      status: "CI_FIX";
     }> = [];
 
     const result = await runTesterWorkflow({
@@ -94,6 +95,7 @@ describe("runTesterWorkflow", () => {
     expect(createdFixTasks[0]?.dependencies).toEqual([
       "22222222-2222-4222-8222-222222222222",
     ]);
+    expect(createdFixTasks[0]?.status).toBe("CI_FIX");
     expect(createdFixTasks[0]?.description).toContain("failing test output");
     expect(createdFixTasks[0]?.description).toContain("stack trace");
   });
@@ -134,5 +136,69 @@ describe("runTesterWorkflow", () => {
     });
 
     expect(capturedDescription).toContain("[truncated]");
+  });
+
+  test("skips tester when command/args are both unset", async () => {
+    let runnerCalled = false;
+    let fixTaskCreated = false;
+    const runner: ProcessRunner = {
+      async run() {
+        runnerCalled = true;
+        throw new Error("runner should not be called");
+      },
+    };
+
+    const result = await runTesterWorkflow({
+      phaseId: "11111111-1111-4111-8111-111111111111",
+      phaseName: "Phase 17",
+      completedTask: {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "P17 Task",
+      },
+      cwd: "C:/repo",
+      testerCommand: null,
+      testerArgs: null,
+      testerTimeoutMs: 120_000,
+      runner,
+      createFixTask: async () => {
+        fixTaskCreated = true;
+      },
+    });
+
+    expect(result.status).toBe("SKIPPED");
+    if (result.status !== "SKIPPED") {
+      throw new Error("Expected SKIPPED tester result");
+    }
+    expect(result.reason).toContain("No tester configured");
+    expect(runnerCalled).toBe(false);
+    expect(fixTaskCreated).toBe(false);
+  });
+
+  test("skips tester when command/args are partially configured", async () => {
+    let runnerCalled = false;
+    const runner: ProcessRunner = {
+      async run() {
+        runnerCalled = true;
+        throw new Error("runner should not be called");
+      },
+    };
+
+    const result = await runTesterWorkflow({
+      phaseId: "11111111-1111-4111-8111-111111111111",
+      phaseName: "Phase 17",
+      completedTask: {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "P17 Task",
+      },
+      cwd: "C:/repo",
+      testerCommand: "pytest",
+      testerArgs: null,
+      testerTimeoutMs: 120_000,
+      runner,
+      createFixTask: async () => {},
+    });
+
+    expect(result.status).toBe("SKIPPED");
+    expect(runnerCalled).toBe(false);
   });
 });
