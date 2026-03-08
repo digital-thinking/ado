@@ -54,6 +54,7 @@ import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { GitHubManager, GitManager, WorktreeManager } from "../vcs";
 import { initializeCliLogging } from "./logging";
+import { generateCompletionScript, parseCompletionShell } from "./completion";
 import { CommandRegistry, type CommandActionContext } from "./command-registry";
 import { ValidationError } from "./validation";
 import {
@@ -2275,6 +2276,12 @@ async function runConfigRecoveryCommand({
   );
 }
 
+async function runCompletionCommand(args: string[]): Promise<void> {
+  const shell = parseCompletionShell(args[1]);
+  const script = generateCompletionScript(shell);
+  process.stdout.write(script);
+}
+
 async function runCli(args: string[]): Promise<void> {
   if (process.env.IXADO_WEB_DAEMON_MODE?.trim() === "1") {
     await runWebServeCommand({ args: [], fullArgs: [] });
@@ -2437,6 +2444,15 @@ async function runCli(args: string[]): Promise<void> {
           action: runWorktreePruneCommand,
         },
       ],
+    },
+    {
+      name: "completion",
+      description: "Generate shell completion script",
+      usage: "completion <bash|zsh|fish>",
+      action: async ({ args }: CommandActionContext) => {
+        const shell = parseCompletionShell(args[0]);
+        console.info(generateCompletionScript(shell));
+      },
     },
     {
       name: "web",

@@ -134,6 +134,6 @@ Status markers:
 
 ### Phase 9: Shell Integration (deferred for later)
 
-- [ ] `P9-001` Implement `ixado completion` command to generate shell completion scripts (Bash, Zsh, Fish). Deps: `P8-007`.
-- [ ] `P9-002` Add installation instructions for shell completion to `README.md`. Deps: `P9-001`.
+- [x] `P9-001` Implement `ixado completion` command to generate shell completion scripts (Bash, Zsh, Fish). Deps: `P8-007`.
+- [x] `P9-002` Add installation instructions for shell completion to `README.md`. Deps: `P9-001`.
 - [ ] `P9-003` Create PR Task: open Phase 9 PR after coding tasks are done. Deps: `P9-002`.
