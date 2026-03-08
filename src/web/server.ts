@@ -477,6 +477,10 @@ export async function startWebControlCenter(
         executionLoop: {
           ...current.executionLoop,
           ...(validatedPatch.executionLoop ?? {}),
+          deliberation: {
+            ...current.executionLoop.deliberation,
+            ...(validatedPatch.executionLoop?.deliberation ?? {}),
+          },
           pullRequest: {
             ...current.executionLoop.pullRequest,
             ...(validatedPatch.executionLoop?.pullRequest ?? {}),

@@ -67,6 +67,10 @@ const DEFAULT_LOOP_SETTINGS = {
   validationMaxRetries: 3,
   ciFixMaxFanOut: 10,
   ciFixMaxDepth: 3,
+  deliberation: {
+    reviewerAdapter: "CODEX_CLI" as const,
+    maxRefinePasses: 1,
+  },
   pullRequest: {
     defaultTemplatePath: null,
     templateMappings: [],
@@ -342,6 +346,25 @@ describe("cli settings", () => {
       assignees: ["octocat"],
       createAsDraft: true,
       markReadyOnApproval: true,
+    });
+  });
+
+  test("deep-merges executionLoop.deliberation overrides in a single config file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          deliberation: {
+            maxRefinePasses: 3,
+          },
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.deliberation).toEqual({
+      reviewerAdapter: "CODEX_CLI",
+      maxRefinePasses: 3,
     });
   });
 

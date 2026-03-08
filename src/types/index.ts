@@ -134,6 +134,12 @@ export type PullRequestAutomationSettings = z.infer<
   typeof PullRequestAutomationSettingsSchema
 >;
 
+export const DeliberationSettingsSchema = z.object({
+  reviewerAdapter: CLIAdapterIdSchema.default("CODEX_CLI"),
+  maxRefinePasses: z.number().int().min(1).max(10).default(1),
+});
+export type DeliberationSettings = z.infer<typeof DeliberationSettingsSchema>;
+
 const PullRequestAutomationSettingsOverrideSchema = z
   .object({
     defaultTemplatePath: z.string().min(1).nullable().optional(),
@@ -169,6 +175,10 @@ export const ExecutionLoopSettingsSchema = z.object({
   validationMaxRetries: z.number().int().min(0).max(20).default(3),
   ciFixMaxFanOut: z.number().int().min(1).max(50).default(10),
   ciFixMaxDepth: z.number().int().min(1).max(10).default(3),
+  deliberation: DeliberationSettingsSchema.default({
+    reviewerAdapter: "CODEX_CLI",
+    maxRefinePasses: 1,
+  }),
   pullRequest: PullRequestAutomationSettingsSchema.default({
     defaultTemplatePath: null,
     templateMappings: [],
@@ -253,6 +263,10 @@ export const CliSettingsSchema = z
       validationMaxRetries: 3,
       ciFixMaxFanOut: 10,
       ciFixMaxDepth: 3,
+      deliberation: {
+        reviewerAdapter: "CODEX_CLI",
+        maxRefinePasses: 1,
+      },
       pullRequest: {
         defaultTemplatePath: null,
         templateMappings: [],
@@ -333,6 +347,15 @@ export const CliSettingsSchema = z
         path: ["internalWork", "assignee"],
       });
     }
+    if (
+      !value.agents[value.executionLoop.deliberation.reviewerAdapter].enabled
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `executionLoop.deliberation.reviewerAdapter '${value.executionLoop.deliberation.reviewerAdapter}' must be enabled in settings.agents.`,
+        path: ["executionLoop", "deliberation", "reviewerAdapter"],
+      });
+    }
 
     for (const [taskType, adapterId] of Object.entries(
       value.agents.adapterAffinities ?? {},
@@ -380,6 +403,12 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   validationMaxRetries: z.number().int().min(0).max(20).optional(),
   ciFixMaxFanOut: z.number().int().min(1).max(50).optional(),
   ciFixMaxDepth: z.number().int().min(1).max(10).optional(),
+  deliberation: z
+    .object({
+      reviewerAdapter: CLIAdapterIdSchema.optional(),
+      maxRefinePasses: z.number().int().min(1).max(10).optional(),
+    })
+    .optional(),
   pullRequest: PullRequestAutomationSettingsOverrideSchema.optional(),
 });
 

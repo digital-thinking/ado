@@ -40,6 +40,10 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     validationMaxRetries: 3,
     ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
+    deliberation: {
+      reviewerAdapter: "CODEX_CLI",
+      maxRefinePasses: 1,
+    },
     pullRequest: {
       defaultTemplatePath: null,
       templateMappings: [],
@@ -201,6 +205,10 @@ function mergeCliSettings(
     executionLoop: {
       ...base.executionLoop,
       ...executionLoopOverride,
+      deliberation: {
+        ...base.executionLoop.deliberation,
+        ...executionLoopOverride?.deliberation,
+      },
       pullRequest: {
         ...base.executionLoop.pullRequest,
         ...executionLoopOverride?.pullRequest,

@@ -60,6 +60,8 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.ciEnabled).toBe(false);
     expect(parsed.executionLoop.ciBaseBranch).toBe("main");
     expect(parsed.executionLoop.validationMaxRetries).toBe(3);
+    expect(parsed.executionLoop.deliberation.reviewerAdapter).toBe("CODEX_CLI");
+    expect(parsed.executionLoop.deliberation.maxRefinePasses).toBe(1);
     expect(parsed.executionLoop.pullRequest.defaultTemplatePath).toBeNull();
     expect(parsed.executionLoop.pullRequest.templateMappings).toEqual([]);
     expect(parsed.executionLoop.pullRequest.labels).toEqual([]);
@@ -234,6 +236,27 @@ describe("type contracts", () => {
         },
       }),
     ).toThrow("must be enabled");
+  });
+
+  test("rejects deliberation reviewer adapter if disabled", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: {
+          enabled: false,
+        },
+        executionLoop: {
+          deliberation: {
+            reviewerAdapter: "CLAUDE_CLI",
+          },
+        },
+        agents: {
+          CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: false, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+        },
+      }),
+    ).toThrow("executionLoop.deliberation.reviewerAdapter");
   });
 
   test("accepts adapter affinities that target enabled adapters", () => {
