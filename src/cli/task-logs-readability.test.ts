@@ -77,4 +77,45 @@ describe("task logs readability", () => {
       "Error: adapter command failed with exit code 2",
     );
   });
+
+  test("DEAD_LETTER task logs include remediation guidance", async () => {
+    const sandbox = await TestSandbox.create("ixado-task-logs-dead-letter-");
+    sandboxes.push(sandbox);
+
+    expect(
+      runIxado(["phase", "create", "Phase 29", "phase-29-dead-letter"], sandbox)
+        .exitCode,
+    ).toBe(0);
+    expect(
+      runIxado(
+        ["task", "create", "P29-001", "Handle dead letters", "CODEX_CLI"],
+        sandbox,
+      ).exitCode,
+    ).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    const phase = state.phases[0];
+    if (!phase) {
+      throw new Error("Missing phase in sandbox state.");
+    }
+    const task = phase.tasks[0];
+    if (!task) {
+      throw new Error("Missing task in sandbox state.");
+    }
+
+    task.status = "DEAD_LETTER";
+    task.errorLogs = "Recovery marked unfixable after retries.";
+    task.resultContext =
+      "Task moved to DEAD_LETTER. Remediate manually and reset to TODO.";
+    await sandbox.writeProjectState(state);
+
+    const result = runIxado(["task", "logs", "1"], sandbox);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Task #1: P29-001 [DEAD_LETTER]");
+    expect(result.stdout).toContain(
+      "Remediation: Task moved to DEAD_LETTER. Remediate manually and reset to TODO.",
+    );
+    expect(result.stdout).toContain("Recovery marked unfixable after retries.");
+  });
 });

@@ -6,6 +6,7 @@ import { MockProcessRunner } from "./test-utils";
 describe("GitHubManager", () => {
   test("creates a pull request and returns its URL", async () => {
     const runner = new MockProcessRunner([
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/42\n" },
     ]);
     const manager = new GitHubManager(runner);
@@ -19,7 +20,7 @@ describe("GitHubManager", () => {
     });
 
     expect(url).toBe("https://github.com/org/repo/pull/42");
-    expect(runner.calls[0]).toEqual({
+    expect(runner.calls[1]).toEqual({
       command: "gh",
       args: [
         "pr",
@@ -54,6 +55,7 @@ describe("GitHubManager", () => {
 
   test("passes optional template, labels, assignees and draft flags", async () => {
     const runner = new MockProcessRunner([
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/77\n" },
     ]);
     const manager = new GitHubManager(runner);
@@ -71,7 +73,7 @@ describe("GitHubManager", () => {
     });
 
     expect(url).toBe("https://github.com/org/repo/pull/77");
-    expect(runner.calls[0]?.args).toEqual([
+    expect(runner.calls[1]?.args).toEqual([
       "pr",
       "create",
       "--base",

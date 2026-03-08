@@ -121,7 +121,33 @@ export function controlCenterHtml(params: {
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+      cursor: pointer;
+      user-select: none;
     }
+    .phase-collapsed:hover { background: rgba(0,0,0,0.02); border-radius: 8px; }
+    .phase-expand-tasks {
+      display: none;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--line);
+    }
+    .phase-row.expanded .phase-expand-tasks { display: flex; }
+    .phase-task-pill {
+      font-size: 0.72rem;
+      padding: 2px 7px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      white-space: nowrap;
+    }
+    .phase-task-pill.pill-done { background: #d4edda; border-color: #a3c9ab; color: #1d5c2e; }
+    .phase-task-pill.pill-failed { background: #f8d7da; border-color: #e0a0a5; color: #721c24; }
+    .phase-task-pill.pill-inprogress { background: #fff3cd; border-color: #d4b96a; color: #6b4c00; }
+    .phase-task-pill.pill-todo { color: #555; }
+    .phase-expand-arrow { display: inline-block; font-size: 0.7rem; color: #999; transition: transform 0.15s; }
+    .phase-row.expanded .phase-expand-arrow { transform: rotate(90deg); }
     .phase-row h3 { margin: 0 0 8px; font-size: 1rem; }
     .phase-status-grid {
       display: grid;
@@ -355,7 +381,7 @@ export function controlCenterHtml(params: {
 
       <section class="card wide">
         <h2>Phase Kanban</h2>
-        <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED). Dependencies are shown on each task.</div>
+        <div class="small">Phases are rows. Tasks are grouped into status columns (TODO, IN_PROGRESS, DONE, FAILED, DEAD_LETTER). Dependencies are shown on each task.</div>
         <div id="kanbanBoard" class="kanban"></div>
         <div id="kanbanError" class="error"></div>
       </section>
@@ -920,7 +946,7 @@ export function controlCenterHtml(params: {
     }
 
     function renderKanban(state) {
-      const KANBAN_STATUSES = ["TODO", "IN_PROGRESS", "DONE", "FAILED"];
+      const KANBAN_STATUSES = ["TODO", "IN_PROGRESS", "DONE", "FAILED", "DEAD_LETTER"];
       const taskById = new Map();
       state.phases.forEach((phase) => {
         phase.tasks.forEach((task) => {
@@ -956,15 +982,35 @@ export function controlCenterHtml(params: {
       const html = state.phases.map((phase) => {
         const isActive = phase.id === activePhaseId;
         if (!isActive) {
+          const tasks = phase.tasks || [];
+          if (tasks.length === 0) return ""; // hide phases with no tasks
+          const taskPills = tasks.map((task) => {
+            const s = task.status;
+            const cls = s === "DONE" ? "pill-done"
+              : s === "FAILED" || s === "DEAD_LETTER" ? "pill-failed"
+              : s === "IN_PROGRESS" || s === "CI_FIX" ? "pill-inprogress"
+              : "pill-todo";
+            return '<span class="phase-task-pill ' + cls + '" title="' + escapeHtml(s) + '">' + escapeHtml(task.title) + '</span>';
+          }).join("");
+          const doneTasks = tasks.filter(t => t.status === "DONE").length;
+          const allDone = doneTasks === tasks.length;
+          const effectiveStatus = allDone ? "DONE"
+            : (phase.status === "PLANNING" && doneTasks > 0) ? "PARTIAL"
+            : phase.status;
+          const isCompleted = allDone || phase.status === "DONE" || phase.status === "READY_FOR_REVIEW";
+          const summary = escapeHtml(effectiveStatus) + " | " + doneTasks + "/" + tasks.length + " done";
           return (
-            '<section class="phase-row">' +
+            '<section class="phase-row" data-phase-id="' + escapeHtml(phase.id) + '">' +
               '<div class="phase-collapsed">' +
                 "<div>" +
-                  "<h3>" + escapeHtml(phase.name) + "</h3>" +
-                  '<div class="small mono muted">' + escapeHtml(phase.status) + " | Tasks: " + escapeHtml(String((phase.tasks || []).length)) + "</div>" +
+                  "<h3>" + escapeHtml(phase.name) + " <span class='phase-expand-arrow'>▶</span></h3>" +
+                  '<div class="small mono muted">' + summary + "</div>" +
+                  (phase.prUrl ? '<div class="small"><a href="' + escapeHtml(phase.prUrl) + '" target="_blank" rel="noopener">PR: ' + escapeHtml(phase.prUrl) + '</a></div>' : "") +
                 "</div>" +
-                '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>' +
+                (isCompleted ? "" :
+                  '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>') +
               "</div>" +
+              '<div class="phase-expand-tasks">' + taskPills + '</div>' +
             "</section>"
           );
         }
@@ -1117,6 +1163,21 @@ export function controlCenterHtml(params: {
                       (!retryAssignee
                         ? '<div class="small" style="color:#7a2618;">Cannot retry without previous assignee. Reset to TODO and assign an agent.</div>'
                         : "") +
+                      '<div class="error task-run-error"></div>'
+                    );
+                  }
+
+                  if (task.status === "DEAD_LETTER") {
+                    return (
+                      '<div class="small">Dead-lettered after unfixable recovery.</div>' +
+                      '<div class="small">Remediation: <span class="mono">' +
+                        escapeHtml(task.resultContext || "Manual remediation required. Reset to TODO once fixed.") +
+                      "</span></div>" +
+                      '<div class="small">Failure summary: <span class="mono">' + escapeHtml(failureSummary) + "</span></div>" +
+                      '<div class="row">' +
+                        '<button type="button" class="secondary task-reset-button" data-phase-id="' + escapeHtml(phase.id) + '" data-task-id="' + escapeHtml(task.id) + '">Reset TODO</button>' +
+                      "</div>" +
+                      '<details><summary class="small">Failure logs</summary><pre class="mono small">' + escapeHtml(task.errorLogs || "No logs available.") + "</pre></details>" +
                       '<div class="error task-run-error"></div>'
                     );
                   }
@@ -1484,7 +1545,12 @@ export function controlCenterHtml(params: {
 
     kanbanBoard.addEventListener("click", async (event) => {
       const target = event.target;
+      // Toggle expand on collapsed phase rows (click anywhere except buttons)
       if (!(target instanceof HTMLButtonElement)) {
+        const row = target instanceof Element ? target.closest(".phase-row") : null;
+        if (row && row.querySelector(".phase-collapsed")) {
+          row.classList.toggle("expanded");
+        }
         return;
       }
       if (target.classList.contains("phase-activate-button")) {

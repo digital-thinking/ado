@@ -184,6 +184,12 @@ export type ResetTaskInput = {
   taskId: string;
 };
 
+export type MarkTaskDeadLetterInput = {
+  phaseId: string;
+  taskId: string;
+  reason: string;
+};
+
 export type ActivePhaseTaskItem = {
   number: number;
   title: string;
@@ -1193,6 +1199,7 @@ export class ControlCenterService {
       phaseId: input.phaseId,
       taskId: input.taskId,
       resume: input.resume,
+      cwd: input.cwd,
     });
 
     return {
@@ -1688,12 +1695,50 @@ export class ControlCenterService {
     const missingSideEffects: string[] = [];
 
     if (contracts.includes("PR_CREATION")) {
-      const prUrl = phase.prUrl?.trim();
+      let prUrl = phase.prUrl?.trim();
+      // If prUrl is not recorded yet, try to discover it from GitHub by branch name
+      if (!prUrl) {
+        try {
+          const ghProbe = await this.runCommandProbe(state.rootDir, "gh", [
+            "pr",
+            "list",
+            "--head",
+            phase.branchName,
+            "--json",
+            "url",
+            "--jq",
+            ".[0].url",
+          ]);
+          if (ghProbe.success && ghProbe.stdout.trim().startsWith("http")) {
+            prUrl = ghProbe.stdout.trim();
+            // Persist the discovered URL so subsequent checks and the CI loop can use it
+            const engine2 = await this.getEngine(input.projectName);
+            const state2 = await engine2.readProjectState();
+            const phaseIndex = state2.phases.findIndex(
+              (p) => p.id === phase.id,
+            );
+            if (phaseIndex >= 0) {
+              const nextPhases = [...state2.phases];
+              nextPhases[phaseIndex] = PhaseSchema.parse({
+                ...state2.phases[phaseIndex],
+                prUrl,
+              });
+              await engine2.writeProjectState({
+                ...state2,
+                phases: nextPhases,
+              });
+            }
+          }
+        } catch {
+          // gh lookup failed; fall through to missing-prUrl failure
+        }
+      }
       if (!prUrl) {
         probes.push({
           name: "phase.prUrl",
           success: false,
-          details: "Missing phase PR URL.",
+          details:
+            "Missing phase PR URL and no open PR found for branch on GitHub.",
         });
         missingSideEffects.push(
           "PR creation was not verified because phase.prUrl is missing.",
@@ -2277,9 +2322,9 @@ export class ControlCenterService {
       throw new Error(`Task not found: ${taskId}`);
     }
     const task = phase.tasks[taskIndex];
-    if (task.status !== "FAILED") {
+    if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
       throw new Error(
-        `Task must be FAILED before reset. Current status: ${task.status}`,
+        `Task must be FAILED or DEAD_LETTER before reset. Current status: ${task.status}`,
       );
     }
 
@@ -2294,6 +2339,69 @@ export class ControlCenterService {
       errorCategory: undefined,
       adapterFailureKind: undefined,
       completionVerification: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async markTaskDeadLetter(
+    input: MarkTaskDeadLetterInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const reason = input.reason.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!reason) {
+      throw new Error("reason must not be empty.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot mark a running task as DEAD_LETTER.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "FAILED") {
+      throw new Error(
+        `Task must be FAILED before dead-lettering. Current status: ${task.status}`,
+      );
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "DEAD_LETTER",
+      resultContext: reason,
     });
 
     const nextPhases = [...state.phases];

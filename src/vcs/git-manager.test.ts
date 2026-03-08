@@ -163,6 +163,11 @@ describe("GitManager", () => {
     await manager.commit({
       cwd: "C:/repo",
       message: "chore(ixado): finalize phase",
+      trailers: {
+        originatedBy:
+          "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        executedBy: "CODEX_CLI",
+      },
     });
 
     expect(runner.calls).toHaveLength(3);
@@ -178,8 +183,33 @@ describe("GitManager", () => {
     });
     expect(runner.calls[2]).toEqual({
       command: "git",
-      args: ["commit", "-m", "chore(ixado): finalize phase"],
+      args: [
+        "commit",
+        "-m",
+        "chore(ixado): finalize phase",
+        "--trailer",
+        "Originated-By=11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        "--trailer",
+        "Executed-By=CODEX_CLI",
+      ],
       cwd: "C:/repo",
     });
+  });
+
+  test("fails fast when trailer metadata is blank", async () => {
+    const runner = new MockProcessRunner();
+    const manager = new GitManager(runner);
+
+    await expect(
+      manager.commit({
+        cwd: "C:/repo",
+        message: "chore(ixado): finalize phase",
+        trailers: {
+          originatedBy: " ",
+          executedBy: "CODEX_CLI",
+        },
+      }),
+    ).rejects.toThrow("Originated-By trailer must not be empty.");
+    expect(runner.calls).toHaveLength(0);
   });
 });

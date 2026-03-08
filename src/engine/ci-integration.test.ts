@@ -14,6 +14,12 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
   markReadyOnApproval: false,
 };
 
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy:
+    "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+  executedBy: "CODEX_CLI",
+};
+
 describe("derivePullRequestMetadata", () => {
   test("formats title and body with DONE tasks sorted by ID and excludes CI_FIX", () => {
     const tasks: Task[] = [
@@ -110,6 +116,7 @@ describe("runCiIntegration", () => {
       { stdout: "" },
       { stdout: "phase-5-ci-execution-loop\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/123\n" },
     ]);
     const setPrCalls: Array<{ phaseId: string; prUrl: string }> = [];
@@ -132,6 +139,7 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {
@@ -156,7 +164,7 @@ describe("runCiIntegration", () => {
 
     expect(result.prUrl).toBe("https://github.com/org/repo/pull/123");
     expect(result.headBranch).toBe("phase-5-ci-execution-loop");
-    expect(runner.calls).toHaveLength(6);
+    expect(runner.calls).toHaveLength(7);
     expect(runner.calls[0]).toEqual({
       command: "git",
       args: ["add", "--all"],
@@ -173,6 +181,10 @@ describe("runCiIntegration", () => {
         "commit",
         "-m",
         "chore(ixado): finalize Phase 5: CI Execution Loop",
+        "--trailer",
+        "Originated-By=11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+        "--trailer",
+        "Executed-By=CODEX_CLI",
       ],
       cwd: "C:/repo",
     });
@@ -187,7 +199,9 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
     });
     expect(runner.calls[5]?.command).toBe("gh");
-    const ghArgs = runner.calls[5]?.args as string[];
+    expect((runner.calls[5]?.args as string[])[1]).toBe("list"); // gh pr list (check existing)
+    expect(runner.calls[6]?.command).toBe("gh");
+    const ghArgs = runner.calls[6]?.args as string[];
     expect(ghArgs[0]).toBe("pr");
     expect(ghArgs[1]).toBe("create");
     expect(ghArgs[7]).toBe("Phase 5: CI Execution Loop");
@@ -213,6 +227,7 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "   ",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -251,6 +266,7 @@ describe("runCiIntegration", () => {
       cwd: "C:/repo",
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "operator",
       policy: {
@@ -278,8 +294,18 @@ describe("runCiIntegration", () => {
     expect(runner.calls).toHaveLength(0);
   });
 
-  test("fails fast when there is nothing to commit", async () => {
-    const runner = new MockProcessRunner([{ stdout: "" }, { stdout: "" }]);
+  test("skips commit step and proceeds to push when there is nothing to stage", async () => {
+    // Provide enough responses to reach the push/PR step without throwing MissingCommitError.
+    // gh pr list (no existing), git add, git diff --cached (empty=nothing staged), git branch, git push, gh pr create (empty→parse error)
+    // Sequence: git add, git diff --cached (empty→skip commit), git branch --show-current, git push, gh pr list (no existing), gh pr create (empty→parse error)
+    const runner = new MockProcessRunner([
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "feat/phase-5" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "" },
+    ]);
 
     await expect(
       runCiIntegration({
@@ -289,6 +315,7 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -308,10 +335,21 @@ describe("runCiIntegration", () => {
         },
         setPhasePrUrl: async () => {},
       }),
-    ).rejects.toThrow(
-      "CI integration requires a commit before push/PR, but there are no local changes to commit.",
-    );
-    expect(runner.calls).toHaveLength(2);
+    ).rejects.toThrow("Unable to parse pull request URL from gh output.");
+    const gitCommands = runner.calls
+      .filter((call) => call.command === "git")
+      .map((call) => ((call.args ?? [])[0] as string) ?? "");
+    expect(gitCommands).toContain("push");
+    expect(gitCommands).not.toContain("commit");
+
+    const ghSubcommands = runner.calls
+      .filter((call) => call.command === "gh")
+      .map((call) => {
+        const args = call.args ?? [];
+        return `${(args[0] as string) ?? ""} ${(args[1] as string) ?? ""}`.trim();
+      });
+    expect(ghSubcommands).toContain("pr list");
+    expect(ghSubcommands).toContain("pr create");
   });
 
   test("fails fast with actionable message when commit command fails", async () => {
@@ -329,6 +367,7 @@ describe("runCiIntegration", () => {
         cwd: "C:/repo",
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: {
@@ -361,6 +400,7 @@ describe("runCiIntegration", () => {
       { stdout: "" },
       { stdout: "phase-23-feature\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/321\n" },
     ]);
 
@@ -383,6 +423,7 @@ describe("runCiIntegration", () => {
         createAsDraft: true,
         markReadyOnApproval: false,
       },
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: {
@@ -403,7 +444,7 @@ describe("runCiIntegration", () => {
       setPhasePrUrl: async () => {},
     });
 
-    const ghArgs = runner.calls[5]?.args as string[];
+    const ghArgs = runner.calls[6]?.args as string[];
     expect(ghArgs[0]).toBe("pr");
     expect(ghArgs[1]).toBe("create");
     expect(ghArgs[7]).toBe("Phase 23");

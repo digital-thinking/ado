@@ -61,7 +61,10 @@ import {
   saveCliSettings,
 } from "./settings";
 import {
+  isProcessRunning,
   parseWebPort,
+  readWebRuntimeRecord,
+  resolveWebRuntimeFilePath,
   serveWebControlCenter,
   startWebDaemon,
   stopWebDaemon,
@@ -739,7 +742,7 @@ function resolvePhaseFailureGuidance(
     case "REMOTE_CI":
       return "Remote CI checks failed on the PR. Complete the CI_FIX task(s) to address CI errors, then rerun 'ixado phase run'.";
     case "AGENT_FAILURE":
-      return "Task agent execution failed. Retry the failed task with 'ixado task retry <n>' or reset it with 'ixado task reset <n>'.";
+      return "Task agent execution failed. Retry FAILED tasks with 'ixado task retry <n>'. DEAD_LETTER tasks require manual remediation, then 'ixado task reset <n>'.";
     default:
       return "Phase execution stopped. Run 'ixado task list' to review tasks and 'ixado phase run' to resume.";
   }
@@ -924,6 +927,10 @@ async function runTaskStartCommand({
     console.info(
       `Next:    Retry with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
     );
+  } else if (task.status === "DEAD_LETTER") {
+    console.info(
+      `Next:    DEAD_LETTER requires manual remediation. Reset with 'ixado task reset ${taskNumber}' after fixing root cause.`,
+    );
   } else {
     console.info(
       `Next:    Run 'ixado task list' to see all tasks or 'ixado phase run' to continue.`,
@@ -1101,6 +1108,14 @@ async function runTaskRetryCommand({
 
   const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
   if (task.status !== "FAILED") {
+    if (task.status === "DEAD_LETTER") {
+      throw new ValidationError(
+        `Task #${taskNumber} is in DEAD_LETTER status.`,
+        {
+          hint: `Manual remediation is required first. Reset to TODO with 'ixado task reset ${taskNumber}', then start it again.`,
+        },
+      );
+    }
     throw new ValidationError(
       `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
       {
@@ -1148,6 +1163,10 @@ async function runTaskRetryCommand({
     }
     console.info(
       `Next:    Retry again with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
+    );
+  } else if (retriedTask.status === "DEAD_LETTER") {
+    console.info(
+      `Next:    DEAD_LETTER requires manual remediation. Reset with 'ixado task reset ${taskNumber}' after fixing root cause.`,
     );
   } else {
     console.info(
@@ -1217,6 +1236,14 @@ async function runTaskLogsCommand({
     console.info(task.errorLogs ?? "No failure logs recorded.");
     return;
   }
+  if (task.status === "DEAD_LETTER") {
+    console.info(`Failure summary: ${summarizeFailure(task.errorLogs)}`);
+    console.info(
+      `Remediation: ${task.resultContext ?? `Manual remediation required. Reset with 'ixado task reset ${taskNumber}' once fixed.`}`,
+    );
+    console.info(task.errorLogs ?? "No failure logs recorded.");
+    return;
+  }
   if (task.status === "DONE") {
     console.info(task.resultContext ?? "No result context recorded.");
     return;
@@ -1257,11 +1284,11 @@ async function runTaskResetCommand({
     taskNumber,
   );
 
-  if (task.status !== "FAILED") {
+  if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
     throw new ValidationError(
-      `Task #${taskNumber} is not in FAILED status (current: ${task.status}).`,
+      `Task #${taskNumber} is not in FAILED/DEAD_LETTER status (current: ${task.status}).`,
       {
-        hint: "Only failed tasks can be reset.",
+        hint: "Only failed or dead-letter tasks can be reset.",
       },
     );
   }
@@ -1315,14 +1342,27 @@ async function runPhaseRunCommand({
   );
   const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
+  const enabledAdapters = getAvailableAgents(settings);
   const telegram = resolveTelegramConfig(settings.telegram);
+
+  // Skip Telegram when the web server is already running — it owns the bot
+  // polling and starting a second listener causes a 409 conflict.
+  const webRuntimeFile = resolveWebRuntimeFilePath(projectRootDir);
+  const webRuntime = await readWebRuntimeRecord(webRuntimeFile);
+  const webServerRunning =
+    webRuntime !== null && isProcessRunning(webRuntime.pid);
+  if (webServerRunning) {
+    console.info(
+      "Web server is running — Telegram polling delegated to web server. Loop controls (/next, /stop) are available via Telegram.",
+    );
+  }
 
   let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
   const notifyTelegramEvent = createTelegramNotificationEvaluator({
     level: settings.telegram.notifications.level,
     suppressDuplicates: settings.telegram.notifications.suppressDuplicates,
   });
-  if (telegram.enabled) {
+  if (telegram.enabled && !webServerRunning) {
     telegramRuntime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
@@ -1358,7 +1398,14 @@ async function runPhaseRunCommand({
       mode,
       countdownSeconds,
       activeAssignee,
+      enabledAdapters,
       adapterAffinities: settings.agents.adapterAffinities,
+      adapterCircuitBreakers: {
+        CODEX_CLI: settings.agents.CODEX_CLI.circuitBreaker,
+        CLAUDE_CLI: settings.agents.CLAUDE_CLI.circuitBreaker,
+        GEMINI_CLI: settings.agents.GEMINI_CLI.circuitBreaker,
+        MOCK_CLI: settings.agents.MOCK_CLI.circuitBreaker,
+      },
       maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
@@ -1547,6 +1594,20 @@ async function runStatusCommand(): Promise<void> {
     console.info(
       `Active: ${activePhase ? `${activePhase.name} (${activePhase.status})` : "none"}`,
     );
+  }
+  if (activePhase) {
+    const deadLetterTasks = activePhase.tasks
+      .map((task, index) => ({ task, number: index + 1 }))
+      .filter((entry) => entry.task.status === "DEAD_LETTER");
+    if (deadLetterTasks.length > 0) {
+      const labels = deadLetterTasks
+        .map((entry) => `#${entry.number} ${entry.task.title}`)
+        .join(" | ");
+      console.info(`Dead-letter tasks (${deadLetterTasks.length}): ${labels}`);
+      console.info(
+        "Remediation: fix root cause manually, then run 'ixado task reset <n>' and restart the task.",
+      );
+    }
   }
   console.info(`Available agents: ${availableAgents.join(", ")}`);
   console.info(`Running Agents (${runningAgents.length}):`);

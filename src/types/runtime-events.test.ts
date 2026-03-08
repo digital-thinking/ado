@@ -79,6 +79,38 @@ describe("runtime event contract", () => {
     );
   });
 
+  test("formats adapter circuit transition events for CLI and Telegram", () => {
+    const event = createRuntimeEvent({
+      family: "adapter-circuit",
+      type: "adapter.circuit",
+      payload: {
+        stage: "opened",
+        summary: "Circuit breaker opened for CODEX_CLI after 3 failures.",
+        consecutiveFailures: 3,
+        failureThreshold: 3,
+        cooldownMs: 300_000,
+        remainingCooldownMs: 300_000,
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-1",
+        adapterId: "CODEX_CLI",
+      },
+    });
+
+    expect(formatRuntimeEventForCli(event)).toBe(
+      "Circuit breaker opened for CODEX_CLI after 3 failures.",
+    );
+    expect(formatRuntimeEventForTelegram(event)).toBe(
+      "Adapter circuit: Circuit breaker opened for CODEX_CLI after 3 failures.",
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(true);
+    expect(createRuntimeEventNotificationKey(event)).toContain(
+      "adapter.circuit",
+    );
+  });
+
   test("formats CI and PR lifecycle events for Telegram consumers", () => {
     const prEvent = createRuntimeEvent({
       family: "ci-pr-lifecycle",
@@ -176,6 +208,26 @@ describe("runtime event contract", () => {
     expect(shouldNotifyRuntimeEventForTelegram(event, "all")).toBe(true);
     expect(shouldNotifyRuntimeEventForTelegram(event, "important")).toBe(false);
     expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(false);
+  });
+
+  test("notifies DEAD_LETTER task completion at critical Telegram level", () => {
+    const event = createRuntimeEvent({
+      family: "task-lifecycle",
+      type: "task.lifecycle.finish",
+      payload: {
+        status: "DEAD_LETTER",
+        message: "Task moved to DEAD_LETTER.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-1",
+      },
+    });
+
+    expect(shouldNotifyRuntimeEventForTelegram(event, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(event, "important")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(true);
   });
 
   test("formats agent runtime diagnostics for CLI adapter output", () => {

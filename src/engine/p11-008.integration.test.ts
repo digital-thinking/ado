@@ -33,6 +33,11 @@ const DEFAULT_PULL_REQUEST_SETTINGS = {
   markReadyOnApproval: false,
 };
 
+const DEFAULT_COMMIT_TRAILERS = {
+  originatedBy: `${PHASE.id}/22222222-2222-4222-8222-222222222222`,
+  executedBy: "CODEX_CLI",
+};
+
 function clonePolicy(policy: AuthPolicy): AuthPolicy {
   return structuredClone(policy);
 }
@@ -64,6 +69,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy,
@@ -79,6 +85,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner([{ stdout: "feature/p11-008\n" }]),
         role: "admin",
         policy,
@@ -96,6 +103,7 @@ describe("P11-008 integration coverage", () => {
       { stdout: "" },
       { stdout: "feature/p11-008\n" },
       { stdout: "" },
+      { stdout: "" }, // gh pr list (no existing PR)
       { stdout: "https://github.com/org/repo/pull/1108\n" },
     ]);
 
@@ -107,6 +115,7 @@ describe("P11-008 integration coverage", () => {
       cwd: TEST_CWD,
       baseBranch: "main",
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+      commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
       role: "admin",
       policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -126,8 +135,10 @@ describe("P11-008 integration coverage", () => {
       "feature/p11-008",
     ]);
     expect(runner.calls[5]?.command).toBe("gh");
-    expect(runner.calls[5]?.args).toContain("pr");
-    expect(runner.calls[5]?.args).toContain("create");
+    expect(runner.calls[5]?.args).toContain("list"); // gh pr list (check existing)
+    expect(runner.calls[6]?.command).toBe("gh");
+    expect(runner.calls[6]?.args).toContain("pr");
+    expect(runner.calls[6]?.args).toContain("create");
   });
 
   test("audit log writes to target project cwd even when process cwd is elsewhere", async () => {
@@ -158,6 +169,7 @@ describe("P11-008 integration coverage", () => {
         cwd: projectDir,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "admin",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -210,6 +222,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: null,
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -268,6 +281,7 @@ describe("P11-008 integration coverage", () => {
           cwd: TEST_CWD,
           baseBranch: "main",
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+          commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
           role: "operator",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -289,6 +303,7 @@ describe("P11-008 integration coverage", () => {
           cwd: TEST_CWD,
           baseBranch: "main",
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+          commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
           role: "viewer",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -307,6 +322,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
         role: "operator",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -329,6 +345,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
         role: "viewer",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -354,6 +371,7 @@ describe("P11-008 integration coverage", () => {
         { stdout: "" },
         { stdout: "feature/p11-008\n" },
         { stdout: "" },
+        { stdout: "" }, // gh pr list (no existing PR)
         { stdout: "https://github.com/org/repo/pull/42\n" },
       ]);
 
@@ -364,6 +382,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
@@ -373,9 +392,9 @@ describe("P11-008 integration coverage", () => {
       expect(result.prUrl).toBe("https://github.com/org/repo/pull/42");
       expect(result.phaseId).toBe(PHASE.id);
       expect(result.baseBranch).toBe("main");
-      expect(runner.calls).toHaveLength(6);
+      expect(runner.calls).toHaveLength(7);
       expect(runner.calls[4]?.command).toBe("git");
-      expect(runner.calls[5]?.command).toBe("gh");
+      expect(runner.calls[6]?.command).toBe("gh");
     });
 
     test("owner setPhasePrUrl callback receives the correct prUrl", async () => {
@@ -396,6 +415,7 @@ describe("P11-008 integration coverage", () => {
         cwd: TEST_CWD,
         baseBranch: "main",
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
+        commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),

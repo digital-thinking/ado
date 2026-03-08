@@ -33,6 +33,7 @@ With shared services:
 ### 3) Adapter Execution (`src/adapters/`, `src/web/agent-supervisor.ts`)
 
 - Adapter-specific command builders normalize Codex/Claude/Gemini/Mock invocation.
+- Adapter circuit breaker tracks per-adapter consecutive failures with cooldown-based auto-close for resilience controls in phase execution.
 - Agent supervisor runs tasks to completion, captures output tails, and tracks runtime metadata.
 - Supports adapter safety flags, timeout settings, and startup diagnostics.
 
@@ -42,6 +43,7 @@ IxADO uses a typed runtime event union (`RuntimeEvent`) to normalize execution t
 
 - `task-lifecycle`: task start/progress/phase updates/finish.
 - `adapter-output`: streaming output chunks/diagnostics with stream metadata.
+- `adapter-circuit`: adapter circuit-breaker open/close transitions.
 - `tester-recovery`: tester state and recovery attempt traceability.
 - `terminal-outcome`: concise success/failure/cancelled summaries for final rendering.
 
@@ -67,13 +69,14 @@ Web SSE keeps legacy `output`/`status` fields for compatibility while attaching 
 ### 7) Exception Recovery (`src/engine/exception-recovery.ts`)
 
 - Handles recoverable task/phase exceptions with structured recovery prompts.
-- Parses strict recovery results (`fixed`/`unfixable`) and feeds decisions back to the phase loop.
+- Parses strict recovery results (`fixed`/`unfixable`) and feeds decisions back to the phase loop (`unfixable` exhaustion dead-letters tasks).
 - Emits audit-visible recovery events for traceability.
 
 ## Configuration Model
 
 - Global project registry and defaults (multi-project support).
 - Project-level runtime settings (loop mode, default assignee, adapter settings).
+- Per-adapter circuit-breaker thresholds/cooldowns under `settings.agents.<adapter>.circuitBreaker`.
 - Optional semantic routing hints (`agents.adapterAffinities`) map task types to preferred adapters.
 - Policy/security controls for privileged operations.
 

@@ -20,6 +20,7 @@ describe("type contracts", () => {
   test("supports expected assignees and task statuses", () => {
     expect(WorkerAssigneeSchema.parse("CODEX_CLI")).toBe("CODEX_CLI");
     expect(TaskStatusSchema.parse("CI_FIX")).toBe("CI_FIX");
+    expect(TaskStatusSchema.parse("DEAD_LETTER")).toBe("DEAD_LETTER");
     expect(WorkerArchetypeSchema.parse("REVIEWER")).toBe("REVIEWER");
   });
 
@@ -69,6 +70,8 @@ describe("type contracts", () => {
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
+    expect(parsed.agents.CODEX_CLI.circuitBreaker.failureThreshold).toBe(3);
+    expect(parsed.agents.CODEX_CLI.circuitBreaker.cooldownMs).toBe(300_000);
   });
 
   test("validates strict exception recovery result contract", () => {

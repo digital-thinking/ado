@@ -15,7 +15,7 @@ IxADO organizes work into **Phases**. Each phase contains tasks with explicit as
 2. **Branch Prep:** Phase execution prepares or checks out the phase branch.
 3. **Task Execution:** Tasks run through adapter-specific workers using one normalized execution path.
 4. **Tester Pass (optional but supported):** Post-task validation can create CI-fix tasks when checks fail.
-5. **Recovery:** Recoverable execution exceptions can trigger AI-assisted remediation attempts.
+5. **Recovery:** Recoverable execution exceptions can trigger AI-assisted remediation attempts. If recovery is exhausted with an `unfixable` result, the task is moved to `DEAD_LETTER` and requires manual remediation + `ixado task reset <n>`.
 6. **Completion:** Phase reaches `DONE` when no TODO/CI_FIX tasks remain and configured checks pass.
 
 ## Core Features
@@ -156,6 +156,28 @@ So project settings win over global defaults for overlapping keys. Use `ixado co
 
 Affinity targets must reference enabled adapters in `settings.agents`.
 New tasks are auto-classified from title/description heuristics; override with `ixado task create "Title" "Description" [assignee] --type <taskType>`.
+
+### Per-adapter circuit breaker settings
+
+Each adapter also exposes `agents.<ADAPTER>.circuitBreaker`:
+
+```json
+{
+  "agents": {
+    "CODEX_CLI": {
+      "circuitBreaker": {
+        "failureThreshold": 3,
+        "cooldownMs": 300000
+      }
+    }
+  }
+}
+```
+
+- `failureThreshold`: consecutive failures before the adapter circuit opens.
+- `cooldownMs`: open-circuit cooldown window before automatic close.
+- During `ixado phase run`, open circuits are skipped and execution is rerouted to the next enabled adapter in fallback order.
+- Breaker transitions (`opened`/`closed`) are emitted as runtime events (`adapter.circuit`) for CLI/Web/Telegram consumers.
 
 ### Windows
 
