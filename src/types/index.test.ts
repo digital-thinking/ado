@@ -9,6 +9,7 @@ import {
   TaskSchema,
   RecoveryAttemptRecordSchema,
   ProjectStateSchema,
+  TaskTypeSchema,
   TaskStatusSchema,
   WorkerArchetypeSchema,
   WorkerAssigneeSchema,
@@ -130,6 +131,36 @@ describe("type contracts", () => {
 
     expect(parsed.completionVerification?.contracts).toEqual(["PR_CREATION"]);
     expect(parsed.completionVerification?.status).toBe("FAILED");
+    expect(parsed.taskType).toBeUndefined();
+  });
+
+  test("supports optional task type classification", () => {
+    expect(TaskTypeSchema.parse("implementation")).toBe("implementation");
+    expect(TaskTypeSchema.parse("code-review")).toBe("code-review");
+    expect(TaskTypeSchema.parse("test-writing")).toBe("test-writing");
+    expect(TaskTypeSchema.parse("security-audit")).toBe("security-audit");
+    expect(TaskTypeSchema.parse("documentation")).toBe("documentation");
+
+    const parsedTask = TaskSchema.parse({
+      id: "44444444-4444-4444-8444-444444444444",
+      title: "Write docs",
+      description: "Document new CLI command",
+      taskType: "documentation",
+    });
+
+    expect(parsedTask.taskType).toBe("documentation");
+  });
+
+  test("rejects invalid task type classification", () => {
+    expect(() => TaskTypeSchema.parse("refactor")).toThrow();
+    expect(() =>
+      TaskSchema.parse({
+        id: "55555555-5555-4555-8555-555555555555",
+        title: "Invalid type task",
+        description: "Should fail",
+        taskType: "refactor",
+      }),
+    ).toThrow();
   });
 
   test("supports optional per-project execution settings", () => {
