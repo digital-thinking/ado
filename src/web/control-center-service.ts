@@ -1199,6 +1199,7 @@ export class ControlCenterService {
       phaseId: input.phaseId,
       taskId: input.taskId,
       resume: input.resume,
+      cwd: input.cwd,
     });
 
     return {
