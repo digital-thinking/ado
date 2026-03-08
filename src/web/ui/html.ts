@@ -1005,6 +1005,7 @@ export function controlCenterHtml(params: {
                 "<div>" +
                   "<h3>" + escapeHtml(phase.name) + " <span class='phase-expand-arrow'>▶</span></h3>" +
                   '<div class="small mono muted">' + summary + "</div>" +
+                  (phase.prUrl ? '<div class="small"><a href="' + escapeHtml(phase.prUrl) + '" target="_blank" rel="noopener">PR: ' + escapeHtml(phase.prUrl) + '</a></div>' : "") +
                 "</div>" +
                 (isCompleted ? "" :
                   '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>') +

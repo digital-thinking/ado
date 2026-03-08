@@ -134,21 +134,19 @@ export async function runCiIntegration(
 
   await git.stageAll(input.cwd);
   const hasChangesToCommit = await git.hasStagedChanges(input.cwd);
-  if (!hasChangesToCommit) {
-    throw new MissingCommitError();
-  }
-
-  try {
-    await git.commit({
-      cwd: input.cwd,
-      message: `chore(ixado): finalize ${input.phaseName}`,
-      trailers: input.commitTrailers,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new MissingCommitError(
-      `CI integration could not create commit before push/PR: ${message}`,
-    );
+  if (hasChangesToCommit) {
+    try {
+      await git.commit({
+        cwd: input.cwd,
+        message: `chore(ixado): finalize ${input.phaseName}`,
+        trailers: input.commitTrailers,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new MissingCommitError(
+        `CI integration could not create commit before push/PR: ${message}`,
+      );
+    }
   }
 
   const headBranch = await git.getCurrentBranch(input.cwd);
