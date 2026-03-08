@@ -28,6 +28,7 @@ import { ProcessManager } from "../process";
 import { StateEngine } from "../state";
 import {
   ActivePhaseResolutionError,
+  resolvePrimaryActivePhaseId,
   resolveActivePhaseStrict,
 } from "../state/active-phase";
 import {
@@ -51,7 +52,7 @@ import {
 } from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
-import { GitHubManager } from "../vcs";
+import { GitHubManager, GitManager, WorktreeManager } from "../vcs";
 import { initializeCliLogging } from "./logging";
 import { CommandRegistry, type CommandActionContext } from "./command-registry";
 import { ValidationError } from "./validation";
@@ -77,6 +78,8 @@ import {
 
 const DEFAULT_STATE_FILE = ".ixado/state.json";
 const CLI_LOG_FILE_PATH = initializeCliLogging(process.cwd());
+const PHASE_RUN_USAGE =
+  "ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]";
 
 type TelegramBootstrapConfig =
   | { enabled: false }
@@ -407,6 +410,17 @@ function createServices(
     projectName,
   );
   return { control, agents };
+}
+
+function createWorktreeManager(
+  projectRootDir: string,
+  baseDir: string,
+): WorktreeManager {
+  return new WorktreeManager({
+    git: new GitManager(new ProcessManager()),
+    projectRootDir,
+    baseDir,
+  });
 }
 
 async function runDefaultCommand(): Promise<void> {
@@ -794,7 +808,7 @@ function resolvePhaseRunMode(
   }
 
   throw new ValidationError(`Invalid phase run mode: '${rawMode}'.`, {
-    usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+    usage: PHASE_RUN_USAGE,
     hint: "Use 'auto' for fully automatic execution or 'manual' for step-by-step confirmation.",
   });
 }
@@ -813,13 +827,117 @@ function resolveCountdownSeconds(
     throw new ValidationError(
       `Invalid countdown seconds: '${rawCountdown}'. Expected a non-negative integer.`,
       {
-        usage: "ixado phase run [auto|manual] [countdownSeconds>=0]",
+        usage: PHASE_RUN_USAGE,
         hint: "Use 0 to skip the countdown, or a positive number for a timed delay.",
       },
     );
   }
 
   return parsed;
+}
+
+function parsePhaseRunArgs(args: string[]): {
+  modeRaw: string | undefined;
+  countdownRaw: string | undefined;
+  phaseReference: string | undefined;
+} {
+  const positional: string[] = [];
+  let phaseReference: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]?.trim() ?? "";
+    if (!token) {
+      continue;
+    }
+
+    if (token === "--phase" || token.startsWith("--phase=")) {
+      if (phaseReference !== undefined) {
+        throw new ValidationError("Duplicate --phase option.", {
+          usage: PHASE_RUN_USAGE,
+          hint: "Provide --phase only once.",
+        });
+      }
+
+      const value =
+        token === "--phase"
+          ? (args[index + 1]?.trim() ?? "")
+          : token.slice("--phase=".length).trim();
+      if (!value) {
+        throw new ValidationError("Missing value for --phase.", {
+          usage: PHASE_RUN_USAGE,
+          hint: "Provide a phase number or phase ID after --phase.",
+        });
+      }
+
+      phaseReference = value;
+      if (token === "--phase") {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      throw new ValidationError(`Unknown option: '${token}'.`, {
+        usage: PHASE_RUN_USAGE,
+        hint: "Supported option: --phase <phaseNumber|phaseId>.",
+      });
+    }
+
+    positional.push(token);
+  }
+
+  return {
+    modeRaw: positional[0],
+    countdownRaw: positional[1],
+    phaseReference,
+  };
+}
+
+function resolvePhaseIdForReference(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>,
+  phaseReference: string,
+): string {
+  const exactMatch = state.phases.find((phase) => phase.id === phaseReference);
+  if (exactMatch) {
+    return exactMatch.id;
+  }
+
+  const phaseNumber = Number(phaseReference);
+  if (!Number.isInteger(phaseNumber) || phaseNumber < 1) {
+    throw new Error(`Phase not found: ${phaseReference}`);
+  }
+
+  const phase = state.phases[phaseNumber - 1];
+  if (!phase) {
+    throw new Error(`Phase not found: ${phaseReference}`);
+  }
+
+  return phase.id;
+}
+
+function resolvePhaseRunTargetId(
+  state: Awaited<ReturnType<ControlCenterService["getState"]>>,
+  phaseReference: string | undefined,
+): string | undefined {
+  if (!phaseReference) {
+    return undefined;
+  }
+
+  const phaseId = resolvePhaseIdForReference(state, phaseReference);
+  const isActive = state.activePhaseIds.some(
+    (candidate) => candidate.trim() === phaseId,
+  );
+  if (!isActive) {
+    throw new ValidationError(
+      `Phase '${phaseReference}' is not active and cannot be run with --phase.`,
+      {
+        usage: PHASE_RUN_USAGE,
+        hint: "Use 'ixado phase active <phaseNumber|phaseId>' first.",
+      },
+    );
+  }
+
+  return phaseId;
 }
 
 async function resolveActivePhaseTaskForNumber(
@@ -835,8 +953,9 @@ async function resolveActivePhaseTaskForNumber(
 }> {
   const state = await control.getState();
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new ValidationError("No active phase found.", {
       hint: "Run 'ixado phase create <name> <branchName>' to create a phase first.",
@@ -913,8 +1032,9 @@ async function runTaskStartCommand({
   });
 
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new Error("No phase available after task run.");
   }
@@ -1314,8 +1434,9 @@ async function runTaskRetryCommand({
   });
 
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new Error("No phase available after task retry.");
   }
@@ -1495,6 +1616,7 @@ async function runPhaseRunCommand({
     settings,
     projectName,
   );
+  const parsedRunArgs = parsePhaseRunArgs(args);
 
   // Reconcile stale RUNNING agents left over from a prior process crash so that
   // the agent registry does not show phantom RUNNING entries.
@@ -1505,10 +1627,18 @@ async function runPhaseRunCommand({
     );
   }
 
-  const mode = resolvePhaseRunMode(args[0], projectExecutionSettings.autoMode);
+  const mode = resolvePhaseRunMode(
+    parsedRunArgs.modeRaw,
+    projectExecutionSettings.autoMode,
+  );
   const countdownSeconds = resolveCountdownSeconds(
-    args[1],
+    parsedRunArgs.countdownRaw,
     settings.executionLoop.countdownSeconds,
+  );
+  const lockState = await control.getState();
+  const targetPhaseId = resolvePhaseRunTargetId(
+    lockState,
+    parsedRunArgs.phaseReference,
   );
   const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
@@ -1591,6 +1721,8 @@ async function runPhaseRunCommand({
         maxRefinePasses: settings.executionLoop.deliberation.maxRefinePasses,
       },
       projectRootDir,
+      worktrees: settings.worktrees,
+      phaseId: targetPhaseId,
       projectName,
       policy,
       role: "admin",
@@ -1604,9 +1736,14 @@ async function runPhaseRunCommand({
     },
   );
 
+  const lockPhaseId =
+    targetPhaseId ??
+    resolvePrimaryActivePhaseId(lockState) ??
+    "no-active-phase";
   const runLock = new ExecutionRunLock({
     projectRootDir,
     projectName,
+    phaseId: lockPhaseId,
     owner: "CLI_PHASE_RUN",
   });
   await runLock.acquire();
@@ -1646,7 +1783,9 @@ async function runPhaseActiveCommand({
   );
   await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.setActivePhase({ phaseId });
-  const active = state.phases.find((phase) => phase.id === state.activePhaseId);
+  const active = state.phases.find(
+    (phase) => phase.id === state.activePhaseIds[0],
+  );
   if (!active) {
     throw new Error(`Active phase not found after update: ${phaseId}`);
   }
@@ -1656,6 +1795,83 @@ async function runPhaseActiveCommand({
   console.info(
     `Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.`,
   );
+}
+
+async function runWorktreeListCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  if (args.length > 0) {
+    throw new ValidationError(`Unexpected argument: '${args[0]}'.`, {
+      usage: "ixado worktree list",
+      hint: "This command does not accept additional arguments.",
+    });
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const manager = createWorktreeManager(
+    projectRootDir,
+    settings.worktrees.baseDir,
+  );
+  const active = await manager.listActive();
+
+  if (active.length === 0) {
+    console.info("No active managed worktrees found.");
+    return;
+  }
+
+  console.info(`Active managed worktrees (${active.length}):`);
+  for (const worktree of active) {
+    console.info(
+      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${worktree.path}`,
+    );
+  }
+}
+
+async function runWorktreePruneCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  if (args.length > 0) {
+    throw new ValidationError(`Unexpected argument: '${args[0]}'.`, {
+      usage: "ixado worktree prune",
+      hint: "This command does not accept additional arguments.",
+    });
+  }
+
+  const settingsFilePath = resolveSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const projectRootDir = await resolveProjectRootDir();
+  const projectName = await resolveProjectName();
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const control = createControlCenterService(
+    stateFilePath,
+    projectRootDir,
+    settings,
+    projectName,
+  );
+  await control.ensureInitialized(projectName, projectRootDir);
+  const state = await control.getState();
+  const manager = createWorktreeManager(
+    projectRootDir,
+    settings.worktrees.baseDir,
+  );
+  const pruned = await manager.pruneOrphaned({
+    phases: state.phases.map((phase) => ({
+      id: phase.id,
+      status: phase.status,
+    })),
+  });
+
+  if (pruned.length === 0) {
+    console.info("No orphaned worktrees found.");
+    return;
+  }
+
+  console.info(`Pruned orphaned worktrees (${pruned.length}):`);
+  for (const worktree of pruned) {
+    console.info(`${worktree.phaseId} ${worktree.path}`);
+  }
 }
 
 async function runPhaseCreateCommand({
@@ -1746,7 +1962,7 @@ async function runStatusCommand(): Promise<void> {
   await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.getState();
   const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
+    (phase) => phase.id === state.activePhaseIds[0],
   );
   const runningAgents = agents
     .list()
@@ -2163,7 +2379,8 @@ async function runCli(args: string[]): Promise<void> {
         {
           name: "run",
           description: "Run TODO/CI_FIX tasks in active phase sequentially",
-          usage: "run [auto|manual] [countdownSeconds>=0]",
+          usage:
+            "run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
           action: runPhaseRunCommand,
         },
       ],
@@ -2202,6 +2419,22 @@ async function runCli(args: string[]): Promise<void> {
           description: "Enable/disable codexbar usage telemetry",
           usage: "usage <on|off>",
           action: runConfigUsageCommand,
+        },
+      ],
+    },
+    {
+      name: "worktree",
+      description: "Manage phase worktrees",
+      subcommands: [
+        {
+          name: "list",
+          description: "List active managed worktrees",
+          action: runWorktreeListCommand,
+        },
+        {
+          name: "prune",
+          description: "Prune orphaned/terminal managed worktrees",
+          action: runWorktreePruneCommand,
         },
       ],
     },

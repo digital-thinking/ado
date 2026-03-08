@@ -69,6 +69,10 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     },
     maxCandidates: 25,
   },
+  worktrees: {
+    enabled: false,
+    baseDir: ".ixado/worktrees",
+  },
   exceptionRecovery: {
     maxAttempts: 1,
   },
@@ -203,6 +207,7 @@ function mergeCliSettings(
 ): CliSettings {
   const executionLoopOverride = override.executionLoop;
   const discoveryOverride = override.discovery;
+  const worktreesOverride = override.worktrees;
   const activeProject = override.activeProject ?? base.activeProject;
   return CliSettingsSchema.parse({
     projects: override.projects ?? base.projects,
@@ -238,6 +243,10 @@ function mergeCliSettings(
         ...base.discovery.priorityWeights,
         ...discoveryOverride?.priorityWeights,
       },
+    },
+    worktrees: {
+      ...base.worktrees,
+      ...worktreesOverride,
     },
     exceptionRecovery: {
       ...base.exceptionRecovery,
@@ -612,6 +621,7 @@ export async function runOnboard(
         },
         executionLoop: existingSettings.executionLoop,
         discovery: existingSettings.discovery,
+        worktrees: existingSettings.worktrees,
         exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
@@ -632,6 +642,7 @@ export async function runOnboard(
         },
         executionLoop: existingSettings.executionLoop,
         discovery: existingSettings.discovery,
+        worktrees: existingSettings.worktrees,
         exceptionRecovery: existingSettings.exceptionRecovery,
         usage: existingSettings.usage,
         agents: configuredAgents,
@@ -695,6 +706,7 @@ export async function runOnboard(
       },
       executionLoop: existingSettings.executionLoop,
       discovery: existingSettings.discovery,
+      worktrees: existingSettings.worktrees,
       exceptionRecovery: existingSettings.exceptionRecovery,
       usage: existingSettings.usage,
       agents: configuredAgents,

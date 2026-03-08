@@ -112,7 +112,7 @@ describe("P31-003 discover command", () => {
 
     const state = await sandbox.readProjectState();
     const activePhase = state.phases.find(
-      (phase) => phase.id === state.activePhaseId,
+      (phase) => phase.id === state.activePhaseIds[0],
     );
     expect(activePhase).toBeDefined();
     expect(activePhase?.tasks).toHaveLength(0);
@@ -161,7 +161,7 @@ describe("P31-003 discover command", () => {
 
     const state = await sandbox.readProjectState();
     const activePhase = state.phases.find(
-      (phase) => phase.id === state.activePhaseId,
+      (phase) => phase.id === state.activePhaseIds[0],
     );
     expect(activePhase).toBeDefined();
     expect(activePhase?.tasks).toHaveLength(2);
@@ -225,7 +225,7 @@ describe("P31-003 discover command", () => {
 
     const state = await sandbox.readProjectState();
     const activePhase = state.phases.find(
-      (phase) => phase.id === state.activePhaseId,
+      (phase) => phase.id === state.activePhaseIds[0],
     );
     expect(activePhase).toBeDefined();
     expect(activePhase?.tasks).toHaveLength(1);

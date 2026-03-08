@@ -233,6 +233,12 @@ export const DiscoverySettingsSchema = z
   });
 export type DiscoverySettings = z.infer<typeof DiscoverySettingsSchema>;
 
+export const WorktreesSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  baseDir: z.string().min(1).default(".ixado/worktrees"),
+});
+export type WorktreesSettings = z.infer<typeof WorktreesSettingsSchema>;
+
 export const ExceptionRecoverySettingsSchema = z.object({
   maxAttempts: z.number().int().min(0).max(10).default(1),
 });
@@ -334,6 +340,10 @@ export const CliSettingsSchema = z
         tags: 0.3,
       },
       maxCandidates: 25,
+    }),
+    worktrees: WorktreesSettingsSchema.default({
+      enabled: false,
+      baseDir: ".ixado/worktrees",
     }),
     exceptionRecovery: ExceptionRecoverySettingsSchema.default({
       maxAttempts: 1,
@@ -514,6 +524,11 @@ const ExceptionRecoverySettingsOverrideSchema = z.object({
   maxAttempts: z.number().int().min(0).max(10).optional(),
 });
 
+const WorktreesSettingsOverrideSchema = z.object({
+  enabled: z.boolean().optional(),
+  baseDir: z.string().min(1).optional(),
+});
+
 export const CliSettingsOverrideSchema = z.object({
   projects: z.array(ProjectRecordSchema).optional(),
   activeProject: z.string().min(1).optional(),
@@ -537,6 +552,7 @@ export const CliSettingsOverrideSchema = z.object({
     .optional(),
   executionLoop: ExecutionLoopSettingsOverrideSchema.optional(),
   discovery: DiscoverySettingsOverrideSchema.optional(),
+  worktrees: WorktreesSettingsOverrideSchema.optional(),
   exceptionRecovery: ExceptionRecoverySettingsOverrideSchema.optional(),
   usage: z
     .object({
@@ -710,6 +726,7 @@ export const PhaseSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   branchName: z.string(),
+  worktreePath: z.string().min(1).nullable().optional(),
   status: PhaseStatusSchema.default("PLANNING"),
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
@@ -724,7 +741,7 @@ export const ProjectStateSchema = z.object({
   projectName: z.string(),
   rootDir: z.string(),
   phases: z.array(PhaseSchema),
-  activePhaseId: z.string().uuid().optional(),
+  activePhaseIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

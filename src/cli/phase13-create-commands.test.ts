@@ -24,7 +24,7 @@ describe("phase13 CLI create commands", () => {
 
     const state = await sandbox.readProjectState();
     expect(state.phases).toHaveLength(1);
-    expect(state.activePhaseId).toBe(state.phases[0]?.id);
+    expect(state.activePhaseIds[0]).toBe(state.phases[0]?.id);
     expect(state.phases[0]?.name).toBe("Phase 13");
     expect(state.phases[0]?.branchName).toBe("phase-13-post-release-bugfixes");
   });

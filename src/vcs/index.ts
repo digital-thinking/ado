@@ -24,5 +24,14 @@ export type {
 } from "./github-manager";
 export { parsePullRequestNumberFromUrl } from "./github-manager";
 
+export { WorktreeManager } from "./worktree-manager";
+export type {
+  ActiveWorktree,
+  PruneOrphanedInput,
+  ProvisionWorktreeInput,
+  WorktreeManagerOptions,
+  WorktreePhaseState,
+} from "./worktree-manager";
+
 export { PrivilegedGitActions } from "./privileged-git-actions";
 export type { PrivilegedGitActionsOptions } from "./privileged-git-actions";

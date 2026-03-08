@@ -44,7 +44,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -125,13 +125,289 @@ describe("PhaseRunner", () => {
     });
   });
 
+  test("provisions worktree, executes in worktree cwd, and tears down on completion", async () => {
+    const phaseId = "91111111-1111-4111-8111-111111111111";
+    const taskId = "92222222-2222-4222-8222-222222222222";
+    const branchName = "phase-27-worktree-happy";
+    const worktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 27",
+          branchName,
+          status: "PLANNING",
+          worktreePath: null as string | null,
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = mockState.phases[0] as any;
+        phase.status = input.status;
+        if (input.worktreePath !== undefined) {
+          phase.worktreePath = input.worktreePath;
+        }
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => {
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "task output",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args[0] === "rev-parse") {
+          throw new Error("missing local branch");
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          if (input.cwd === "/tmp/project") {
+            return { exitCode: 0, stdout: "main", stderr: "" };
+          }
+          return { exitCode: 0, stdout: `${branchName}\n`, stderr: "" };
+        }
+        if (
+          input.args.includes("worktree") &&
+          input.args.includes("add") &&
+          input.cwd === "/tmp/project"
+        ) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.command === "npm" && input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        if (
+          input.args.includes("worktree") &&
+          input.args.includes("remove") &&
+          input.cwd === "/tmp/project"
+        ) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        worktrees: {
+          enabled: true,
+          baseDir: ".ixado/worktrees",
+        },
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    const calls = (mockRunner.run as ReturnType<typeof mock>).mock.calls.map(
+      (entry: any[]) => entry[0],
+    );
+    expect(
+      calls.some(
+        (call: any) =>
+          call.command === "git" &&
+          call.args[0] === "worktree" &&
+          call.args[1] === "add" &&
+          call.args[4] === worktreePath &&
+          call.cwd === "/tmp/project",
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call: any) =>
+          call.command === "npm" &&
+          call.args[0] === "test" &&
+          call.cwd === worktreePath,
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call: any) =>
+          call.command === "git" &&
+          call.args[0] === "worktree" &&
+          call.args[1] === "remove" &&
+          call.args[3] === worktreePath &&
+          call.cwd === "/tmp/project",
+      ),
+    ).toBe(true);
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phaseId,
+        status: "BRANCHING",
+        worktreePath,
+      }),
+    );
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phaseId,
+        status: "DONE",
+        worktreePath: null,
+      }),
+    );
+  });
+
+  test("tears down worktree on unrecoverable failure", async () => {
+    const phaseId = "93333333-3333-4333-8333-333333333333";
+    const taskId = "94444444-4444-4444-8444-444444444444";
+    const branchName = "phase-27-worktree-failure";
+    const worktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 27 Failure",
+          branchName,
+          status: "PLANNING",
+          worktreePath: null as string | null,
+          tasks: [
+            {
+              id: taskId,
+              title: "Task 1",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = mockState.phases[0] as any;
+        phase.status = input.status;
+        if (input.worktreePath !== undefined) {
+          phase.worktreePath = input.worktreePath;
+        }
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => {
+        throw new Error("should not run tasks");
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: JSON.stringify({
+          status: "unfixable",
+          reasoning: "manual fix needed",
+        }),
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args[0] === "rev-parse") {
+          throw new Error("missing local branch");
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          if (input.cwd === "/tmp/project") {
+            return { exitCode: 0, stdout: "main", stderr: "" };
+          }
+          return { exitCode: 0, stdout: `${branchName}\n`, stderr: "" };
+        }
+        if (input.args.includes("worktree") && input.args.includes("add")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: " M changed.ts\n", stderr: "" };
+        }
+        if (
+          input.args.includes("worktree") &&
+          input.args.includes("remove") &&
+          input.cwd === "/tmp/project"
+        ) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        maxRecoveryAttempts: 1,
+        worktrees: {
+          enabled: true,
+          baseDir: ".ixado/worktrees",
+        },
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await expect(runner.run()).rejects.toThrow();
+
+    const calls = (mockRunner.run as ReturnType<typeof mock>).mock.calls.map(
+      (entry: any[]) => entry[0],
+    );
+    expect(
+      calls.some(
+        (call: any) =>
+          call.command === "git" &&
+          call.args[0] === "worktree" &&
+          call.args[1] === "remove" &&
+          call.args[3] === worktreePath &&
+          call.cwd === "/tmp/project",
+      ),
+    ).toBe(true);
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phaseId,
+        status: "CI_FAILED",
+        worktreePath: null,
+      }),
+    );
+  });
+
   test("runs deliberation for deliberate tasks and forwards refined prompt/context", async () => {
     const phaseId = "51111111-1111-4111-8111-111111111111";
     const taskId = "52222222-2222-4222-8222-222222222222";
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -262,7 +538,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -397,7 +673,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -573,7 +849,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -660,7 +936,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -824,7 +1100,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1007,7 +1283,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1095,7 +1371,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1193,7 +1469,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1303,7 +1579,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1397,7 +1673,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1474,7 +1750,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1555,7 +1831,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1645,7 +1921,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1762,7 +2038,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1887,7 +2163,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2042,7 +2318,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2120,7 +2396,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2195,7 +2471,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2305,7 +2581,7 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2378,7 +2654,7 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2622,7 +2898,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       const state = {
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             id: phaseId,
@@ -2672,7 +2948,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       const state: any = {
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             id: phaseId,
@@ -2735,7 +3011,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2787,7 +3063,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       const state = {
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             id: phaseId,
@@ -2849,7 +3125,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2889,7 +3165,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2930,7 +3206,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      activePhaseIds: ["ffffffff-ffff-4fff-8fff-ffffffffffff"],
       phases: [
         {
           id: phaseId, // different ID from activePhaseId
@@ -3069,7 +3345,7 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3159,7 +3435,7 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3281,7 +3557,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3364,7 +3640,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3444,7 +3720,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3541,7 +3817,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3666,7 +3942,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3724,7 +4000,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3782,7 +4058,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3837,7 +4113,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,

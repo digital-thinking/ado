@@ -305,7 +305,7 @@ describe("P21-002 CLI argument validation", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Error: Invalid phase run mode: 'always'.");
     expect(result.stderr).toContain(
-      "  Usage: ixado phase run [auto|manual] [countdownSeconds>=0]",
+      "  Usage: ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
     );
     expect(result.stderr).toContain("  Hint:");
   });
@@ -321,7 +321,7 @@ describe("P21-002 CLI argument validation", () => {
       "Error: Invalid countdown seconds: '-5'. Expected a non-negative integer.",
     );
     expect(result.stderr).toContain(
-      "  Usage: ixado phase run [auto|manual] [countdownSeconds>=0]",
+      "  Usage: ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
     );
     expect(result.stderr).toContain("  Hint:");
   });
@@ -529,7 +529,7 @@ describe("P21-002 CLI argument validation", () => {
           tasks: [],
         },
       ],
-      activePhaseId: undefined,
+      activePhaseIds: [],
     };
     await sandbox.writeProjectState(initialState as any);
 

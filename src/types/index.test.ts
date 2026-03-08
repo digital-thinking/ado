@@ -82,6 +82,8 @@ describe("type contracts", () => {
       tags: 0.3,
     });
     expect(parsed.discovery.maxCandidates).toBe(25);
+    expect(parsed.worktrees.enabled).toBe(false);
+    expect(parsed.worktrees.baseDir).toBe(".ixado/worktrees");
     expect(parsed.exceptionRecovery.maxAttempts).toBe(1);
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
@@ -231,6 +233,19 @@ describe("type contracts", () => {
       autoMode: true,
       defaultAssignee: "CLAUDE_CLI",
     });
+  });
+
+  test("supports worktrees config overrides", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      worktrees: {
+        enabled: true,
+        baseDir: "/tmp/ixado-worktrees",
+      },
+    });
+
+    expect(parsed.worktrees.enabled).toBe(true);
+    expect(parsed.worktrees.baseDir).toBe("/tmp/ixado-worktrees");
   });
 
   test("rejects internal work assignee if disabled", () => {
@@ -423,6 +438,41 @@ describe("type contracts", () => {
       tasks: [],
     });
     expect(phase.failureKind).toBeUndefined();
+  });
+
+  test("PhaseSchema allows omitting worktreePath for legacy single-tree phases", () => {
+    const phase = PhaseSchema.parse({
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      name: "Phase Gamma",
+      branchName: "phase-gamma",
+      status: "CODING",
+      tasks: [],
+    });
+    expect(phase.worktreePath).toBeUndefined();
+  });
+
+  test("PhaseSchema allows null worktreePath for legacy single-tree phases", () => {
+    const phase = PhaseSchema.parse({
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      name: "Phase Delta",
+      branchName: "phase-delta",
+      status: "PLANNING",
+      tasks: [],
+      worktreePath: null,
+    });
+    expect(phase.worktreePath).toBeNull();
+  });
+
+  test("PhaseSchema persists a worktreePath when provided", () => {
+    const phase = PhaseSchema.parse({
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      name: "Phase Epsilon",
+      branchName: "phase-epsilon",
+      status: "CODING",
+      tasks: [],
+      worktreePath: "/tmp/ixado/worktrees/phase-epsilon",
+    });
+    expect(phase.worktreePath).toBe("/tmp/ixado/worktrees/phase-epsilon");
   });
 
   test("rejects discovery priorityWeights with non-positive total", () => {

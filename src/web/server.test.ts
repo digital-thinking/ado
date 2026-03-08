@@ -113,7 +113,7 @@ describe("web server runtime", () => {
           ],
         },
       ],
-      activePhaseId: "11111111-1111-4111-8111-111111111111",
+      activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
       createdAt: now,
       updatedAt: now,
     };

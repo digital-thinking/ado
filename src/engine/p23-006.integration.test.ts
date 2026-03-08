@@ -60,7 +60,7 @@ describe("P23-006 integration coverage", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -281,7 +281,7 @@ describe("P23-006 integration coverage", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -475,7 +475,7 @@ describe("P23-006 integration coverage", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -673,7 +673,7 @@ describe("P25-005 integration coverage", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,

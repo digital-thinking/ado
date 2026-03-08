@@ -60,7 +60,7 @@ describe("P30-006 integration coverage", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,

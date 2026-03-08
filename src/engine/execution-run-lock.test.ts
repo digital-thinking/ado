@@ -21,27 +21,33 @@ describe("ExecutionRunLock", () => {
     const lock = new ExecutionRunLock({
       projectRootDir: sandboxDir,
       projectName: "alpha",
+      phaseId: "phase-1",
       owner: "CLI_PHASE_RUN",
     });
 
     await lock.acquire();
 
     const raw = await readFile(
-      join(sandboxDir, ".ixado", "execution-run.lock.json"),
+      join(sandboxDir, ".ixado", "execution-run-phase-1.lock.json"),
       "utf8",
     );
     const record = JSON.parse(raw) as {
       pid: number;
       owner: string;
       projectName: string;
+      phaseId: string;
     };
     expect(record.pid).toBe(process.pid);
     expect(record.owner).toBe("CLI_PHASE_RUN");
     expect(record.projectName).toBe("alpha");
+    expect(record.phaseId).toBe("phase-1");
 
     await lock.release();
     await expect(
-      readFile(join(sandboxDir, ".ixado", "execution-run.lock.json"), "utf8"),
+      readFile(
+        join(sandboxDir, ".ixado", "execution-run-phase-1.lock.json"),
+        "utf8",
+      ),
     ).rejects.toThrow();
   });
 
@@ -49,6 +55,7 @@ describe("ExecutionRunLock", () => {
     const first = new ExecutionRunLock({
       projectRootDir: sandboxDir,
       projectName: "alpha",
+      phaseId: "phase-1",
       owner: "CLI_PHASE_RUN",
     });
     await first.acquire();
@@ -56,6 +63,7 @@ describe("ExecutionRunLock", () => {
     const second = new ExecutionRunLock({
       projectRootDir: sandboxDir,
       projectName: "alpha",
+      phaseId: "phase-1",
       owner: "WEB_AUTO_MODE",
     });
     await expect(second.acquire()).rejects.toThrow(
@@ -65,8 +73,46 @@ describe("ExecutionRunLock", () => {
     await first.release();
   });
 
+  test("allows concurrent acquisition for different phases", async () => {
+    const first = new ExecutionRunLock({
+      projectRootDir: sandboxDir,
+      projectName: "alpha",
+      phaseId: "phase-1",
+      owner: "CLI_PHASE_RUN",
+    });
+    const second = new ExecutionRunLock({
+      projectRootDir: sandboxDir,
+      projectName: "alpha",
+      phaseId: "phase-2",
+      owner: "WEB_AUTO_MODE",
+    });
+
+    await expect(first.acquire()).resolves.toBeUndefined();
+    await expect(second.acquire()).resolves.toBeUndefined();
+
+    await expect(
+      readFile(
+        join(sandboxDir, ".ixado", "execution-run-phase-1.lock.json"),
+        "utf8",
+      ),
+    ).resolves.toContain('"phaseId": "phase-1"');
+    await expect(
+      readFile(
+        join(sandboxDir, ".ixado", "execution-run-phase-2.lock.json"),
+        "utf8",
+      ),
+    ).resolves.toContain('"phaseId": "phase-2"');
+
+    await first.release();
+    await second.release();
+  });
+
   test("removes stale lock and acquires lock", async () => {
-    const lockFilePath = join(sandboxDir, ".ixado", "execution-run.lock.json");
+    const lockFilePath = join(
+      sandboxDir,
+      ".ixado",
+      "execution-run-phase-1.lock.json",
+    );
     await mkdir(join(sandboxDir, ".ixado"), { recursive: true });
     await Bun.write(
       lockFilePath,
@@ -74,6 +120,7 @@ describe("ExecutionRunLock", () => {
         pid: 999_999_999,
         owner: "CLI_PHASE_RUN",
         projectName: "alpha",
+        phaseId: "phase-1",
         acquiredAt: new Date().toISOString(),
       }),
     );
@@ -81,6 +128,7 @@ describe("ExecutionRunLock", () => {
     const lock = new ExecutionRunLock({
       projectRootDir: sandboxDir,
       projectName: "alpha",
+      phaseId: "phase-1",
       owner: "WEB_AUTO_MODE",
     });
     await lock.acquire();

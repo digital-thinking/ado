@@ -4,30 +4,32 @@ exports[`P21-005 Snapshot Tests Global help output snapshot 1`] = `
 "IxADO CLI
 
 Usage:
-  ixado                                                                    Run IxADO with stored settings
-  ixado status                                                             Show project status and running agents
-  ixado init                                                               Register current directory as project in global config
-  ixado list                                                               Show all registered projects
-  ixado switch <project-name>                                              Switch active project context
-  ixado onboard                                                            Configure global CLI settings
-  ixado discover [--dry-run|--queue]                                       Discover ranked task candidates from TODO/FIXME and issues
-  ixado task list                                                          List tasks in active phase with numbers
-  ixado task create <title> <description> [assignee] [--type <taskType>]   Create task in active phase
-  ixado task start <taskNumber> [assignee]                                 Start active-phase task
-  ixado task retry <taskNumber>                                            Retry FAILED task with same assignee/session
-  ixado task logs <taskNumber>                                             Show logs/result for task in active phase
-  ixado task reset <taskNumber>                                            Reset FAILED task to TODO and hard-reset repo
-  ixado phase create <name> <branchName>                                   Create phase and set it active
-  ixado phase active <phaseNumber|phaseId>                                 Set active phase
-  ixado phase run [auto|manual] [countdownSeconds>=0]                      Run TODO/CI_FIX tasks in active phase sequentially
-  ixado config show                                                        Show current global config
-  ixado config mode <auto|manual>                                          Set default phase-loop mode
-  ixado config assignee <CLI_ADAPTER>                                      Set default coding CLI
-  ixado config recovery <maxAttempts:0-10>                                 Set exception recovery max attempts
-  ixado config usage <on|off>                                              Enable/disable codexbar usage telemetry
-  ixado web start [port]                                                   Start local web control center in background
-  ixado web stop                                                           Stop local web control center
-  ixado help                                                               Show this help
+  ixado                                                                                 Run IxADO with stored settings
+  ixado status                                                                          Show project status and running agents
+  ixado init                                                                            Register current directory as project in global config
+  ixado list                                                                            Show all registered projects
+  ixado switch <project-name>                                                           Switch active project context
+  ixado onboard                                                                         Configure global CLI settings
+  ixado discover [--dry-run|--queue]                                                    Discover ranked task candidates from TODO/FIXME and issues
+  ixado task list                                                                       List tasks in active phase with numbers
+  ixado task create <title> <description> [assignee] [--type <taskType>]                Create task in active phase
+  ixado task start <taskNumber> [assignee]                                              Start active-phase task
+  ixado task retry <taskNumber>                                                         Retry FAILED task with same assignee/session
+  ixado task logs <taskNumber>                                                          Show logs/result for task in active phase
+  ixado task reset <taskNumber>                                                         Reset FAILED task to TODO and hard-reset repo
+  ixado phase create <name> <branchName>                                                Create phase and set it active
+  ixado phase active <phaseNumber|phaseId>                                              Set active phase
+  ixado phase run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]   Run TODO/CI_FIX tasks in active phase sequentially
+  ixado config show                                                                     Show current global config
+  ixado config mode <auto|manual>                                                       Set default phase-loop mode
+  ixado config assignee <CLI_ADAPTER>                                                   Set default coding CLI
+  ixado config recovery <maxAttempts:0-10>                                              Set exception recovery max attempts
+  ixado config usage <on|off>                                                           Enable/disable codexbar usage telemetry
+  ixado worktree list                                                                   List active managed worktrees
+  ixado worktree prune                                                                  Prune orphaned/terminal managed worktrees
+  ixado web start [port]                                                                Start local web control center in background
+  ixado web stop                                                                        Stop local web control center
+  ixado help                                                                            Show this help
 
 Run 'ixado <command> help' for subcommand details."
 `;

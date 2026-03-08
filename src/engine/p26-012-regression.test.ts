@@ -75,7 +75,7 @@ function buildBaseState(): ProjectState {
         tasks: [],
       },
     ],
-    activePhaseId: "11111111-1111-4111-8111-111111111111",
+    activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
     createdAt: now,
     updatedAt: now,
   };
@@ -748,11 +748,11 @@ describe("P26-007 – adapter-ID schema-driven deserialization regression", () =
 describe("P26-008 – active-phase strict selection policy regression", () => {
   test("throws ActivePhaseResolutionError (not a generic Error) for all failure conditions", () => {
     const cases: ProjectState[] = [
-      { ...buildBaseState(), phases: [], activePhaseId: undefined },
-      { ...buildBaseState(), activePhaseId: undefined },
+      { ...buildBaseState(), phases: [], activePhaseIds: [] },
+      { ...buildBaseState(), activePhaseIds: [] },
       {
         ...buildBaseState(),
-        activePhaseId: "99999999-9999-4999-8999-999999999999",
+        activePhaseIds: ["99999999-9999-4999-8999-999999999999"],
       },
     ];
 
@@ -781,11 +781,11 @@ describe("P26-008 – active-phase strict selection policy regression", () => {
       }
     };
 
-    collect({ ...buildBaseState(), phases: [], activePhaseId: undefined });
-    collect({ ...buildBaseState(), activePhaseId: undefined });
+    collect({ ...buildBaseState(), phases: [], activePhaseIds: [] });
+    collect({ ...buildBaseState(), activePhaseIds: [] });
     collect({
       ...buildBaseState(),
-      activePhaseId: "99999999-9999-4999-8999-999999999999",
+      activePhaseIds: ["99999999-9999-4999-8999-999999999999"],
     });
 
     expect(codes).toEqual([

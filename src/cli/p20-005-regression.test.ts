@@ -24,7 +24,7 @@ describe("P20-005 CLI reliability regression tests", () => {
       rootDir: sandbox.projectDir,
       createdAt: now,
       updatedAt: now,
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -84,7 +84,7 @@ describe("P20-005 CLI reliability regression tests", () => {
       rootDir: sandbox.projectDir,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -116,7 +116,7 @@ describe("P20-005 CLI reliability regression tests", () => {
       rootDir: sandbox.projectDir,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,

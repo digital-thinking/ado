@@ -101,7 +101,8 @@ describe("P21-005 Snapshot Tests", () => {
         {
           name: "run",
           description: "Run TODO/CI_FIX tasks in active phase sequentially",
-          usage: "run [auto|manual] [countdownSeconds>=0]",
+          usage:
+            "run [auto|manual] [countdownSeconds>=0] [--phase <phaseNumber|phaseId>]",
         },
       ],
     },
@@ -133,6 +134,20 @@ describe("P21-005 Snapshot Tests", () => {
           name: "usage",
           description: "Enable/disable codexbar usage telemetry",
           usage: "usage <on|off>",
+        },
+      ],
+    },
+    {
+      name: "worktree",
+      description: "Manage phase worktrees",
+      subcommands: [
+        {
+          name: "list",
+          description: "List active managed worktrees",
+        },
+        {
+          name: "prune",
+          description: "Prune orphaned/terminal managed worktrees",
         },
       ],
     },

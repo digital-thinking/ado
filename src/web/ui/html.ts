@@ -820,15 +820,21 @@ export function controlCenterHtml(params: {
 
     function renderState(state) {
       latestState = state;
-      const hasValidActivePhase = state.phases.some(
-        (phase) => phase.id === state.activePhaseId,
-      );
-      const selectedPhaseId = hasValidActivePhase
-        ? state.activePhaseId
-        : undefined;
-      if (!hasValidActivePhase && state.phases.length > 0) {
+      const phasesById = new Map(state.phases.map((phase) => [phase.id, phase]));
+      const activePhases = [];
+      const activePhaseIds = new Set();
+      (state.activePhaseIds || []).forEach((phaseId) => {
+        const phase = phasesById.get(phaseId);
+        if (!phase || activePhaseIds.has(phase.id)) {
+          return;
+        }
+        activePhaseIds.add(phase.id);
+        activePhases.push(phase);
+      });
+      const selectedPhaseId = activePhases[0] ? activePhases[0].id : undefined;
+      if (activePhases.length === 0 && state.phases.length > 0) {
         console.warn(
-          "Active phase ID is missing or invalid. Set the active phase explicitly.",
+          "Active phase IDs are missing or invalid. Set active phases explicitly.",
         );
       }
       taskPhase.innerHTML = "";
@@ -842,11 +848,10 @@ export function controlCenterHtml(params: {
         taskPhase.appendChild(option);
       });
       if (activePhaseBadge) {
-        const activePhase = selectedPhaseId
-          ? state.phases.find((phase) => phase.id === selectedPhaseId)
-          : undefined;
-        activePhaseBadge.textContent = activePhase
-          ? activePhase.name + " (" + activePhase.status + ")"
+        activePhaseBadge.textContent = activePhases.length > 0
+          ? activePhases
+              .map((phase) => phase.name + " (" + phase.status + ")")
+              .join(" | ")
           : "No active phase";
       }
       renderTaskDependenciesOptions();
@@ -970,17 +975,20 @@ export function controlCenterHtml(params: {
         return "TODO";
       }
 
-      const hasValidActivePhase = state.phases.some(
-        (phase) => phase.id === state.activePhaseId,
-      );
-      const activePhaseId = hasValidActivePhase ? state.activePhaseId : undefined;
-      if (!hasValidActivePhase) {
+      const phasesById = new Map(state.phases.map((phase) => [phase.id, phase]));
+      const activePhaseIds = new Set();
+      (state.activePhaseIds || []).forEach((phaseId) => {
+        if (phasesById.has(phaseId)) {
+          activePhaseIds.add(phaseId);
+        }
+      });
+      if (activePhaseIds.size === 0) {
         console.warn(
-          "Kanban has no valid active phase. Use Set Active to choose one.",
+          "Kanban has no valid active phases. Use Set Active to choose one.",
         );
       }
       const html = state.phases.map((phase) => {
-        const isActive = phase.id === activePhaseId;
+        const isActive = activePhaseIds.has(phase.id);
         if (!isActive) {
           const tasks = phase.tasks || [];
           if (tasks.length === 0) return ""; // hide phases with no tasks

@@ -42,17 +42,39 @@ export type TelegramRuntime = {
   notifyOwner: (text: string) => Promise<void>;
 };
 
+function resolveActivePhases(state: ProjectState): ProjectState["phases"] {
+  const phasesById = new Map(state.phases.map((phase) => [phase.id, phase]));
+  const activePhases: ProjectState["phases"] = [];
+  const seen = new Set<string>();
+
+  for (const phaseId of state.activePhaseIds) {
+    const normalizedId = phaseId.trim();
+    if (!normalizedId || seen.has(normalizedId)) {
+      continue;
+    }
+    const phase = phasesById.get(normalizedId);
+    if (!phase) {
+      continue;
+    }
+    seen.add(normalizedId);
+    activePhases.push(phase);
+  }
+
+  return activePhases;
+}
+
 function formatStatus(
   state: ProjectState,
   agents: StatusAgent[],
   availableAssignees: CLIAdapterId[],
 ): string {
-  const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
-  );
-  const activeStatus = activePhase
-    ? `${activePhase.name} (${activePhase.status})`
-    : "none";
+  const activePhases = resolveActivePhases(state);
+  const activeStatus =
+    activePhases.length > 0
+      ? activePhases
+          .map((phase) => `${phase.name} (${phase.status})`)
+          .join(" | ")
+      : "none";
   const tasksById = new Map(
     state.phases.flatMap((phase) =>
       phase.tasks.map(
@@ -74,7 +96,7 @@ function formatStatus(
     `Project: ${state.projectName}`,
     `Root: ${state.rootDir}`,
     `Phases: ${state.phases.length}`,
-    `Active: ${activeStatus}`,
+    `Active Phases: ${activeStatus}`,
     `Available Agents: ${availableAssignees.join(", ")}`,
     `Running Agents (${runningAgents.length}):`,
     ...runningLines,
@@ -82,23 +104,24 @@ function formatStatus(
 }
 
 function formatTasks(state: ProjectState): string {
-  const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
-  );
-
-  if (!activePhase) {
-    return "No active phase selected.";
+  const activePhases = resolveActivePhases(state);
+  if (activePhases.length === 0) {
+    return "No active phases selected.";
   }
 
-  if (activePhase.tasks.length === 0) {
-    return `No tasks in active phase: ${activePhase.name}.`;
-  }
+  const sections = activePhases.map((activePhase) => {
+    if (activePhase.tasks.length === 0) {
+      return `No tasks in active phase: ${activePhase.name}.`;
+    }
 
-  const lines = activePhase.tasks.map(
-    (task, index) =>
-      `${index + 1}. [${task.status}] ${task.title} (${task.assignee})`,
-  );
-  return [`Tasks for ${activePhase.name}:`, ...lines].join("\n");
+    const lines = activePhase.tasks.map(
+      (task, index) =>
+        `${index + 1}. [${task.status}] ${task.title} (${task.assignee})`,
+    );
+    return [`Tasks for ${activePhase.name}:`, ...lines].join("\n");
+  });
+
+  return sections.join("\n\n");
 }
 
 function parseCommandArgs(ctx: TelegramCtx): string[] {
@@ -232,7 +255,7 @@ export async function handleSetActivePhaseCommand(
   try {
     const state = await setActivePhase({ phaseId });
     const active = state.phases.find(
-      (phase) => phase.id === state.activePhaseId,
+      (phase) => phase.id === state.activePhaseIds[0],
     );
     await ctx.reply(
       active

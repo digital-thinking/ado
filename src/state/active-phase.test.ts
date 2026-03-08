@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ActivePhaseResolutionError,
+  resolvePrimaryActivePhaseId,
   resolveActivePhaseStrict,
 } from "./active-phase";
 import type { ProjectState } from "../types";
@@ -20,7 +21,7 @@ function buildState(): ProjectState {
         tasks: [],
       },
     ],
-    activePhaseId: "11111111-1111-4111-8111-111111111111",
+    activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
     createdAt: now,
     updatedAt: now,
   };
@@ -29,7 +30,7 @@ function buildState(): ProjectState {
 describe("resolveActivePhaseStrict", () => {
   test("returns active phase when activePhaseId matches", () => {
     const state = buildState();
-    const expectedActivePhaseId = state.activePhaseId;
+    const expectedActivePhaseId = state.activePhaseIds[0];
     if (!expectedActivePhaseId) {
       throw new Error("Expected activePhaseId in test fixture.");
     }
@@ -42,7 +43,7 @@ describe("resolveActivePhaseStrict", () => {
   test("throws when phases are empty", () => {
     const state = buildState();
     state.phases = [];
-    state.activePhaseId = undefined;
+    state.activePhaseIds = [];
 
     try {
       resolveActivePhaseStrict(state);
@@ -55,7 +56,7 @@ describe("resolveActivePhaseStrict", () => {
 
   test("throws when activePhaseId is missing", () => {
     const state = buildState();
-    state.activePhaseId = undefined;
+    state.activePhaseIds = [];
 
     try {
       resolveActivePhaseStrict(state);
@@ -70,7 +71,7 @@ describe("resolveActivePhaseStrict", () => {
 
   test("throws when activePhaseId does not exist in phases", () => {
     const state = buildState();
-    state.activePhaseId = "22222222-2222-4222-8222-222222222222";
+    state.activePhaseIds = ["22222222-2222-4222-8222-222222222222"];
 
     try {
       resolveActivePhaseStrict(state);
@@ -81,5 +82,24 @@ describe("resolveActivePhaseStrict", () => {
         "ACTIVE_PHASE_ID_NOT_FOUND",
       );
     }
+  });
+});
+
+describe("resolvePrimaryActivePhaseId", () => {
+  test("returns first non-empty active phase id in order", () => {
+    const phaseId = resolvePrimaryActivePhaseId({
+      activePhaseIds: [
+        "   ",
+        "\t",
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+      ],
+    });
+
+    expect(phaseId).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  test("returns undefined when no active phase ids are set", () => {
+    expect(resolvePrimaryActivePhaseId({ activePhaseIds: [] })).toBeUndefined();
   });
 });
