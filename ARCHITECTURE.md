@@ -43,6 +43,7 @@ IxADO uses a typed runtime event union (`RuntimeEvent`) to normalize execution t
 
 - `task-lifecycle`: task start/progress/phase updates/finish.
 - `adapter-output`: streaming output chunks/diagnostics with stream metadata.
+- `adapter-circuit`: adapter circuit-breaker open/close transitions.
 - `tester-recovery`: tester state and recovery attempt traceability.
 - `terminal-outcome`: concise success/failure/cancelled summaries for final rendering.
 

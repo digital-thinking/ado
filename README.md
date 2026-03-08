@@ -176,6 +176,8 @@ Each adapter also exposes `agents.<ADAPTER>.circuitBreaker`:
 
 - `failureThreshold`: consecutive failures before the adapter circuit opens.
 - `cooldownMs`: open-circuit cooldown window before automatic close.
+- During `ixado phase run`, open circuits are skipped and execution is rerouted to the next enabled adapter in fallback order.
+- Breaker transitions (`opened`/`closed`) are emitted as runtime events (`adapter.circuit`) for CLI/Web/Telegram consumers.
 
 ### Windows
 
