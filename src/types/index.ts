@@ -28,11 +28,20 @@ const AdapterAffinitiesSchema = z.partialRecord(
   CLIAdapterIdSchema,
 );
 
+const CliAgentCircuitBreakerSettingsSchema = z.object({
+  failureThreshold: z.number().int().min(1).default(3),
+  cooldownMs: z.number().int().min(0).default(300_000),
+});
+
 export const CliAgentSettingsItemSchema = z.object({
   enabled: z.boolean().default(true),
   timeoutMs: z.number().int().positive().default(3_600_000),
   startupSilenceTimeoutMs: z.number().int().positive().default(60_000),
   bypassApprovalsAndSandbox: z.boolean().default(false),
+  circuitBreaker: CliAgentCircuitBreakerSettingsSchema.default({
+    failureThreshold: 3,
+    cooldownMs: 300_000,
+  }),
 });
 export type CliAgentSettingsItem = z.infer<typeof CliAgentSettingsItemSchema>;
 
@@ -42,24 +51,40 @@ export const CliAgentSettingsSchema = z.object({
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   }),
   CLAUDE_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   }),
   GEMINI_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   }),
   MOCK_CLI: CliAgentSettingsItemSchema.default({
     enabled: true,
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   }),
   adapterAffinities: AdapterAffinitiesSchema.optional(),
 });
@@ -253,24 +278,40 @@ export const CliSettingsSchema = z
         timeoutMs: 3_600_000,
         startupSilenceTimeoutMs: 60_000,
         bypassApprovalsAndSandbox: false,
+        circuitBreaker: {
+          failureThreshold: 3,
+          cooldownMs: 300_000,
+        },
       },
       CLAUDE_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
         startupSilenceTimeoutMs: 60_000,
         bypassApprovalsAndSandbox: false,
+        circuitBreaker: {
+          failureThreshold: 3,
+          cooldownMs: 300_000,
+        },
       },
       GEMINI_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
         startupSilenceTimeoutMs: 60_000,
         bypassApprovalsAndSandbox: false,
+        circuitBreaker: {
+          failureThreshold: 3,
+          cooldownMs: 300_000,
+        },
       },
       MOCK_CLI: {
         enabled: true,
         timeoutMs: 3_600_000,
         startupSilenceTimeoutMs: 60_000,
         bypassApprovalsAndSandbox: false,
+        circuitBreaker: {
+          failureThreshold: 3,
+          cooldownMs: 300_000,
+        },
       },
     }),
   })
@@ -312,6 +353,12 @@ const CliAgentSettingsItemOverrideSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
   startupSilenceTimeoutMs: z.number().int().positive().optional(),
   bypassApprovalsAndSandbox: z.boolean().optional(),
+  circuitBreaker: z
+    .object({
+      failureThreshold: z.number().int().min(1).optional(),
+      cooldownMs: z.number().int().min(0).optional(),
+    })
+    .optional(),
 });
 
 const CliAgentSettingsOverrideSchema = z.object({

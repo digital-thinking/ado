@@ -70,6 +70,8 @@ describe("type contracts", () => {
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
+    expect(parsed.agents.CODEX_CLI.circuitBreaker.failureThreshold).toBe(3);
+    expect(parsed.agents.CODEX_CLI.circuitBreaker.cooldownMs).toBe(300_000);
   });
 
   test("validates strict exception recovery result contract", () => {

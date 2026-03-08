@@ -93,7 +93,7 @@ Status markers:
 
 - [x] `P29-001` Add `DEAD_LETTER` to `TaskStatusSchema` in `src/types/index.ts`. Transition tasks from `FAILED` → `DEAD_LETTER` in `PhaseRunner` when recovery attempts are exhausted and result is `unfixable`. Surface dead-letter tasks in CLI and web with distinct treatment and remediation hint.
 - [x] `P29-002` Implement `AdapterCircuitBreaker` in `src/adapters/`: tracks consecutive failures per adapter, opens circuit after a configurable `failureThreshold`, auto-closes after a `cooldownMs` window. Expose as a shared singleton per phase-runner lifetime.
-- [ ] `P29-003` Add `circuitBreaker` sub-config to `CliAgentSettingsItemSchema`: `failureThreshold: number` (default 3), `cooldownMs: number` (default 300000). Deps: `P29-002`.
+- [x] `P29-003` Add `circuitBreaker` sub-config to `CliAgentSettingsItemSchema`: `failureThreshold: number` (default 3), `cooldownMs: number` (default 300000). Deps: `P29-002`.
 - [ ] `P29-004` Wire circuit breaker into `PhaseRunner`: before dispatching to an adapter, check its circuit state; if open, route to the next enabled adapter (ordered fallback chain); emit a `RuntimeEvent` when a breaker opens or closes. Deps: `P29-002`, `P29-003`.
 - [ ] `P29-005` Inject git trailers into IxADO-orchestrated commits via `GitManager`: `Originated-By: <phase-id>/<task-id>` and `Executed-By: <adapter-id>`. Identify all commit call sites in `src/vcs/` and `src/engine/` and thread the metadata through.
 - [ ] `P29-006` Add regression/integration tests for Phase 29: dead-letter transition and CLI/web surfacing, circuit breaker open/close/cooldown cycles, fallback routing, and git trailer presence in commit messages. Deps: `P29-001`..`P29-005`.

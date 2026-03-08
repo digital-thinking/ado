@@ -494,18 +494,34 @@ export async function startWebControlCenter(
           CODEX_CLI: {
             ...current.agents.CODEX_CLI,
             ...(validatedPatch.agents?.CODEX_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.CODEX_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.CODEX_CLI?.circuitBreaker ?? {}),
+            },
           },
           CLAUDE_CLI: {
             ...current.agents.CLAUDE_CLI,
             ...(validatedPatch.agents?.CLAUDE_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.CLAUDE_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.CLAUDE_CLI?.circuitBreaker ?? {}),
+            },
           },
           GEMINI_CLI: {
             ...current.agents.GEMINI_CLI,
             ...(validatedPatch.agents?.GEMINI_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.GEMINI_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.GEMINI_CLI?.circuitBreaker ?? {}),
+            },
           },
           MOCK_CLI: {
             ...current.agents.MOCK_CLI,
             ...(validatedPatch.agents?.MOCK_CLI ?? {}),
+            circuitBreaker: {
+              ...current.agents.MOCK_CLI.circuitBreaker,
+              ...(validatedPatch.agents?.MOCK_CLI?.circuitBreaker ?? {}),
+            },
           },
           ...(current.agents.adapterAffinities ||
           validatedPatch.agents?.adapterAffinities

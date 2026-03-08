@@ -16,24 +16,40 @@ const DEFAULT_AGENT_SETTINGS = {
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   },
   CLAUDE_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   },
   GEMINI_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   },
   MOCK_CLI: {
     enabled: true,
     timeoutMs: 3_600_000,
     startupSilenceTimeoutMs: 60_000,
     bypassApprovalsAndSandbox: false,
+    circuitBreaker: {
+      failureThreshold: 3,
+      cooldownMs: 300_000,
+    },
   },
 };
 
