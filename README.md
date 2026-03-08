@@ -157,6 +157,26 @@ So project settings win over global defaults for overlapping keys. Use `ixado co
 Affinity targets must reference enabled adapters in `settings.agents`.
 New tasks are auto-classified from title/description heuristics; override with `ixado task create "Title" "Description" [assignee] --type <taskType>`.
 
+### Per-adapter circuit breaker settings
+
+Each adapter also exposes `agents.<ADAPTER>.circuitBreaker`:
+
+```json
+{
+  "agents": {
+    "CODEX_CLI": {
+      "circuitBreaker": {
+        "failureThreshold": 3,
+        "cooldownMs": 300000
+      }
+    }
+  }
+}
+```
+
+- `failureThreshold`: consecutive failures before the adapter circuit opens.
+- `cooldownMs`: open-circuit cooldown window before automatic close.
+
 ### Windows
 
 IxADO is packaged as a single compiled executable at `dist/ixado.exe`.
