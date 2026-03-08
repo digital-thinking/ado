@@ -336,8 +336,20 @@ describe("runCiIntegration", () => {
         setPhasePrUrl: async () => {},
       }),
     ).rejects.toThrow("Unable to parse pull request URL from gh output.");
-    // Must have made more than 3 calls (meaning it got past the staged-changes check)
-    expect(runner.calls.length).toBeGreaterThan(3);
+    const gitCommands = runner.calls
+      .filter((call) => call.command === "git")
+      .map((call) => ((call.args ?? [])[0] as string) ?? "");
+    expect(gitCommands).toContain("push");
+    expect(gitCommands).not.toContain("commit");
+
+    const ghSubcommands = runner.calls
+      .filter((call) => call.command === "gh")
+      .map((call) => {
+        const args = call.args ?? [];
+        return `${(args[0] as string) ?? ""} ${(args[1] as string) ?? ""}`.trim();
+      });
+    expect(ghSubcommands).toContain("pr list");
+    expect(ghSubcommands).toContain("pr create");
   });
 
   test("fails fast with actionable message when commit command fails", async () => {
