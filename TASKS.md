@@ -67,7 +67,7 @@ Status markers:
 ### Phase 27: Parallel Phase Execution via Worktrees
 
 - [x] `P27-001` Add optional `worktreePath: string` field to `PhaseSchema` in `src/types/index.ts`. When set, the phase runner uses this path as its working directory instead of `projectRootDir`. Null/absent means legacy single-tree behaviour.
-- [ ] `P27-002` Add `worktrees` config section to `CliSettingsSchema`: `enabled: boolean` (default `false`), `baseDir: string` (default `.ixado/worktrees`). Deps: `P27-001`.
+- [x] `P27-002` Add `worktrees` config section to `CliSettingsSchema`: `enabled: boolean` (default `false`), `baseDir: string` (default `.ixado/worktrees`). Deps: `P27-001`.
 - [ ] `P27-003` Implement `WorktreeManager` in `src/vcs/`: `provision(phaseId, branchName, fromRef)` → calls `GitManager.createWorktree` and returns the worktree path; `teardown(phaseId)` → calls `GitManager.removeWorktree`; `listActive()` → reads `.git/worktrees`; `pruneOrphaned()` → removes worktree dirs whose phase is terminal/missing. Deps: `P27-002`.
 - [ ] `P27-004` Wire `WorktreeManager` into `PhaseRunner.prepareBranch()`: when `worktrees.enabled`, provision the worktree before branch checkout and store `worktreePath` on the phase; use `worktreePath` as `cwd` for all subsequent task executions, git ops, and tester runs. Teardown on phase completion or unrecoverable failure. Deps: `P27-003`.
 - [ ] `P27-005` Make `ExecutionRunLock` per-phase: change the lock file path from `execution-run.lock.json` to `execution-run-<phaseId>.lock.json` so multiple phase runners can hold independent locks. Update all callsites in CLI and web. Deps: `P27-001`.

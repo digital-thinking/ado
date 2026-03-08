@@ -99,9 +99,14 @@ const DEFAULT_DISCOVERY_SETTINGS = {
   },
   maxCandidates: 25,
 };
+const DEFAULT_WORKTREES_SETTINGS = {
+  enabled: false,
+  baseDir: ".ixado/worktrees",
+};
 
 function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
   const discoveryOverride = overrides.discovery;
+  const worktreesOverride = overrides.worktrees;
   return {
     projects: [],
     telegram: {
@@ -124,6 +129,10 @@ function makeSettings(overrides: Partial<CliSettings> = {}): CliSettings {
         ...DEFAULT_DISCOVERY_SETTINGS.priorityWeights,
         ...(discoveryOverride?.priorityWeights ?? {}),
       },
+    },
+    worktrees: {
+      ...DEFAULT_WORKTREES_SETTINGS,
+      ...(worktreesOverride ?? {}),
     },
   };
 }

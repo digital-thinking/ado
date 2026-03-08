@@ -102,6 +102,10 @@ const DEFAULT_DISCOVERY_SETTINGS = {
   },
   maxCandidates: 25,
 };
+const DEFAULT_WORKTREES_SETTINGS = {
+  enabled: false,
+  baseDir: ".ixado/worktrees",
+};
 const DEFAULT_TELEGRAM_NOTIFICATIONS = {
   level: "all" as const,
   suppressDuplicates: true,
@@ -201,6 +205,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -220,6 +225,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -475,6 +481,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
@@ -570,6 +577,7 @@ describe("cli settings", () => {
       internalWork: { assignee: "GEMINI_CLI" },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
@@ -658,6 +666,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: {
@@ -719,6 +728,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -748,6 +758,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,
@@ -801,6 +812,7 @@ describe("cli settings", () => {
       },
       executionLoop: DEFAULT_LOOP_SETTINGS,
       discovery: DEFAULT_DISCOVERY_SETTINGS,
+      worktrees: DEFAULT_WORKTREES_SETTINGS,
       exceptionRecovery: DEFAULT_EXCEPTION_RECOVERY_SETTINGS,
       usage: DEFAULT_USAGE_SETTINGS,
       agents: DEFAULT_AGENT_SETTINGS,

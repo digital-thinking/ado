@@ -82,6 +82,8 @@ describe("type contracts", () => {
       tags: 0.3,
     });
     expect(parsed.discovery.maxCandidates).toBe(25);
+    expect(parsed.worktrees.enabled).toBe(false);
+    expect(parsed.worktrees.baseDir).toBe(".ixado/worktrees");
     expect(parsed.exceptionRecovery.maxAttempts).toBe(1);
     expect(parsed.usage.codexbarEnabled).toBe(true);
     expect(parsed.agents.CODEX_CLI.enabled).toBe(true);
@@ -231,6 +233,19 @@ describe("type contracts", () => {
       autoMode: true,
       defaultAssignee: "CLAUDE_CLI",
     });
+  });
+
+  test("supports worktrees config overrides", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      worktrees: {
+        enabled: true,
+        baseDir: "/tmp/ixado-worktrees",
+      },
+    });
+
+    expect(parsed.worktrees.enabled).toBe(true);
+    expect(parsed.worktrees.baseDir).toBe("/tmp/ixado-worktrees");
   });
 
   test("rejects internal work assignee if disabled", () => {

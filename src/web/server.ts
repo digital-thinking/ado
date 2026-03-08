@@ -494,6 +494,10 @@ export async function startWebControlCenter(
             ...(validatedPatch.discovery?.priorityWeights ?? {}),
           },
         },
+        worktrees: {
+          ...current.worktrees,
+          ...(validatedPatch.worktrees ?? {}),
+        },
         exceptionRecovery: {
           ...current.exceptionRecovery,
           ...(validatedPatch.exceptionRecovery ?? {}),
