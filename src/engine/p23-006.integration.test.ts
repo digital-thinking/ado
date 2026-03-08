@@ -751,6 +751,8 @@ describe("P25-005 integration coverage", () => {
     expect(control.startActiveTaskAndWait).toHaveBeenCalledWith({
       taskNumber: 1,
       assignee: "CODEX_CLI",
+      resolvedAssignee: "CODEX_CLI",
+      routingReason: "fallback",
       resume: false,
     });
 
