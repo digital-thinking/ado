@@ -45,6 +45,11 @@ describe("P21-005 Snapshot Tests", () => {
       description: "Configure global CLI settings",
     },
     {
+      name: "discover",
+      description: "Discover ranked task candidates from TODO/FIXME and issues",
+      usage: "discover [--dry-run|--queue]",
+    },
+    {
       name: "task",
       description: "Manage tasks",
       subcommands: [

@@ -10,6 +10,7 @@ Usage:
   ixado list                                                               Show all registered projects
   ixado switch <project-name>                                              Switch active project context
   ixado onboard                                                            Configure global CLI settings
+  ixado discover [--dry-run|--queue]                                       Discover ranked task candidates from TODO/FIXME and issues
   ixado task list                                                          List tasks in active phase with numbers
   ixado task create <title> <description> [assignee] [--type <taskType>]   Create task in active phase
   ixado task start <taskNumber> [assignee]                                 Start active-phase task

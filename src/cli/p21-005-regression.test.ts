@@ -54,6 +54,7 @@ describe("P21-005 global help text", () => {
       "list",
       "switch",
       "onboard",
+      "discover",
       "task list",
       "task create",
       "task start",
@@ -87,6 +88,7 @@ describe("P21-005 global help text", () => {
       "Show all registered projects",
       "Switch active project context",
       "Configure global CLI settings",
+      "Discover ranked task candidates from TODO/FIXME and issues",
       "List tasks in active phase with numbers",
       "Create task in active phase",
       "Start active-phase task",
@@ -114,6 +116,7 @@ describe("P21-005 global help text", () => {
 
     // Key argument placeholders that must appear verbatim in the help table.
     expect(out).toContain("switch <project-name>");
+    expect(out).toContain("discover [--dry-run|--queue]");
     expect(out).toContain(
       "task create <title> <description> [assignee] [--type <taskType>]",
     );
