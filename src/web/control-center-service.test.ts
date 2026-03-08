@@ -1225,6 +1225,44 @@ describe("ControlCenterService", () => {
     expect(phase.tasks[0].status).toBe("DONE");
   });
 
+  test("persists resolvedAssignee and routingReason on task execution", async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
+        command: "claude",
+        args: ["run"],
+        stdout: "done",
+        stderr: "",
+        durationMs: 5,
+      }),
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Routing",
+      branchName: "phase-routing",
+    });
+    const phaseId = created.phases[0].id;
+    await serviceWithRunner.createTask({
+      phaseId,
+      title: "Document API",
+      description: "Write docs",
+      assignee: "UNASSIGNED",
+      status: "TODO",
+    });
+
+    const finished = await serviceWithRunner.startActiveTaskAndWait({
+      taskNumber: 1,
+      assignee: "CLAUDE_CLI",
+      resolvedAssignee: "CLAUDE_CLI",
+      routingReason: "affinity",
+    });
+
+    expect(finished.phases[0].tasks[0].status).toBe("DONE");
+    expect(finished.phases[0].tasks[0].resolvedAssignee).toBe("CLAUDE_CLI");
+    expect(finished.phases[0].tasks[0].routingReason).toBe("affinity");
+  });
+
   test("lists active phase tasks with 1-based numbers", async () => {
     const created = await service.createPhase({
       name: "Phase Numbers",

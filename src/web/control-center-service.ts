@@ -43,6 +43,7 @@ import {
   type SideEffectContract,
   type Task,
   type TaskCompletionVerification,
+  type TaskRoutingReason,
   type WorkerAssignee,
 } from "../types";
 import { parsePullRequestNumberFromUrl } from "../vcs";
@@ -138,6 +139,8 @@ export type StartTaskInput = {
   phaseId: string;
   taskId: string;
   assignee: CLIAdapterId;
+  resolvedAssignee?: CLIAdapterId;
+  routingReason?: TaskRoutingReason;
   resume?: boolean;
 };
 
@@ -168,6 +171,8 @@ export type RecordRecoveryAttemptInput = {
 export type StartActiveTaskInput = {
   taskNumber: number;
   assignee: CLIAdapterId;
+  resolvedAssignee?: CLIAdapterId;
+  routingReason?: TaskRoutingReason;
   resume?: boolean;
 };
 
@@ -959,6 +964,8 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resolvedAssignee: input.resolvedAssignee,
+      routingReason: input.routingReason,
       resume: input.resume,
       projectName: input.projectName,
     });
@@ -986,6 +993,8 @@ export class ControlCenterService {
       phaseId: activePhase.id,
       taskId: task.id,
       assignee: input.assignee,
+      resolvedAssignee: input.resolvedAssignee,
+      routingReason: input.routingReason,
       resume: input.resume,
       projectName: input.projectName,
     });
@@ -997,6 +1006,10 @@ export class ControlCenterService {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
+    const resolvedAssignee = input.resolvedAssignee
+      ? CLIAdapterIdSchema.parse(input.resolvedAssignee)
+      : undefined;
+    const routingReason = input.routingReason;
     if (!phaseId) {
       throw new Error("phaseId must not be empty.");
     }
@@ -1005,6 +1018,21 @@ export class ControlCenterService {
     }
     if (!this.internalWorkRunner) {
       throw new Error("Internal work runner is not configured.");
+    }
+    if (!resolvedAssignee && routingReason) {
+      throw new Error(
+        "routingReason requires resolvedAssignee in task start input.",
+      );
+    }
+    if (resolvedAssignee && !routingReason) {
+      throw new Error(
+        "resolvedAssignee requires routingReason in task start input.",
+      );
+    }
+    if (resolvedAssignee && resolvedAssignee !== assignee) {
+      throw new Error(
+        `resolvedAssignee must match assignee. Received ${resolvedAssignee} and ${assignee}.`,
+      );
     }
 
     const runKey = taskExecutionKey(phaseId, taskId);
@@ -1081,6 +1109,8 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       assignee,
+      resolvedAssignee,
+      routingReason,
       status: "IN_PROGRESS",
       resultContext: undefined,
       errorLogs: undefined,

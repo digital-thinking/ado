@@ -1016,7 +1016,84 @@ describe("PhaseRunner", () => {
     });
   });
 
-  test("P19-003: task with UNASSIGNED assignee falls back to global default", async () => {
+  test("P28-004: task with taskType uses adapter affinity mapping", async () => {
+    const phaseId = "a0000000-0000-4000-8000-000000000001";
+    const taskId = "b0000000-0000-4000-8000-000000000001";
+
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Write docs",
+              description: "Document command usage",
+              taskType: "documentation",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let startInput:
+      | { assignee: string; resolvedAssignee?: string; routingReason?: string }
+      | undefined;
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        startInput = input;
+        mockState.phases[0].tasks[0].status = "DONE";
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({ stdout: "ok", stderr: "" })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "feat/phase-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        adapterAffinities: {
+          documentation: "CLAUDE_CLI",
+        },
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await runner.run();
+
+    expect(startInput?.assignee).toBe("CLAUDE_CLI");
+    expect(startInput?.resolvedAssignee).toBe("CLAUDE_CLI");
+    expect(startInput?.routingReason).toBe("affinity");
+  });
+
+  test("P28-004: task with UNASSIGNED assignee falls back to global default with routing metadata", async () => {
     const phaseId = "c0000000-0000-4000-8000-000000000001";
     const taskId = "d0000000-0000-4000-8000-000000000001";
 
@@ -1043,13 +1120,15 @@ describe("PhaseRunner", () => {
       ],
     };
 
-    let capturedAssignee: string | undefined;
+    let startInput:
+      | { assignee: string; resolvedAssignee?: string; routingReason?: string }
+      | undefined;
     const mockControl = {
       reconcileInProgressTasks: mock(async () => 0),
       getState: mock(async () => mockState),
       setPhaseStatus: mock(async () => mockState),
       startActiveTaskAndWait: mock(async (input: any) => {
-        capturedAssignee = input.assignee;
+        startInput = input;
         mockState.phases[0].tasks[0].status = "DONE";
         return mockState;
       }),
@@ -1070,17 +1149,29 @@ describe("PhaseRunner", () => {
       }),
     } as any;
 
-    const runner = new PhaseRunner(
-      mockControl,
-      mockConfig,
-      undefined,
-      undefined,
-      mockRunner,
-    );
-    await runner.run();
+    const consoleInfo = console.info;
+    const infoSpy = mock(() => {});
+    console.info = infoSpy as unknown as typeof console.info;
+    try {
+      const runner = new PhaseRunner(
+        mockControl,
+        mockConfig,
+        undefined,
+        undefined,
+        mockRunner,
+      );
+      await runner.run();
+    } finally {
+      console.info = consoleInfo;
+    }
 
-    // UNASSIGNED task must use global default (MOCK_CLI from mockConfig.activeAssignee)
-    expect(capturedAssignee).toBe("MOCK_CLI");
+    expect(startInput?.assignee).toBe("MOCK_CLI");
+    expect(startInput?.resolvedAssignee).toBe("MOCK_CLI");
+    expect(startInput?.routingReason).toBe("fallback");
+    const infoOutput = infoSpy.mock.calls
+      .map((call) => call.join(" "))
+      .join("\n");
+    expect(infoOutput).toContain("taskType is missing");
   });
 
   test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {

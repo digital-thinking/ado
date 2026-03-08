@@ -10,6 +10,7 @@ import {
   RecoveryAttemptRecordSchema,
   ProjectStateSchema,
   TaskTypeSchema,
+  TaskRoutingReasonSchema,
   TaskStatusSchema,
   WorkerArchetypeSchema,
   WorkerAssigneeSchema,
@@ -161,6 +162,22 @@ describe("type contracts", () => {
         taskType: "refactor",
       }),
     ).toThrow();
+  });
+
+  test("supports routing metadata for resolved assignee", () => {
+    expect(TaskRoutingReasonSchema.parse("affinity")).toBe("affinity");
+    expect(TaskRoutingReasonSchema.parse("fallback")).toBe("fallback");
+
+    const parsedTask = TaskSchema.parse({
+      id: "77777777-7777-4777-8777-777777777777",
+      title: "Route this task",
+      description: "Ensure metadata is persisted",
+      resolvedAssignee: "CLAUDE_CLI",
+      routingReason: "affinity",
+    });
+
+    expect(parsedTask.resolvedAssignee).toBe("CLAUDE_CLI");
+    expect(parsedTask.routingReason).toBe("affinity");
   });
 
   test("supports optional per-project execution settings", () => {

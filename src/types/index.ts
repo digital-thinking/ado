@@ -410,6 +410,8 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 export const TaskTypeSchema = TaskTypeKeySchema;
 export type TaskType = z.infer<typeof TaskTypeSchema>;
+export const TaskRoutingReasonSchema = z.enum(["affinity", "fallback"]);
+export type TaskRoutingReason = z.infer<typeof TaskRoutingReasonSchema>;
 
 export const ExceptionCategorySchema = z.enum([
   "DIRTY_WORKTREE",
@@ -499,6 +501,8 @@ export const TaskSchema = z.object({
   title: z.string(),
   description: z.string(),
   taskType: TaskTypeSchema.optional(),
+  resolvedAssignee: CLIAdapterIdSchema.optional(),
+  routingReason: TaskRoutingReasonSchema.optional(),
   status: TaskStatusSchema.default("TODO"),
   assignee: WorkerAssigneeSchema.default("UNASSIGNED"),
   dependencies: z.array(z.string().uuid()).default([]),

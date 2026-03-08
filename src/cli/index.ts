@@ -1300,6 +1300,7 @@ async function runPhaseRunCommand({
       mode,
       countdownSeconds,
       activeAssignee,
+      adapterAffinities: settings.agents.adapterAffinities,
       maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,

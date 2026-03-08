@@ -34,11 +34,14 @@ import {
   resolveActivePhaseStrict,
 } from "../state/active-phase";
 import {
+  TaskRoutingReasonSchema,
   type CLIAdapterId,
   type Phase,
   type PhaseFailureKind,
   type PullRequestAutomationSettings,
   type Task,
+  type TaskRoutingReason,
+  type TaskType,
 } from "../types";
 import { createRuntimeEvent, type RuntimeEvent } from "../types/runtime-events";
 
@@ -97,6 +100,7 @@ export type PhaseRunnerConfig = {
   mode: "AUTO" | "MANUAL";
   countdownSeconds: number;
   activeAssignee: CLIAdapterId;
+  adapterAffinities?: Partial<Record<TaskType, CLIAdapterId>>;
   maxRecoveryAttempts: number;
   testerCommand: string | null;
   testerArgs: string[] | null;
@@ -493,10 +497,8 @@ Recovery: ${recoveryMessage}`,
     taskNumber: number,
     resumeSession: boolean,
   ): Promise<void> {
-    const effectiveAssignee: CLIAdapterId =
-      task.assignee !== "UNASSIGNED"
-        ? (task.assignee as CLIAdapterId)
-        : this.config.activeAssignee;
+    const { assignee: effectiveAssignee, routingReason } =
+      this.resolveTaskRouting(task, taskNumber);
     const nextTaskLabel = `task #${taskNumber} ${task.title}`;
     console.info(
       `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
@@ -531,6 +533,8 @@ Recovery: ${recoveryMessage}`,
       const updatedState = await this.control.startActiveTaskAndWait({
         taskNumber,
         assignee: effectiveAssignee,
+        resolvedAssignee: effectiveAssignee,
+        routingReason,
         resume: resumeSession,
       });
       const updatedPhase = this.resolveActivePhase(updatedState);
@@ -614,6 +618,45 @@ Recovery: ${recoveryMessage}`,
     throw new Error(
       `Execution loop stopped after FAILED task #${taskNumber}. Recovery retries were exhausted.`,
     );
+  }
+
+  private resolveTaskRouting(
+    task: Task,
+    taskNumber: number,
+  ): { assignee: CLIAdapterId; routingReason: TaskRoutingReason } {
+    // Explicit task assignment remains authoritative and bypasses semantic routing.
+    if (task.assignee !== "UNASSIGNED") {
+      return {
+        assignee: task.assignee as CLIAdapterId,
+        routingReason: TaskRoutingReasonSchema.enum.fallback,
+      };
+    }
+
+    if (!task.taskType) {
+      console.info(
+        `Routing fallback for task #${taskNumber} (${task.title}): taskType is missing; using ${this.config.activeAssignee}.`,
+      );
+      return {
+        assignee: this.config.activeAssignee,
+        routingReason: TaskRoutingReasonSchema.enum.fallback,
+      };
+    }
+
+    const affinityAssignee = this.config.adapterAffinities?.[task.taskType];
+    if (!affinityAssignee) {
+      console.info(
+        `Routing fallback for task #${taskNumber} (${task.title}): no adapter affinity configured for taskType '${task.taskType}'; using ${this.config.activeAssignee}.`,
+      );
+      return {
+        assignee: this.config.activeAssignee,
+        routingReason: TaskRoutingReasonSchema.enum.fallback,
+      };
+    }
+
+    return {
+      assignee: affinityAssignee,
+      routingReason: TaskRoutingReasonSchema.enum.affinity,
+    };
   }
 
   private async runTesterStep(
