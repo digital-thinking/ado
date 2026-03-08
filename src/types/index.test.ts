@@ -155,6 +155,17 @@ describe("type contracts", () => {
     expect(parsedTask.taskType).toBe("documentation");
   });
 
+  test("supports optional deliberate flag on tasks", () => {
+    const parsedTask = TaskSchema.parse({
+      id: "66666666-6666-4666-8666-666666666666",
+      title: "Deliberate decision",
+      description: "Require council review before implementation",
+      deliberate: true,
+    });
+
+    expect(parsedTask.deliberate).toBe(true);
+  });
+
   test("rejects invalid task type classification", () => {
     expect(() => TaskTypeSchema.parse("refactor")).toThrow();
     expect(() =>

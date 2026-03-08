@@ -548,6 +548,7 @@ export const TaskSchema = z.object({
   code: z.string().optional(),
   title: z.string(),
   description: z.string(),
+  deliberate: z.boolean().optional(),
   taskType: TaskTypeSchema.optional(),
   resolvedAssignee: CLIAdapterIdSchema.optional(),
   routingReason: TaskRoutingReasonSchema.optional(),
