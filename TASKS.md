@@ -87,7 +87,7 @@ Status markers:
 - [x] `P28-004` Wire affinity routing into `PhaseRunner`: when a task has a `taskType` and a matching affinity mapping exists, use the mapped adapter instead of `activeAssignee`; fall back to `activeAssignee` with a logged reason when no mapping found. Store `resolvedAssignee` and `routingReason` (`"affinity" | "fallback"`) in task metadata. Deps: `P28-002`, `P28-003`.
 - [x] `P28-005` Auto-classify tasks at creation time using the heuristic classifier; allow manual override via `task create --type <taskType>`. Deps: `P28-003`.
 - [x] `P28-006` Add regression/integration tests for Phase 28: `taskType` schema validation, heuristic classifier keyword coverage, affinity routing in phase runner, fallback behavior, and task-creation type inference. Deps: `P28-004`, `P28-005`.
-- [ ] `P28-007` Create PR Task: open Phase 28 PR after coding tasks are done. Deps: `P28-006`.
+- [x] `P28-007` Create PR Task: open Phase 28 PR after coding tasks are done. Deps: `P28-006`.
 
 ### Phase 29: Reliability & Traceability Enhancements
 
