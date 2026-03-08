@@ -121,7 +121,32 @@ export function controlCenterHtml(params: {
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+      cursor: pointer;
+      user-select: none;
     }
+    .phase-collapsed:hover { background: rgba(0,0,0,0.02); border-radius: 8px; }
+    .phase-expand-tasks {
+      display: none;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--line);
+    }
+    .phase-row.expanded .phase-expand-tasks { display: flex; }
+    .phase-task-pill {
+      font-size: 0.72rem;
+      padding: 2px 7px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      white-space: nowrap;
+    }
+    .phase-task-pill.pill-done { background: #d4edda; border-color: #a3c9ab; color: #1d5c2e; }
+    .phase-task-pill.pill-failed { background: #f8d7da; border-color: #e0a0a5; color: #721c24; }
+    .phase-task-pill.pill-inprogress { background: #fff3cd; border-color: #d4b96a; color: #6b4c00; }
+    .phase-task-pill.pill-todo { color: #555; }
+    .phase-row.expanded .phase-collapsed h3 span { transform: rotate(90deg); display: inline-block; }
     .phase-row h3 { margin: 0 0 8px; font-size: 1rem; }
     .phase-status-grid {
       display: grid;
@@ -956,15 +981,27 @@ export function controlCenterHtml(params: {
       const html = state.phases.map((phase) => {
         const isActive = phase.id === activePhaseId;
         if (!isActive) {
+          const tasks = phase.tasks || [];
+          const taskPills = tasks.map((task) => {
+            const s = task.status;
+            const cls = s === "DONE" ? "pill-done"
+              : s === "FAILED" || s === "DEAD_LETTER" ? "pill-failed"
+              : s === "IN_PROGRESS" || s === "CI_FIX" ? "pill-inprogress"
+              : "pill-todo";
+            return '<span class="phase-task-pill ' + cls + '" title="' + escapeHtml(s) + '">' + escapeHtml(task.title) + '</span>';
+          }).join("");
+          const doneTasks = tasks.filter(t => t.status === "DONE").length;
+          const summary = escapeHtml(phase.status) + " | " + doneTasks + "/" + tasks.length + " done";
           return (
-            '<section class="phase-row">' +
-              '<div class="phase-collapsed">' +
+            '<section class="phase-row" data-phase-id="' + escapeHtml(phase.id) + '">' +
+              '<div class="phase-collapsed" onclick="this.closest(\'.phase-row\').classList.toggle(\'expanded\')">' +
                 "<div>" +
-                  "<h3>" + escapeHtml(phase.name) + "</h3>" +
-                  '<div class="small mono muted">' + escapeHtml(phase.status) + " | Tasks: " + escapeHtml(String((phase.tasks || []).length)) + "</div>" +
+                  "<h3>" + escapeHtml(phase.name) + " <span style='font-size:0.7rem;color:#999'>▶</span></h3>" +
+                  '<div class="small mono muted">' + summary + "</div>" +
                 "</div>" +
-                '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>' +
+                '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '" onclick="event.stopPropagation()">Set Active</button>' +
               "</div>" +
+              '<div class="phase-expand-tasks">' + (taskPills || '<span class="small muted">No tasks</span>') + '</div>' +
             "</section>"
           );
         }
