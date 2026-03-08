@@ -1695,12 +1695,50 @@ export class ControlCenterService {
     const missingSideEffects: string[] = [];
 
     if (contracts.includes("PR_CREATION")) {
-      const prUrl = phase.prUrl?.trim();
+      let prUrl = phase.prUrl?.trim();
+      // If prUrl is not recorded yet, try to discover it from GitHub by branch name
+      if (!prUrl) {
+        try {
+          const ghProbe = await this.runCommandProbe(state.rootDir, "gh", [
+            "pr",
+            "view",
+            "--head",
+            phase.branchName,
+            "--json",
+            "url",
+            "--jq",
+            ".url",
+          ]);
+          if (ghProbe.success && ghProbe.stdout.trim().startsWith("http")) {
+            prUrl = ghProbe.stdout.trim();
+            // Persist the discovered URL so subsequent checks and the CI loop can use it
+            const engine2 = await this.getEngine(input.projectName);
+            const state2 = await engine2.readProjectState();
+            const phaseIndex = state2.phases.findIndex(
+              (p) => p.id === phase.id,
+            );
+            if (phaseIndex >= 0) {
+              const nextPhases = [...state2.phases];
+              nextPhases[phaseIndex] = PhaseSchema.parse({
+                ...state2.phases[phaseIndex],
+                prUrl,
+              });
+              await engine2.writeProjectState({
+                ...state2,
+                phases: nextPhases,
+              });
+            }
+          }
+        } catch {
+          // gh lookup failed; fall through to missing-prUrl failure
+        }
+      }
       if (!prUrl) {
         probes.push({
           name: "phase.prUrl",
           success: false,
-          details: "Missing phase PR URL.",
+          details:
+            "Missing phase PR URL and no open PR found for branch on GitHub.",
         });
         missingSideEffects.push(
           "PR creation was not verified because phase.prUrl is missing.",
