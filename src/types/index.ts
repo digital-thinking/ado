@@ -710,6 +710,7 @@ export const PhaseSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   branchName: z.string(),
+  worktreePath: z.string().min(1).nullable().optional(),
   status: PhaseStatusSchema.default("PLANNING"),
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
