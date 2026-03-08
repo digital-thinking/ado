@@ -1362,6 +1362,248 @@ describe("PhaseRunner", () => {
     );
   });
 
+  test("P29-004: reroutes to next enabled adapter when preferred breaker is open", async () => {
+    const phaseId = "11111111-aaaa-4111-8111-111111111111";
+    const taskId = "22222222-aaaa-4222-8222-222222222222";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 29",
+          branchName: "phase-29-reliability",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Handle flaky worker",
+              description: "Retry task execution when adapter fails",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              errorCategory: undefined as string | undefined,
+              adapterFailureKind: undefined as string | undefined,
+              errorLogs: undefined as string | undefined,
+            },
+          ],
+        },
+      ],
+    };
+
+    const taskStartInputs: Array<{ assignee: string }> = [];
+    const runtimeEvents: Array<{
+      type: string;
+      payload: any;
+      adapterId?: string;
+    }> = [];
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        taskStartInputs.push({ assignee: input.assignee });
+        if (taskStartInputs.length === 1) {
+          mockState.phases[0].tasks[0].status = "FAILED";
+          mockState.phases[0].tasks[0].errorCategory = "AGENT_FAILURE";
+          mockState.phases[0].tasks[0].adapterFailureKind = "timeout";
+          mockState.phases[0].tasks[0].errorLogs = "adapter timeout";
+          return mockState;
+        }
+
+        mockState.phases[0].tasks[0].status = "DONE";
+        mockState.phases[0].tasks[0].errorCategory = undefined;
+        mockState.phases[0].tasks[0].adapterFailureKind = undefined;
+        mockState.phases[0].tasks[0].errorLogs = undefined;
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout:
+          '{"status":"fixed","reasoning":"transient timeout recovered","actionsTaken":["retry"],"filesTouched":[]}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "phase-29-reliability", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        activeAssignee: "CODEX_CLI",
+        enabledAdapters: ["CODEX_CLI", "CLAUDE_CLI"],
+        adapterCircuitBreakers: {
+          CODEX_CLI: { failureThreshold: 1, cooldownMs: 60_000 },
+          CLAUDE_CLI: { failureThreshold: 3, cooldownMs: 60_000 },
+        },
+        testerCommand: null,
+        testerArgs: null,
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push({
+          type: event.type,
+          payload: event.payload,
+          adapterId: event.adapterId,
+        });
+      },
+      mockRunner,
+    );
+
+    await runner.run();
+
+    expect(taskStartInputs).toHaveLength(2);
+    expect(taskStartInputs[0]?.assignee).toBe("CODEX_CLI");
+    expect(taskStartInputs[1]?.assignee).toBe("CLAUDE_CLI");
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "adapter.circuit" &&
+          event.payload.stage === "opened" &&
+          event.adapterId === "CODEX_CLI",
+      ),
+    ).toBe(true);
+  });
+
+  test("P29-004: emits adapter.circuit open and close transitions", async () => {
+    const phaseId = "33333333-aaaa-4333-8333-333333333333";
+    const taskId = "44444444-aaaa-4444-8444-444444444444";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 29",
+          branchName: "phase-29-reliability",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Breaker telemetry",
+              description: "Ensure transitions are visible",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              errorCategory: undefined as string | undefined,
+              adapterFailureKind: undefined as string | undefined,
+              errorLogs: undefined as string | undefined,
+            },
+          ],
+        },
+      ],
+    };
+
+    const taskStartInputs: Array<{ assignee: string }> = [];
+    const runtimeEvents: Array<{
+      type: string;
+      payload: any;
+      adapterId?: string;
+    }> = [];
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        taskStartInputs.push({ assignee: input.assignee });
+        if (taskStartInputs.length === 1) {
+          mockState.phases[0].tasks[0].status = "FAILED";
+          mockState.phases[0].tasks[0].errorCategory = "AGENT_FAILURE";
+          mockState.phases[0].tasks[0].adapterFailureKind = "timeout";
+          mockState.phases[0].tasks[0].errorLogs = "adapter timeout";
+          return mockState;
+        }
+
+        mockState.phases[0].tasks[0].status = "DONE";
+        mockState.phases[0].tasks[0].errorCategory = undefined;
+        mockState.phases[0].tasks[0].adapterFailureKind = undefined;
+        mockState.phases[0].tasks[0].errorLogs = undefined;
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout:
+          '{"status":"fixed","reasoning":"transient timeout recovered","actionsTaken":["retry"],"filesTouched":[]}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "phase-29-reliability", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        activeAssignee: "CODEX_CLI",
+        enabledAdapters: ["CODEX_CLI", "CLAUDE_CLI"],
+        adapterCircuitBreakers: {
+          CODEX_CLI: { failureThreshold: 1, cooldownMs: 0 },
+          CLAUDE_CLI: { failureThreshold: 3, cooldownMs: 60_000 },
+        },
+        testerCommand: null,
+        testerArgs: null,
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push({
+          type: event.type,
+          payload: event.payload,
+          adapterId: event.adapterId,
+        });
+      },
+      mockRunner,
+    );
+
+    await runner.run();
+
+    expect(taskStartInputs).toHaveLength(2);
+    expect(taskStartInputs[0]?.assignee).toBe("CODEX_CLI");
+    expect(taskStartInputs[1]?.assignee).toBe("CODEX_CLI");
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "adapter.circuit" &&
+          event.payload.stage === "opened" &&
+          event.adapterId === "CODEX_CLI",
+      ),
+    ).toBe(true);
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "adapter.circuit" &&
+          event.payload.stage === "closed" &&
+          event.adapterId === "CODEX_CLI",
+      ),
+    ).toBe(true);
+  });
+
   test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {
     const phaseId = "33333333-3333-4333-8333-333333333333";
     const taskId = "44444444-4444-4444-8444-444444444444";
