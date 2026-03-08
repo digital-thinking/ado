@@ -247,7 +247,7 @@ export async function startWebControlCenter(
             name: agentName,
             command: adapter.contract.command,
             args,
-            cwd: input.cwd,
+            cwd: workInput.cwd ?? input.cwd,
             timeoutMs: assigneeSettings.timeoutMs,
             startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
             stdin,

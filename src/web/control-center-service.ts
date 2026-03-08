@@ -105,6 +105,8 @@ export type RunInternalWorkInput = {
   phaseId?: string;
   taskId?: string;
   resume?: boolean;
+  /** Working directory for the agent process. When set, overrides the server default cwd. */
+  cwd?: string;
 };
 
 export type RunInternalWorkResult = {
@@ -1111,6 +1113,7 @@ export class ControlCenterService {
       resume: shouldResume,
       startedFromStatus: task.status,
       projectName: input.projectName,
+      cwd: state.rootDir,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });
@@ -1791,6 +1794,7 @@ export class ControlCenterService {
     resume: boolean;
     startedFromStatus: Task["status"];
     projectName?: string;
+    cwd?: string;
   }): Promise<void> {
     try {
       const capabilityPreflight =
@@ -1834,6 +1838,7 @@ export class ControlCenterService {
         phaseId: input.phaseId,
         taskId: input.taskId,
         resume: input.resume,
+        cwd: input.cwd,
       });
 
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
