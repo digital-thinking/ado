@@ -81,6 +81,26 @@ describe("AdapterCircuitBreaker", () => {
     expect(continued.snapshot.consecutiveFailures).toBe(2);
   });
 
+  test("supports repeated open-close-open cooldown cycles", () => {
+    const breaker = new AdapterCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 100,
+    });
+
+    const openedFirst = breaker.recordFailure("CODEX_CLI", 10_000);
+    expect(openedFirst.transition).toBe("opened");
+    expect(openedFirst.snapshot.state).toBe("OPEN");
+
+    const closedFirst = breaker.check("CODEX_CLI", 10_100);
+    expect(closedFirst.transition).toBe("closed");
+    expect(closedFirst.snapshot.state).toBe("CLOSED");
+    expect(closedFirst.snapshot.consecutiveFailures).toBe(0);
+
+    const openedSecond = breaker.recordFailure("CODEX_CLI", 10_101);
+    expect(openedSecond.transition).toBe("opened");
+    expect(openedSecond.snapshot.state).toBe("OPEN");
+  });
+
   test("validates configuration fail-fast", () => {
     expect(
       () =>

@@ -991,12 +991,15 @@ describe("PhaseRunner", () => {
         return { exitCode: 0, stdout: "", stderr: "" };
       }),
     } as any;
+    const runtimeEvents: Array<{ type: string; payload: any }> = [];
 
     const runner = new PhaseRunner(
       mockControl,
       mockConfig,
       undefined,
-      undefined,
+      async (event) => {
+        runtimeEvents.push({ type: event.type, payload: event.payload });
+      },
       mockRunner,
     );
 
@@ -1015,6 +1018,13 @@ describe("PhaseRunner", () => {
     ).mock.calls.find((entry: any[]) => entry[0].status === "CI_FAILED");
     expect(ciFailedCall).toBeDefined();
     expect(ciFailedCall?.[0]?.ciStatusContext).toContain("DEAD_LETTER");
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task.lifecycle.finish" &&
+          event.payload.status === "DEAD_LETTER",
+      ),
+    ).toBe(true);
   });
 
   test("P19-003: each task uses its own persisted assignee instead of global default", async () => {
@@ -1602,6 +1612,161 @@ describe("PhaseRunner", () => {
           event.adapterId === "CODEX_CLI",
       ),
     ).toBe(true);
+  });
+
+  test("P29-006: fallback execution adapter is persisted in CI commit trailers", async () => {
+    const phaseId = "5555aaaa-1111-4111-8111-555555555555";
+    const taskId = "6666bbbb-2222-4222-8222-666666666666";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseId: phaseId,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 29 trailer integration",
+          branchName: "phase-29-trailer-integration",
+          status: "PLANNING",
+          prUrl: undefined as string | undefined,
+          tasks: [
+            {
+              id: taskId,
+              title: "Integrate trailer metadata",
+              description: "Ensure fallback assignee is recorded in trailers",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              errorCategory: undefined as string | undefined,
+              adapterFailureKind: undefined as string | undefined,
+              errorLogs: undefined as string | undefined,
+            },
+          ],
+        },
+      ],
+    };
+
+    const taskStartInputs: Array<{ assignee: string }> = [];
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      setPhasePrUrl: mock(async (input: { phaseId: string; prUrl: string }) => {
+        mockState.phases[0].prUrl = input.prUrl;
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async (input: any) => {
+        taskStartInputs.push({ assignee: input.assignee });
+        if (taskStartInputs.length === 1) {
+          mockState.phases[0].tasks[0].status = "FAILED";
+          mockState.phases[0].tasks[0].errorCategory = "AGENT_FAILURE";
+          mockState.phases[0].tasks[0].adapterFailureKind = "timeout";
+          mockState.phases[0].tasks[0].errorLogs = "adapter timeout";
+          return mockState;
+        }
+
+        mockState.phases[0].tasks[0].status = "DONE";
+        mockState.phases[0].tasks[0].errorCategory = undefined;
+        mockState.phases[0].tasks[0].adapterFailureKind = undefined;
+        mockState.phases[0].tasks[0].errorLogs = undefined;
+        return mockState;
+      }),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout:
+          '{"status":"fixed","reasoning":"transient timeout recovered","actionsTaken":["retry"],"filesTouched":[]}',
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.args.includes("branch") &&
+          input.args.includes("--show-current")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: "phase-29-trailer-integration",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("--cached") &&
+          input.args.includes("--name-only")
+        ) {
+          return { exitCode: 0, stdout: "src/a.ts\n", stderr: "" };
+        }
+        if (input.args.includes("pr") && input.args.includes("create")) {
+          return {
+            exitCode: 0,
+            stdout: "https://github.com/org/repo/pull/2906\n",
+            stderr: "",
+          };
+        }
+        if (
+          input.args.includes("pr") &&
+          input.args.includes("view") &&
+          input.args.includes("statusCheckRollup")
+        ) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              statusCheckRollup: [
+                {
+                  name: "build",
+                  status: "COMPLETED",
+                  conclusion: "SUCCESS",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        if (input.args.includes("diff") && input.args.includes("--no-color")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        ciEnabled: true,
+        activeAssignee: "CODEX_CLI",
+        enabledAdapters: ["CODEX_CLI", "CLAUDE_CLI"],
+        adapterCircuitBreakers: {
+          CODEX_CLI: { failureThreshold: 1, cooldownMs: 60_000 },
+          CLAUDE_CLI: { failureThreshold: 3, cooldownMs: 60_000 },
+        },
+        testerCommand: null,
+        testerArgs: null,
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    await runner.run();
+
+    expect(taskStartInputs).toHaveLength(2);
+    expect(taskStartInputs[0]?.assignee).toBe("CODEX_CLI");
+    expect(taskStartInputs[1]?.assignee).toBe("CLAUDE_CLI");
+
+    const commitCall = (mockRunner.run as ReturnType<typeof mock>).mock.calls
+      .map((entry: any[]) => entry[0])
+      .find((call: any) => call.command === "git" && call.args[0] === "commit");
+
+    expect(commitCall).toBeDefined();
+    const commitArgs = commitCall?.args as string[];
+    expect(commitArgs).toContain(`Originated-By=${phaseId}/${taskId}`);
+    expect(commitArgs).toContain("Executed-By=CLAUDE_CLI");
   });
 
   test("clean-tree detection: untracked .ixado/ entries do not block phase run", async () => {
