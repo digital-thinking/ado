@@ -146,7 +146,8 @@ export function controlCenterHtml(params: {
     .phase-task-pill.pill-failed { background: #f8d7da; border-color: #e0a0a5; color: #721c24; }
     .phase-task-pill.pill-inprogress { background: #fff3cd; border-color: #d4b96a; color: #6b4c00; }
     .phase-task-pill.pill-todo { color: #555; }
-    .phase-row.expanded .phase-collapsed h3 span { transform: rotate(90deg); display: inline-block; }
+    .phase-expand-arrow { display: inline-block; font-size: 0.7rem; color: #999; transition: transform 0.15s; }
+    .phase-row.expanded .phase-expand-arrow { transform: rotate(90deg); }
     .phase-row h3 { margin: 0 0 8px; font-size: 1rem; }
     .phase-status-grid {
       display: grid;
@@ -994,12 +995,12 @@ export function controlCenterHtml(params: {
           const summary = escapeHtml(phase.status) + " | " + doneTasks + "/" + tasks.length + " done";
           return (
             '<section class="phase-row" data-phase-id="' + escapeHtml(phase.id) + '">' +
-              '<div class="phase-collapsed" onclick="this.closest(\'.phase-row\').classList.toggle(\'expanded\')">' +
+              '<div class="phase-collapsed">' +
                 "<div>" +
-                  "<h3>" + escapeHtml(phase.name) + " <span style='font-size:0.7rem;color:#999'>▶</span></h3>" +
+                  "<h3>" + escapeHtml(phase.name) + " <span class='phase-expand-arrow'>▶</span></h3>" +
                   '<div class="small mono muted">' + summary + "</div>" +
                 "</div>" +
-                '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '" onclick="event.stopPropagation()">Set Active</button>' +
+                '<button type="button" class="secondary phase-activate-button" data-phase-id="' + escapeHtml(phase.id) + '">Set Active</button>' +
               "</div>" +
               '<div class="phase-expand-tasks">' + (taskPills || '<span class="small muted">No tasks</span>') + '</div>' +
             "</section>"
@@ -1536,7 +1537,12 @@ export function controlCenterHtml(params: {
 
     kanbanBoard.addEventListener("click", async (event) => {
       const target = event.target;
+      // Toggle expand on collapsed phase rows (click anywhere except buttons)
       if (!(target instanceof HTMLButtonElement)) {
+        const row = target instanceof Element ? target.closest(".phase-row") : null;
+        if (row && row.querySelector(".phase-collapsed")) {
+          row.classList.toggle("expanded");
+        }
         return;
       }
       if (target.classList.contains("phase-activate-button")) {
