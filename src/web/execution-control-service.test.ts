@@ -28,7 +28,7 @@ function createState(
         ],
       },
     ],
-    activePhaseId: "phase-1",
+    activePhaseIds: ["phase-1"],
     createdAt: now,
     updatedAt: now,
   } as unknown as ProjectState;

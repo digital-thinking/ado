@@ -821,10 +821,10 @@ export function controlCenterHtml(params: {
     function renderState(state) {
       latestState = state;
       const hasValidActivePhase = state.phases.some(
-        (phase) => phase.id === state.activePhaseId,
+        (phase) => phase.id === state.activePhaseIds[0],
       );
       const selectedPhaseId = hasValidActivePhase
-        ? state.activePhaseId
+        ? state.activePhaseIds[0]
         : undefined;
       if (!hasValidActivePhase && state.phases.length > 0) {
         console.warn(
@@ -971,9 +971,9 @@ export function controlCenterHtml(params: {
       }
 
       const hasValidActivePhase = state.phases.some(
-        (phase) => phase.id === state.activePhaseId,
+        (phase) => phase.id === state.activePhaseIds[0],
       );
-      const activePhaseId = hasValidActivePhase ? state.activePhaseId : undefined;
+      const activePhaseId = hasValidActivePhase ? state.activePhaseIds[0] : undefined;
       if (!hasValidActivePhase) {
         console.warn(
           "Kanban has no valid active phase. Use Set Active to choose one.",

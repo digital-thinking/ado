@@ -990,10 +990,10 @@ describe("ControlCenterService", () => {
     });
     const secondPhaseId = createdB.phases[1].id;
 
-    expect(createdB.activePhaseId).toBe(secondPhaseId);
+    expect(createdB.activePhaseIds[0]).toBe(secondPhaseId);
 
     const updated = await service.setActivePhase({ phaseId: firstPhaseId });
-    expect(updated.activePhaseId).toBe(firstPhaseId);
+    expect(updated.activePhaseIds[0]).toBe(firstPhaseId);
   });
 
   test("sets active phase by 1-based phase number", async () => {
@@ -1008,7 +1008,7 @@ describe("ControlCenterService", () => {
     });
 
     const updated = await service.setActivePhase({ phaseId: "1" });
-    expect(updated.activePhaseId).toBe(firstPhaseId);
+    expect(updated.activePhaseIds[0]).toBe(firstPhaseId);
   });
 
   test("fails fast when phase number is out of range", async () => {
@@ -1395,7 +1395,7 @@ describe("ControlCenterService", () => {
     });
 
     const raw = await Bun.file(stateFilePath).json();
-    raw.activePhaseId = undefined;
+    raw.activePhaseIds = [];
     await Bun.write(stateFilePath, JSON.stringify(raw, null, 2));
 
     await expect(service.listActivePhaseTasks()).rejects.toThrow(

@@ -529,7 +529,7 @@ describe("P21-002 CLI argument validation", () => {
           tasks: [],
         },
       ],
-      activePhaseId: undefined,
+      activePhaseIds: [],
     };
     await sandbox.writeProjectState(initialState as any);
 

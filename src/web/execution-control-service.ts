@@ -118,7 +118,8 @@ export class ExecutionControlService {
     }
 
     const lockState = await this.control.getState(projectName);
-    const lockPhaseId = lockState.activePhaseId?.trim() || "no-active-phase";
+    const lockPhaseId =
+      lockState.activePhaseIds[0]?.trim() || "no-active-phase";
     const runLock = new ExecutionRunLock({
       projectRootDir: this.projectRootDir,
       projectName,

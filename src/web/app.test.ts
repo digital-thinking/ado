@@ -32,7 +32,7 @@ type TestState = {
       resultContext?: string;
     }>;
   }>;
-  activePhaseId?: string;
+  activePhaseIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -43,7 +43,7 @@ function createInitialState(): TestState {
     projectName: "IxADO",
     rootDir: "C:/repo",
     phases: [],
-    activePhaseId: undefined,
+    activePhaseIds: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -80,7 +80,7 @@ describe("web app api", () => {
             tasks: [],
           };
           state.phases.push(phase);
-          state.activePhaseId = phase.id;
+          state.activePhaseIds = [phase.id];
           return state as never;
         },
         createTask: async (
@@ -124,7 +124,7 @@ describe("web app api", () => {
             throw new Error("Phase not found");
           }
 
-          state.activePhaseId = phase.id;
+          state.activePhaseIds = [phase.id];
           return state as never;
         },
         startTask: async (input: StartTaskInput & { projectName?: string }) => {
@@ -465,7 +465,7 @@ describe("web app api", () => {
     );
     expect(setActiveResponse.status).toBe(200);
     const activePayload = (await setActiveResponse.json()) as TestState;
-    expect(activePayload.activePhaseId).toBe("phase-1");
+    expect(activePayload.activePhaseIds[0]).toBe("phase-1");
 
     const startTaskResponse = await app.fetch(
       new Request("http://localhost/api/tasks/start", {
@@ -581,6 +581,7 @@ describe("multi-project api", () => {
     projectName: "alpha",
     rootDir: "/tmp/alpha",
     phases: [],
+    activePhaseIds: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -617,6 +618,7 @@ describe("multi-project api", () => {
             projectName: "alpha",
             rootDir: "/tmp/alpha",
             phases: [],
+            activePhaseIds: [],
             createdAt: now,
             updatedAt: now,
           }) as never,
@@ -1278,7 +1280,7 @@ describe("phase14 recovery surfacing", () => {
               ],
             },
           ],
-          activePhaseId: "11111111-1111-4111-8111-111111111111",
+          activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
           createdAt: "2026-02-23T00:00:00.000Z",
           updatedAt: "2026-02-23T00:00:00.000Z",
         }) as any,
@@ -1326,7 +1328,7 @@ describe("phase14 recovery surfacing", () => {
           ],
         },
       ],
-      activePhaseId: "11111111-1111-4111-8111-111111111111",
+      activePhaseIds: ["11111111-1111-4111-8111-111111111111"],
       createdAt: "2026-02-23T00:00:00.000Z",
       updatedAt: "2026-02-23T00:00:00.000Z",
     } as any;

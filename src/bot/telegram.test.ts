@@ -54,7 +54,7 @@ function buildState(): ProjectState {
         ],
       },
     ],
-    activePhaseId: "11111111-1111-1111-1111-111111111111",
+    activePhaseIds: ["11111111-1111-1111-1111-111111111111"],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -138,7 +138,7 @@ describe("telegram command handlers", () => {
   test("returns no active phase when there is no active phase", async () => {
     const ctx = createCtx(123);
     const state = buildState();
-    state.activePhaseId = undefined;
+    state.activePhaseIds = [];
 
     await handleTasksCommand(ctx, 123, async () => state);
 
@@ -184,7 +184,7 @@ describe("telegram command handlers", () => {
       "MOCK_CLI",
       async () => {
         const state = buildState();
-        state.activePhaseId = undefined;
+        state.activePhaseIds = [];
         state.phases[0].tasks[0].status = "DONE";
         return state;
       },
@@ -218,7 +218,7 @@ describe("telegram command handlers", () => {
     await handleSetActivePhaseCommand(ctx, 123, async (input) => {
       expect(input.phaseId).toBe("11111111-1111-1111-1111-111111111111");
       const state = buildState();
-      state.activePhaseId = input.phaseId;
+      state.activePhaseIds = [input.phaseId];
       return state;
     });
 

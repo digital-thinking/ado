@@ -44,7 +44,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -133,7 +133,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -285,7 +285,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -407,7 +407,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -538,7 +538,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -673,7 +673,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -849,7 +849,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -936,7 +936,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1100,7 +1100,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1283,7 +1283,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1371,7 +1371,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1469,7 +1469,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1579,7 +1579,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1673,7 +1673,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1750,7 +1750,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1831,7 +1831,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -1921,7 +1921,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2038,7 +2038,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2163,7 +2163,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2318,7 +2318,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2396,7 +2396,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2471,7 +2471,7 @@ describe("PhaseRunner", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2581,7 +2581,7 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2654,7 +2654,7 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -2898,7 +2898,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       const state = {
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             id: phaseId,
@@ -2948,7 +2948,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       const state: any = {
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             id: phaseId,
@@ -3011,7 +3011,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3063,7 +3063,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       const state = {
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             id: phaseId,
@@ -3125,7 +3125,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3165,7 +3165,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3206,7 +3206,7 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      activePhaseIds: ["ffffffff-ffff-4fff-8fff-ffffffffffff"],
       phases: [
         {
           id: phaseId, // different ID from activePhaseId
@@ -3345,7 +3345,7 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3435,7 +3435,7 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3557,7 +3557,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3640,7 +3640,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3720,7 +3720,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3817,7 +3817,7 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -3942,7 +3942,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -4000,7 +4000,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -4058,7 +4058,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,
@@ -4113,7 +4113,7 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           id: phaseId,

@@ -630,7 +630,7 @@ export class ControlCenterService {
 
     const nextState = await engine.writeProjectState({
       ...state,
-      activePhaseId: phase.id,
+      activePhaseIds: [phase.id],
       phases: [...state.phases, phase],
     });
     this.onStateChange?.(nextState.projectName, nextState);
@@ -791,7 +791,7 @@ export class ControlCenterService {
 
     const nextState = await engine.writeProjectState({
       ...state,
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
     });
     this.onStateChange?.(nextState.projectName, nextState);
     return nextState;
@@ -1319,7 +1319,7 @@ export class ControlCenterService {
     const nextState = await engine.writeProjectState({
       ...state,
       phases: nextPhases,
-      activePhaseId: lastImportedPhaseId,
+      activePhaseIds: lastImportedPhaseId ? [lastImportedPhaseId] : [],
     });
     this.onStateChange?.(nextState.projectName, nextState);
 

@@ -88,7 +88,7 @@ describe("PhaseRunner CI_FIX guardrails", () => {
         return {
           projectName: "test-project",
           rootDir: "/tmp/project",
-          activePhaseId: phaseId,
+          activePhaseIds: [phaseId],
           phases: [
             {
               ...phase,
@@ -110,7 +110,7 @@ describe("PhaseRunner CI_FIX guardrails", () => {
       startActiveTaskAndWait: mock(async () => ({
         projectName: "test-project",
         rootDir: "/tmp/project",
-        activePhaseId: phaseId,
+        activePhaseIds: [phaseId],
         phases: [
           {
             ...phase,
@@ -188,7 +188,7 @@ describe("PhaseRunner CI_FIX guardrails", () => {
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       phases: [
         {
           ...phase,

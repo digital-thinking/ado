@@ -835,8 +835,9 @@ async function resolveActivePhaseTaskForNumber(
 }> {
   const state = await control.getState();
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new ValidationError("No active phase found.", {
       hint: "Run 'ixado phase create <name> <branchName>' to create a phase first.",
@@ -913,8 +914,9 @@ async function runTaskStartCommand({
   });
 
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new Error("No phase available after task run.");
   }
@@ -1314,8 +1316,9 @@ async function runTaskRetryCommand({
   });
 
   const phase =
-    state.phases.find((candidate) => candidate.id === state.activePhaseId) ??
-    state.phases[0];
+    state.phases.find(
+      (candidate) => candidate.id === state.activePhaseIds[0],
+    ) ?? state.phases[0];
   if (!phase) {
     throw new Error("No phase available after task retry.");
   }
@@ -1606,7 +1609,7 @@ async function runPhaseRunCommand({
   );
 
   const lockState = await control.getState();
-  const lockPhaseId = lockState.activePhaseId?.trim() || "no-active-phase";
+  const lockPhaseId = lockState.activePhaseIds[0]?.trim() || "no-active-phase";
   const runLock = new ExecutionRunLock({
     projectRootDir,
     projectName,
@@ -1650,7 +1653,9 @@ async function runPhaseActiveCommand({
   );
   await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.setActivePhase({ phaseId });
-  const active = state.phases.find((phase) => phase.id === state.activePhaseId);
+  const active = state.phases.find(
+    (phase) => phase.id === state.activePhaseIds[0],
+  );
   if (!active) {
     throw new Error(`Active phase not found after update: ${phaseId}`);
   }
@@ -1750,7 +1755,7 @@ async function runStatusCommand(): Promise<void> {
   await control.ensureInitialized(projectName, projectRootDir);
   const state = await control.getState();
   const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
+    (phase) => phase.id === state.activePhaseIds[0],
   );
   const runningAgents = agents
     .list()

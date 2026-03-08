@@ -48,7 +48,7 @@ function formatStatus(
   availableAssignees: CLIAdapterId[],
 ): string {
   const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
+    (phase) => phase.id === state.activePhaseIds[0],
   );
   const activeStatus = activePhase
     ? `${activePhase.name} (${activePhase.status})`
@@ -83,7 +83,7 @@ function formatStatus(
 
 function formatTasks(state: ProjectState): string {
   const activePhase = state.phases.find(
-    (phase) => phase.id === state.activePhaseId,
+    (phase) => phase.id === state.activePhaseIds[0],
   );
 
   if (!activePhase) {
@@ -232,7 +232,7 @@ export async function handleSetActivePhaseCommand(
   try {
     const state = await setActivePhase({ phaseId });
     const active = state.phases.find(
-      (phase) => phase.id === state.activePhaseId,
+      (phase) => phase.id === state.activePhaseIds[0],
     );
     await ctx.reply(
       active

@@ -741,7 +741,7 @@ export const ProjectStateSchema = z.object({
   projectName: z.string(),
   rootDir: z.string(),
   phases: z.array(PhaseSchema),
-  activePhaseId: z.string().uuid().optional(),
+  activePhaseIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

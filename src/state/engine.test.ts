@@ -51,7 +51,7 @@ describe("StateEngine", () => {
           tasks: [],
         },
       ],
-      activePhaseId: phaseId,
+      activePhaseIds: [phaseId],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -72,6 +72,40 @@ describe("StateEngine", () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.id).toBe(taskId);
     expect(tasks[0]?.status).toBe("DONE");
+  });
+
+  test("maps legacy activePhaseId to activePhaseIds on load", async () => {
+    const phaseId = randomUUID();
+    const now = new Date().toISOString();
+    const engine = new StateEngine(stateFilePath);
+
+    await writeFile(
+      stateFilePath,
+      JSON.stringify(
+        {
+          projectName: "IxADO",
+          rootDir: "C:/Users/chris/scm/ado",
+          phases: [
+            {
+              id: phaseId,
+              name: "Phase Legacy",
+              branchName: "phase-legacy",
+              status: "PLANNING",
+              tasks: [],
+            },
+          ],
+          activePhaseId: phaseId,
+          createdAt: now,
+          updatedAt: now,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const loaded = await engine.readProjectState();
+    expect(loaded.activePhaseIds).toEqual([phaseId]);
   });
 
   test("serializes concurrent writeTasks across engine instances for the same file", async () => {
@@ -101,7 +135,7 @@ describe("StateEngine", () => {
           tasks: [],
         },
       ],
-      activePhaseId: phaseAId,
+      activePhaseIds: [phaseAId],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });

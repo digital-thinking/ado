@@ -68,7 +68,7 @@ function buildMockState(phaseId: string, taskId: string) {
   return {
     projectName: "test-project",
     rootDir: "/tmp/project",
-    activePhaseId: phaseId,
+    activePhaseIds: [phaseId],
     phases: [
       {
         id: phaseId,

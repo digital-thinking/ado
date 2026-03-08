@@ -21,9 +21,25 @@ export class ActivePhaseResolutionError extends Error {
   }
 }
 
+export function resolvePrimaryActivePhaseId(
+  state: Pick<ProjectState, "activePhaseIds">,
+): string | undefined {
+  const activePhaseIds = Array.isArray(state.activePhaseIds)
+    ? state.activePhaseIds
+    : [];
+  for (const candidate of activePhaseIds) {
+    const normalized = candidate.trim();
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+
+  return undefined;
+}
+
 // Active phase selection policy is strict: no implicit fallback to phases[0].
 export function resolveActivePhaseStrict(
-  state: Pick<ProjectState, "phases" | "activePhaseId">,
+  state: Pick<ProjectState, "phases" | "activePhaseIds">,
 ): Phase {
   if (state.phases.length === 0) {
     throw new ActivePhaseResolutionError({
@@ -32,7 +48,7 @@ export function resolveActivePhaseStrict(
     });
   }
 
-  const activePhaseId = state.activePhaseId?.trim();
+  const activePhaseId = resolvePrimaryActivePhaseId(state);
   if (!activePhaseId) {
     throw new ActivePhaseResolutionError({
       code: "ACTIVE_PHASE_ID_MISSING",
