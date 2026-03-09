@@ -804,6 +804,74 @@ describe("multi-project api", () => {
     expect(payload.error).toContain("Project not found");
   });
 
+  test("GET /api/projects/:name/tasks returns active phase tasks", async () => {
+    const task = {
+      id: "t1",
+      code: "P1-001",
+      title: "Do something",
+      description: "",
+      status: "TODO" as const,
+      assignee: "UNASSIGNED" as const,
+      dependencies: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const phaseId = "ph1";
+    const app = makeApp({
+      getProjectState: async (_name) =>
+        ({
+          projectName: "alpha",
+          rootDir: "/tmp/alpha",
+          phases: [
+            {
+              id: phaseId,
+              name: "Phase 1",
+              branchName: "phase-1",
+              status: "CODING" as const,
+              tasks: [task],
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          activePhaseIds: [phaseId],
+          createdAt: now,
+          updatedAt: now,
+        }) as never,
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/projects/alpha/tasks"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as (typeof task)[];
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload).toHaveLength(1);
+    expect(payload[0]?.id).toBe("t1");
+    expect(payload[0]?.title).toBe("Do something");
+  });
+
+  test("GET /api/projects/:name/tasks returns empty array when no active phase", async () => {
+    const app = makeApp({
+      getProjectState: async (_name) =>
+        ({
+          projectName: "alpha",
+          rootDir: "/tmp/alpha",
+          phases: [],
+          activePhaseIds: [],
+          createdAt: now,
+          updatedAt: now,
+        }) as never,
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/projects/alpha/tasks"),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as unknown[];
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload).toHaveLength(0);
+  });
+
   test("GET /api/agents/:id/logs/stream returns SSE stream", async () => {
     let capturedListener: any = null;
     const app = createWebApp({

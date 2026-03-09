@@ -53,7 +53,7 @@ const DEFAULT_TAG_WEIGHTS: TodoFixmeTagWeights = {
 const DEFAULT_MAX_FILE_SIZE_BYTES = 512_000;
 
 const COMMENT_TAG_PATTERN =
-  /(?:^|[^A-Za-z0-9_])(?:\/\/|#|--|;|\/\*+|\*+|<!--)\s*(TODO|FIXME)\b[:\-\s]*(.*)/i;
+  /(?:^|[^A-Za-z0-9_"'`/])(?:\/\/|#|--|;|\/\*+|\*+|<!--)\s*(TODO|FIXME)\b[:\-\s]*(.*)/i;
 
 type RawFinding = {
   tag: TodoFixmeTag;

@@ -56,6 +56,18 @@ export async function handleProjectsApi(
     return json(state, 200);
   }
 
+  const projectTasksMatch = /^\/api\/projects\/([^/]+)\/tasks$/.exec(
+    url.pathname,
+  );
+  if (request.method === "GET" && projectTasksMatch) {
+    const projectName = decodeURIComponent(projectTasksMatch[1]);
+    const state = await deps.getProjectState(projectName);
+    const activePhase = state.phases.find((phase) =>
+      state.activePhaseIds.includes(phase.id),
+    );
+    return json(activePhase?.tasks ?? []);
+  }
+
   if (request.method === "GET" && url.pathname === "/api/state") {
     return json(await deps.control.getState());
   }
