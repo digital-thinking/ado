@@ -292,10 +292,7 @@ export class PhaseRunner {
       }
 
       try {
-        return resolveActivePhaseStrict({
-          phases: state.phases,
-          activePhaseIds: [configuredPhaseId],
-        });
+        return resolveActivePhaseStrict(state, configuredPhaseId);
       } catch (error) {
         if (!(error instanceof ActivePhaseResolutionError)) {
           throw error;

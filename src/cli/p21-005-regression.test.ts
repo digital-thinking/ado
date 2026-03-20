@@ -556,6 +556,42 @@ describe("P21-005 phase and task command outcome summaries", () => {
     );
   });
 
+  test("phase active +<n>: adds phase to active set", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-phase-active-add-");
+    sandboxes.push(sandbox);
+
+    runIxado(["phase", "create", "Phase A", "branch-a"], sandbox);
+    runIxado(["phase", "create", "Phase B", "branch-b"], sandbox);
+
+    const result = runIxado(["phase", "active", "+1"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Active phase added: Phase A (");
+    const state = await sandbox.readProjectState();
+    expect(state.activePhaseIds).toHaveLength(2);
+    expect(state.activePhaseIds[1]).toBe(state.phases[0].id);
+  });
+
+  test("phase active -<n>: removes phase from active set", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p21-005-phase-active-remove-",
+    );
+    sandboxes.push(sandbox);
+
+    runIxado(["phase", "create", "Phase A", "branch-a"], sandbox);
+    runIxado(["phase", "create", "Phase B", "branch-b"], sandbox);
+    runIxado(["phase", "active", "+1"], sandbox);
+
+    const result = runIxado(["phase", "active", "-2"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Active phase removed: Phase B (");
+    const state = await sandbox.readProjectState();
+    expect(state.activePhaseIds).toEqual([state.phases[0].id]);
+  });
+
   test("task create: Created + Status + Next lines are stable", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-task-create-");
     sandboxes.push(sandbox);

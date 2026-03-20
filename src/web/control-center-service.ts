@@ -151,6 +151,7 @@ export type StartTaskInput = {
 
 export type SetActivePhaseInput = {
   phaseId: string;
+  mode?: "set" | "add" | "remove";
 };
 
 export type SetPhasePrUrlInput = {
@@ -784,14 +785,42 @@ export class ControlCenterService {
     if (!phaseReference) {
       throw new Error("phaseId must not be empty.");
     }
+    const mode = input.mode ?? "set";
 
     const engine = await this.getEngine(input.projectName);
     const state = await engine.readProjectState();
     const phaseId = resolvePhaseIdForReference(state, phaseReference);
+    const activePhaseIds = Array.isArray(state.activePhaseIds)
+      ? state.activePhaseIds
+          .map((candidate) => candidate.trim())
+          .filter((candidate) => candidate.length > 0)
+      : [];
+    let nextActivePhaseIds: string[];
+    switch (mode) {
+      case "set":
+        nextActivePhaseIds = [phaseId];
+        break;
+      case "add":
+        if (activePhaseIds.includes(phaseId)) {
+          throw new Error(`Phase is already active: ${phaseReference}`);
+        }
+        nextActivePhaseIds = [...activePhaseIds, phaseId];
+        break;
+      case "remove":
+        if (!activePhaseIds.includes(phaseId)) {
+          throw new Error(`Phase is not active: ${phaseReference}`);
+        }
+        nextActivePhaseIds = activePhaseIds.filter(
+          (candidate) => candidate !== phaseId,
+        );
+        break;
+      default:
+        throw new Error(`Unsupported setActivePhase mode: ${mode}`);
+    }
 
     const nextState = await engine.writeProjectState({
       ...state,
-      activePhaseIds: [phaseId],
+      activePhaseIds: nextActivePhaseIds,
     });
     this.onStateChange?.(nextState.projectName, nextState);
     return nextState;
