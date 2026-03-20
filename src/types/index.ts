@@ -620,6 +620,7 @@ export const AdapterFailureKindSchema = z.enum([
   "auth",
   "network",
   "missing-binary",
+  "rate_limited",
   "timeout",
   "unknown",
 ]);

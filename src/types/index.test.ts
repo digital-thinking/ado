@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  AdapterFailureKindSchema,
   CliSettingsSchema,
   CLIAdapterSchema,
   ExceptionRecoveryResultSchema,
@@ -22,6 +23,7 @@ describe("type contracts", () => {
     expect(TaskStatusSchema.parse("CI_FIX")).toBe("CI_FIX");
     expect(TaskStatusSchema.parse("DEAD_LETTER")).toBe("DEAD_LETTER");
     expect(WorkerArchetypeSchema.parse("REVIEWER")).toBe("REVIEWER");
+    expect(AdapterFailureKindSchema.parse("rate_limited")).toBe("rate_limited");
   });
 
   test("validates CLI adapter shape", () => {

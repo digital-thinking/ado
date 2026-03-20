@@ -72,7 +72,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 ### Phase 33: Rate-Limit Backoff & Phase Timeout
 
 - [x] `P33-001` Add `maxTaskRetries: number` (default 3) to `ExecutionLoopSettingsSchema` and expose via `ixado config`. Deps: none.
-- [ ] `P33-002` Add rate-limit signal detection to adapter output parsing: scan stderr/stdout for common rate-limit patterns (HTTP 429, "rate limit", "too many requests", "retry after") and tag the failure as `rate_limited`. Deps: none.
+- [x] `P33-002` Add rate-limit signal detection to adapter output parsing: scan stderr/stdout for common rate-limit patterns (HTTP 429, "rate limit", "too many requests", "retry after") and tag the failure as `rate_limited`. Deps: none.
 - [ ] `P33-003` Wire retry logic into `PhaseRunner`: when a task fails with `rate_limited`, re-queue it with an incremented retry counter and exponential backoff delay (starting 30s, capped at 5min); move to dead-letter after `maxTaskRetries` exhausted. Deps: `P33-001`, `P33-002`.
 - [ ] `P33-004` Add `phaseTimeoutMs: number` (default 21600000 / 6 hours) to phase config in `CliSettingsSchema`. Deps: none.
 - [ ] `P33-005` Add `TIMED_OUT` to `PhaseStatusSchema`. Implement phase timeout watchdog in `PhaseRunner`: start a timer on phase execution begin; on expiry, halt execution and transition to `TIMED_OUT` with diagnostic message. Deps: `P33-004`.

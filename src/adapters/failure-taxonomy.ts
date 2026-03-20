@@ -2,6 +2,7 @@ export const ADAPTER_FAILURE_KINDS = [
   "auth",
   "network",
   "missing-binary",
+  "rate_limited",
   "timeout",
   "unknown",
 ] as const;
@@ -18,19 +19,69 @@ const NETWORK_ERROR_CODES = new Set([
   "ETIMEDOUT",
 ]);
 
+function collectFailureText(error: unknown): string {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  const parts: string[] = [];
+  if (error instanceof Error && error.message) {
+    parts.push(error.message);
+  } else if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    parts.push((error as { message: string }).message);
+  } else {
+    parts.push(String(error ?? ""));
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    "result" in error &&
+    (error as { result?: unknown }).result &&
+    typeof (error as { result?: unknown }).result === "object"
+  ) {
+    const result = (
+      error as {
+        result?: { stdout?: unknown; stderr?: unknown };
+      }
+    ).result;
+    if (typeof result?.stdout === "string" && result.stdout.trim()) {
+      parts.push(result.stdout);
+    }
+    if (typeof result?.stderr === "string" && result.stderr.trim()) {
+      parts.push(result.stderr);
+    }
+  }
+
+  return parts.join("\n");
+}
+
 export function classifyAdapterFailure(error: unknown): AdapterFailureKind {
   const code =
     error && typeof error === "object" && "code" in error
       ? String((error as { code?: unknown }).code ?? "").toUpperCase()
       : "";
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : String(error ?? "");
+  const message = collectFailureText(error);
 
   const lower = message.toLowerCase();
+
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("rate-limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("retry after") ||
+    lower.includes("retry-after") ||
+    /\bhttp(?:\/\d+(?:\.\d+)?)?\s*429\b/.test(lower) ||
+    /\bstatus(?:\s+code)?\s*429\b/.test(lower) ||
+    (lower.includes("429") && lower.includes("too many requests"))
+  ) {
+    return "rate_limited";
+  }
 
   if (
     code === "ETIMEDOUT" ||

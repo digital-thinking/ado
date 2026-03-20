@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { ProcessExecutionError } from "../process";
 import { classifyAdapterFailure } from "./failure-taxonomy";
 import {
   classifyRecoveryException,
@@ -7,7 +8,7 @@ import {
 } from "../engine/exception-recovery";
 
 describe("adapter failure taxonomy", () => {
-  test("classifies auth/network/missing-binary/timeout/unknown", () => {
+  test("classifies auth/network/missing-binary/rate_limited/timeout/unknown", () => {
     expect(
       classifyAdapterFailure(new Error("unauthorized: please login")),
     ).toBe("auth");
@@ -20,6 +21,20 @@ describe("adapter failure taxonomy", () => {
     expect(
       classifyAdapterFailure({ code: "ENOENT", message: "spawn codex ENOENT" }),
     ).toBe("missing-binary");
+    expect(
+      classifyAdapterFailure(
+        new ProcessExecutionError("Command failed", {
+          command: "codex",
+          args: ["exec"],
+          cwd: "/tmp",
+          exitCode: 1,
+          signal: null,
+          stdout: "HTTP 429 from upstream API",
+          stderr: "retry after 30 seconds",
+          durationMs: 10,
+        }),
+      ),
+    ).toBe("rate_limited");
     expect(
       classifyAdapterFailure(new Error("Command timed out after 10ms")),
     ).toBe("timeout");
@@ -42,9 +57,15 @@ describe("adapter failure taxonomy", () => {
       category: "AGENT_FAILURE",
       adapterFailureKind: "timeout",
     });
+    const rateLimited = classifyRecoveryException({
+      message: "Adapter failed: HTTP 429",
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "rate_limited",
+    });
 
     expect(isRecoverableException(auth)).toBe(false);
     expect(isRecoverableException(missing)).toBe(false);
     expect(isRecoverableException(timeout)).toBe(true);
+    expect(isRecoverableException(rateLimited)).toBe(true);
   });
 });
