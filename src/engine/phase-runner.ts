@@ -385,6 +385,26 @@ export class PhaseRunner {
       });
       await this.publishRuntimeEvent(
         createRuntimeEvent({
+          family: "phase-resilience",
+          type: "phase:timeout",
+          payload: {
+            timeoutMs: watchdog.timeoutMs,
+            elapsedMs,
+            startedAt,
+            deadlineAt,
+            currentStep: watchdog.currentStep,
+            summary: diagnostics,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: watchdog.phaseId,
+            phaseName: watchdog.phaseName,
+          },
+        }),
+      );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
           family: "task-lifecycle",
           type: "task.lifecycle.phase-update",
           payload: {
@@ -1184,6 +1204,9 @@ Recovery: ${recoveryMessage}`,
 
         const retryDelayMs = computeRateLimitBackoffMs(nextRetryCount);
         const retryAt = new Date(this.nowMs() + retryDelayMs).toISOString();
+        const retrySummary =
+          `${nextTaskLabel} hit a rate limit; re-queued for retry ${nextRetryCount}/${maxTaskRetries} ` +
+          `in ${Math.ceil(retryDelayMs / 1000)}s.`;
         await this.control.requeueRateLimitedTask({
           phaseId: updatedPhase.id,
           taskId: resultTask.id,
@@ -1195,12 +1218,33 @@ Recovery: ${recoveryMessage}`,
         );
         await this.publishRuntimeEvent(
           createRuntimeEvent({
+            family: "task-resilience",
+            type: "task:rate_limit_retry",
+            payload: {
+              retryCount: nextRetryCount,
+              maxRetries: maxTaskRetries,
+              retryDelayMs,
+              retryAt,
+              summary: retrySummary,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: updatedPhase.id,
+              phaseName: updatedPhase.name,
+              taskId: resultTask.id,
+              taskTitle: resultTask.title,
+              taskNumber,
+              adapterId: effectiveAssignee,
+            },
+          }),
+        );
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
             family: "task-lifecycle",
             type: "task.lifecycle.progress",
             payload: {
-              message:
-                `${nextTaskLabel} hit a rate limit; re-queued for retry ${nextRetryCount}/${maxTaskRetries} ` +
-                `in ${Math.ceil(retryDelayMs / 1000)}s.`,
+              message: retrySummary,
             },
             context: {
               source: "PHASE_RUNNER",

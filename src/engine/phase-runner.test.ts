@@ -1579,6 +1579,7 @@ describe("PhaseRunner", () => {
     const initialNowMs = Date.parse("2026-03-20T10:00:00.000Z");
     let nowMs = initialNowMs;
     const sleepCalls: number[] = [];
+    const runtimeEvents: any[] = [];
     const mockState = {
       projectName: "test-project",
       rootDir: "/tmp/project",
@@ -1687,7 +1688,9 @@ describe("PhaseRunner", () => {
         },
       },
       undefined,
-      undefined,
+      async (event) => {
+        runtimeEvents.push(event);
+      },
       mockRunner,
     );
     await runner.run();
@@ -1696,6 +1699,14 @@ describe("PhaseRunner", () => {
     expect(mockControl.startActiveTaskAndWait).toHaveBeenCalledTimes(2);
     expect(sleepCalls.reduce((sum, value) => sum + value, 0)).toBe(30_000);
     expect((mockState.phases[0].tasks[0] as any).status).toBe("DONE");
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task:rate_limit_retry" &&
+          event.payload.retryCount === 1 &&
+          event.payload.retryDelayMs === computeRateLimitBackoffMs(1),
+      ),
+    ).toBe(true);
   });
 
   test("P33-003: dead-letters rate-limited task after maxTaskRetries are exhausted", async () => {
@@ -1881,6 +1892,15 @@ describe("PhaseRunner", () => {
       "Current step: waiting 60s for deferred task availability.",
     );
     expect(mockControl.startActiveTaskAndWait).not.toHaveBeenCalled();
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "phase:timeout" &&
+          event.payload.timeoutMs === 5_000 &&
+          event.payload.currentStep ===
+            "waiting 60s for deferred task availability",
+      ),
+    ).toBe(true);
     expect(
       runtimeEvents.some(
         (event) =>

@@ -992,6 +992,9 @@ export function controlCenterHtml(params: {
         if (!isActive) {
           const tasks = phase.tasks || [];
           if (tasks.length === 0) return ""; // hide phases with no tasks
+          const phaseDiagnosticSummary = phase.ciStatusContext
+            ? summarizeFailureText(phase.ciStatusContext)
+            : "";
           const taskPills = tasks.map((task) => {
             const s = task.status;
             const cls = s === "DONE" ? "pill-done"
@@ -1013,6 +1016,9 @@ export function controlCenterHtml(params: {
                 "<div>" +
                   "<h3>" + escapeHtml(phase.name) + " <span class='phase-expand-arrow'>▶</span></h3>" +
                   '<div class="small mono muted">' + summary + "</div>" +
+                  (phaseDiagnosticSummary
+                    ? '<div class="small error" title="' + escapeHtml(phase.ciStatusContext) + '">' + escapeHtml(phaseDiagnosticSummary) + "</div>"
+                    : "") +
                   (phase.prUrl ? '<div class="small"><a href="' + escapeHtml(phase.prUrl) + '" target="_blank" rel="noopener">PR: ' + escapeHtml(phase.prUrl) + '</a></div>' : "") +
                 "</div>" +
                 (isCompleted ? "" :
@@ -1106,6 +1112,14 @@ export function controlCenterHtml(params: {
                     : null;
                 const taskAnchor = toAnchorToken(task.id);
                 const failureSummary = summarizeFailureText(task.errorLogs);
+                const retrySummary = task.rateLimitRetryAt
+                  ? "Rate-limit retry " +
+                    (typeof task.rateLimitRetryCount === "number"
+                      ? "#" + task.rateLimitRetryCount
+                      : "scheduled") +
+                    " at " +
+                    task.rateLimitRetryAt
+                  : "";
                 const assigneeControl = (() => {
                   if (task.status === "TODO") {
                     return (
@@ -1207,6 +1221,9 @@ export function controlCenterHtml(params: {
                       (latestRecovery
                         ? '<div class="small">Recovery: <span class="mono">' + escapeHtml(latestRecovery.result.status || "unknown") + '</span> - ' + escapeHtml(latestRecovery.result.reasoning || "") + "</div>"
                         : "") +
+                      (retrySummary
+                        ? '<div class="small">Retry: <span class="mono">' + escapeHtml(retrySummary) + "</span></div>"
+                        : "") +
                       '<div class="small">Dependencies:</div>' +
                       '<div class="dep-list">' + depsHtml + "</div>" +
                       (editDisabled
@@ -1243,7 +1260,12 @@ export function controlCenterHtml(params: {
         return (
           '<section class="phase-row">' +
             '<div class="phase-header">' +
-              "<h3>" + escapeHtml(phase.name) + "</h3>" +
+              '<div>' +
+                "<h3>" + escapeHtml(phase.name) + "</h3>" +
+                (phase.ciStatusContext
+                  ? '<div class="small error" title="' + escapeHtml(phase.ciStatusContext) + '">' + escapeHtml(summarizeFailureText(phase.ciStatusContext)) + "</div>"
+                  : "") +
+              "</div>" +
               '<div class="phase-actions">' +
                 '<span class="pill">Active</span>' +
                 '<div class="small mono muted">' + escapeHtml(phase.status) + "</div>" +

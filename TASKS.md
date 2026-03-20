@@ -76,7 +76,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [x] `P33-003` Wire retry logic into `PhaseRunner`: when a task fails with `rate_limited`, re-queue it with an incremented retry counter and exponential backoff delay (starting 30s, capped at 5min); move to dead-letter after `maxTaskRetries` exhausted. Deps: `P33-001`, `P33-002`.
 - [x] `P33-004` Add `phaseTimeoutMs: number` (default 21600000 / 6 hours) to phase config in `CliSettingsSchema`. Deps: none.
 - [x] `P33-005` Add `TIMED_OUT` to `PhaseStatusSchema`. Implement phase timeout watchdog in `PhaseRunner`: start a timer on phase execution begin; on expiry, halt execution and transition to `TIMED_OUT` with diagnostic message. Deps: `P33-004`.
-- [ ] `P33-006` Emit `task:rate_limit_retry` and `phase:timeout` events through the unified runtime event contract; surface in Web Control Center and Telegram. Deps: `P33-003`, `P33-005`.
+- [x] `P33-006` Emit `task:rate_limit_retry` and `phase:timeout` events through the unified runtime event contract; surface in Web Control Center and Telegram. Deps: `P33-003`, `P33-005`.
 - [ ] `P33-007` Expose `maxTaskRetries` and `phaseTimeoutMs` in Web Control Center project settings panel. Deps: `P33-001`, `P33-004`.
 - [ ] `P33-008` Add regression/integration tests: rate-limit detection across adapter outputs, retry counter and backoff timing, dead-letter after exhaustion, phase timeout transition, event emission. Deps: `P33-003`, `P33-005`, `P33-006`.
 - [ ] `P33-009` Create PR Task. Deps: `P33-008`.

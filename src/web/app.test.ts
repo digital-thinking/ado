@@ -345,6 +345,8 @@ describe("web app api", () => {
     expect(htmlContent).toContain("IxADO Control Center");
     expect(htmlContent).toContain("Phase Kanban");
     expect(htmlContent).toContain("task-edit-toggle-button");
+    expect(htmlContent).toContain("task.rateLimitRetryAt");
+    expect(htmlContent).toContain("phase.ciStatusContext");
 
     const createPhaseResponse = await app.fetch(
       new Request("http://localhost/api/phases", {
