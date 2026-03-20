@@ -201,4 +201,83 @@ describe("runTesterWorkflow", () => {
     expect(result.status).toBe("SKIPPED");
     expect(runnerCalled).toBe(false);
   });
+
+  test("skips tester when bun reports 0 test files matching", async () => {
+    const runner: ProcessRunner = {
+      async run() {
+        throw new ProcessExecutionError("test runner exited with code 1", {
+          command: "bun",
+          args: ["test"],
+          cwd: "/tmp/empty",
+          exitCode: 1,
+          signal: null,
+          stdout: "",
+          stderr:
+            'error: 0 test files matching **{.test,.spec,_test_,_spec_}.{js,ts,jsx,tsx} in --cwd="/tmp/empty"',
+          durationMs: 50,
+        });
+      },
+    };
+    let fixTaskCreated = false;
+
+    const result = await runTesterWorkflow({
+      phaseId: "11111111-1111-4111-8111-111111111111",
+      phaseName: "Phase 1",
+      completedTask: {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "P1-001 Scaffold project",
+      },
+      cwd: "/tmp/empty",
+      testerCommand: "bun",
+      testerArgs: ["test"],
+      testerTimeoutMs: 30_000,
+      runner,
+      createFixTask: async () => {
+        fixTaskCreated = true;
+      },
+    });
+
+    expect(result.status).toBe("SKIPPED");
+    expect(fixTaskCreated).toBe(false);
+    if (result.status !== "SKIPPED") throw new Error("expected SKIPPED");
+    expect(result.reason).toContain("No test files");
+  });
+
+  test("skips tester when runner reports no test files found", async () => {
+    const runner: ProcessRunner = {
+      async run() {
+        throw new ProcessExecutionError("exit 1", {
+          command: "bun",
+          args: ["test"],
+          cwd: "/tmp/empty",
+          exitCode: 1,
+          signal: null,
+          stdout: "No test files found.",
+          stderr: "",
+          durationMs: 50,
+        });
+      },
+    };
+    let fixTaskCreated = false;
+
+    const result = await runTesterWorkflow({
+      phaseId: "11111111-1111-4111-8111-111111111111",
+      phaseName: "Phase 1",
+      completedTask: {
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "P1-001 Scaffold project",
+      },
+      cwd: "/tmp/empty",
+      testerCommand: "bun",
+      testerArgs: ["test"],
+      testerTimeoutMs: 30_000,
+      runner,
+      createFixTask: async () => {
+        fixTaskCreated = true;
+      },
+    });
+
+    expect(result.status).toBe("SKIPPED");
+    expect(fixTaskCreated).toBe(false);
+  });
 });

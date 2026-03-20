@@ -129,6 +129,17 @@ export async function runTesterWorkflow(
             .filter((value) => value.length > 0)
             .join("\n\n")
         : "";
+
+    if (
+      /\b0 test files? matching\b/i.test(output) ||
+      /\bno test files?\b/i.test(output)
+    ) {
+      return {
+        status: "SKIPPED",
+        reason:
+          "No test files found; skipping tester step until tests are written.",
+      };
+    }
     const truncatedOutput = truncateOutput(output, maxOutputLength);
     const fixTaskTitle = buildFixTaskTitle(input.completedTask.title);
     const fixTaskDescription = buildFixTaskDescription({

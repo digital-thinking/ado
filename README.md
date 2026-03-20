@@ -208,6 +208,42 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\bin" | Out-Null
 Copy-Item .\dist\ixado.exe "$env:USERPROFILE\bin\ixado.exe" -Force
 ```
 
+## Shell Completion
+
+Generate and install completion scripts with `ixado completion <bash|zsh|fish>`.
+
+### Bash
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+ixado completion bash > ~/.local/share/bash-completion/completions/ixado
+source ~/.local/share/bash-completion/completions/ixado
+```
+
+### Zsh
+
+```bash
+mkdir -p ~/.zsh/completions
+ixado completion zsh > ~/.zsh/completions/_ixado
+```
+
+Add this to `~/.zshrc` once, then reload your shell:
+
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+### Fish
+
+```bash
+mkdir -p ~/.config/fish/completions
+ixado completion fish > ~/.config/fish/completions/ixado.fish
+```
+
+Regenerate the script after upgrading IxADO to keep completions in sync.
+
 Release checklist:
 
 1. Run `npm run build:binary`.

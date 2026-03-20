@@ -382,7 +382,6 @@ describe("P21-005 worktree command outcomes", () => {
       `${phaseId} [${branchName}] CODING ${worktreePath}`,
     );
   });
-
   test("worktree prune: empty orphaned worktrees message is stable", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-worktree-prune-");
     sandboxes.push(sandbox);

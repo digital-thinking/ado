@@ -57,7 +57,7 @@ export function resolveActivePhaseStrict(
   const activePhaseId =
     typeof targetPhaseId === "string" && targetPhaseId.trim().length > 0
       ? targetPhaseId.trim()
-      : activePhaseIds[0];
+      : resolvePrimaryActivePhaseId({ activePhaseIds });
   if (!activePhaseId) {
     throw new ActivePhaseResolutionError({
       code: "ACTIVE_PHASE_ID_MISSING",

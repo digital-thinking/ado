@@ -142,3 +142,22 @@ describe("resolvePrimaryActivePhaseId", () => {
     expect(resolvePrimaryActivePhaseId({ activePhaseIds: [] })).toBeUndefined();
   });
 });
+
+describe("resolvePrimaryActivePhaseId", () => {
+  test("returns first non-empty active phase id in order", () => {
+    const phaseId = resolvePrimaryActivePhaseId({
+      activePhaseIds: [
+        "   ",
+        "\t",
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+      ],
+    });
+
+    expect(phaseId).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  test("returns undefined when no active phase ids are set", () => {
+    expect(resolvePrimaryActivePhaseId({ activePhaseIds: [] })).toBeUndefined();
+  });
+});
