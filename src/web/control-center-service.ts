@@ -1178,10 +1178,11 @@ export class ControlCenterService {
           description: taskDescriptionOverride,
         }
       : task;
+    const effectiveRootDir = phase.worktreePath?.trim() || state.rootDir;
     const prompt = buildWorkerPrompt({
       archetype: "CODER",
       projectName: state.projectName,
-      rootDir: state.rootDir,
+      rootDir: effectiveRootDir,
       phase,
       task: taskForPrompt,
     });
@@ -1224,7 +1225,7 @@ export class ControlCenterService {
       startedFromStatus: task.status,
       resultContextPrefix,
       projectName: input.projectName,
-      cwd: state.rootDir,
+      cwd: effectiveRootDir,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });

@@ -1955,6 +1955,18 @@ async function runWorktreePruneCommand({
     return;
   }
 
+  // Clear stale worktreePath from phase state for each pruned worktree.
+  for (const worktree of pruned) {
+    const phase = state.phases.find((p) => p.id === worktree.phaseId);
+    if (phase?.worktreePath) {
+      await control.setPhaseStatus({
+        phaseId: worktree.phaseId,
+        status: phase.status,
+        worktreePath: null,
+      });
+    }
+  }
+
   console.info(`Pruned orphaned worktrees (${pruned.length}):`);
   for (const worktree of pruned) {
     console.info(`${worktree.phaseId} ${worktree.path}`);

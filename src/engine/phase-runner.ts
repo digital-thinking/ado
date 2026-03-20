@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import {
@@ -477,6 +478,20 @@ export class PhaseRunner {
     console.info(`Execution loop: preparing branch ${phase.branchName}.`);
     let branchCwd = this.config.projectRootDir;
     let worktreePath = phase.worktreePath?.trim() || undefined;
+
+    // Clear stale worktreePath if the directory no longer exists on disk
+    // (e.g. after `worktree prune` removed it without updating state).
+    if (worktreePath && !existsSync(worktreePath)) {
+      console.info(
+        `Execution loop: stored worktree path ${worktreePath} no longer exists, reprovisioning.`,
+      );
+      await this.control.setPhaseStatus({
+        phaseId: phase.id,
+        status: phase.status,
+        worktreePath: null,
+      });
+      worktreePath = undefined;
+    }
 
     while (true) {
       try {
