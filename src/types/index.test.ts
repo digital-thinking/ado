@@ -244,6 +244,8 @@ describe("type contracts", () => {
           executionSettings: {
             autoMode: true,
             defaultAssignee: "CLAUDE_CLI",
+            maxTaskRetries: 5,
+            phaseTimeoutMs: 42_000,
           },
         },
       ],
@@ -252,6 +254,8 @@ describe("type contracts", () => {
     expect(parsed.projects[0]?.executionSettings).toEqual({
       autoMode: true,
       defaultAssignee: "CLAUDE_CLI",
+      maxTaskRetries: 5,
+      phaseTimeoutMs: 42_000,
     });
   });
 

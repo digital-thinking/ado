@@ -251,6 +251,8 @@ export type ExceptionRecoverySettings = z.infer<
 export const ProjectExecutionSettingsSchema = z.object({
   autoMode: z.boolean(),
   defaultAssignee: CLIAdapterIdSchema,
+  maxTaskRetries: z.number().int().min(0).max(20).optional(),
+  phaseTimeoutMs: z.number().int().positive().optional(),
 });
 export type ProjectExecutionSettings = z.infer<
   typeof ProjectExecutionSettingsSchema

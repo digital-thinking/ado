@@ -363,6 +363,10 @@ export function controlCenterHtml(params: {
             </select>
             <label class="small" for="runtimeDefaultAssignee" style="margin-top: 8px; display: block;">Default Coding CLI</label>
             <select id="runtimeDefaultAssignee" required style="width: 100%;"></select>
+            <label class="small" for="runtimeMaxTaskRetries" style="margin-top: 8px; display: block;">Max Task Retries</label>
+            <input id="runtimeMaxTaskRetries" type="number" min="0" max="20" step="1" required />
+            <label class="small" for="runtimePhaseTimeoutMs" style="margin-top: 8px; display: block;">Phase Timeout (ms)</label>
+            <input id="runtimePhaseTimeoutMs" type="number" min="1" step="1" required />
             <button type="submit" style="margin-top: 12px; width: 100%;">Save Settings</button>
             <div class="row" style="margin-top: 12px;">
               <button id="startAutoModeButton" type="button">Run Auto Mode</button>
@@ -512,6 +516,8 @@ export function controlCenterHtml(params: {
     const runtimeSettingsForm = document.getElementById("runtimeSettingsForm");
     const runtimeMode = document.getElementById("runtimeMode");
     const runtimeDefaultAssignee = document.getElementById("runtimeDefaultAssignee");
+    const runtimeMaxTaskRetries = document.getElementById("runtimeMaxTaskRetries");
+    const runtimePhaseTimeoutMs = document.getElementById("runtimePhaseTimeoutMs");
     const runtimeSettingsStatus = document.getElementById("runtimeSettingsStatus");
     const startAutoModeButton = document.getElementById("startAutoModeButton");
     const stopAutoModeButton = document.getElementById("stopAutoModeButton");
@@ -546,6 +552,8 @@ export function controlCenterHtml(params: {
     let latestRuntimeConfig = {
       defaultInternalWorkAssignee,
       autoMode: Boolean(defaultAutoMode),
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21600000,
     };
     let projects = [];
     let activeProjectName = INITIAL_PROJECT_NAME;
@@ -702,13 +710,7 @@ export function controlCenterHtml(params: {
         const cached = projectStateCache.get(name);
         renderState(cached);
         renderKanban(cached);
-        const project = projects.find(p => p.name === name);
-        if (project && project.executionSettings) {
-          renderRuntimeConfig({
-            autoMode: project.executionSettings.autoMode,
-            defaultInternalWorkAssignee: project.executionSettings.defaultAssignee,
-          });
-        }
+        await refreshRuntimeSettingsPanel();
       }
       await refreshExecutionStatus();
     }
@@ -801,21 +803,40 @@ export function controlCenterHtml(params: {
         projectStateCache.set(name, state);
         renderState(state);
         renderKanban(state);
-
-        const project = projects.find(p => p.name === name);
-        if (project && project.executionSettings) {
-          renderRuntimeConfig({
-            autoMode: project.executionSettings.autoMode,
-            defaultInternalWorkAssignee: project.executionSettings.defaultAssignee,
-          });
-        } else {
-          const config = await api("/api/runtime-config");
-          renderRuntimeConfig(config);
-        }
+        await refreshRuntimeSettingsPanel();
         await refreshExecutionStatus();
       } catch (error) {
-        setError("kanbanError", error.message);
+        const message = error instanceof Error ? error.message : String(error);
+        setError("kanbanError", message);
+        setError("runtimeSettingsError", message);
       }
+    }
+
+    function resolveProjectRuntimeConfig(project, settings) {
+      return {
+        autoMode:
+          project && project.executionSettings && typeof project.executionSettings.autoMode === "boolean"
+            ? project.executionSettings.autoMode
+            : !!settings.executionLoop?.autoMode,
+        defaultInternalWorkAssignee:
+          project && project.executionSettings && project.executionSettings.defaultAssignee
+            ? project.executionSettings.defaultAssignee
+            : settings.internalWork?.assignee ?? defaultInternalWorkAssignee,
+        maxTaskRetries:
+          project && project.executionSettings && Number.isInteger(project.executionSettings.maxTaskRetries)
+            ? project.executionSettings.maxTaskRetries
+            : settings.executionLoop?.maxTaskRetries ?? latestRuntimeConfig.maxTaskRetries,
+        phaseTimeoutMs:
+          project && project.executionSettings && Number.isInteger(project.executionSettings.phaseTimeoutMs)
+            ? project.executionSettings.phaseTimeoutMs
+            : settings.executionLoop?.phaseTimeoutMs ?? latestRuntimeConfig.phaseTimeoutMs,
+      };
+    }
+
+    async function refreshRuntimeSettingsPanel() {
+      const settings = await api("/api/settings");
+      const project = projects.find((candidate) => candidate.name === activeProjectName);
+      renderRuntimeConfig(resolveProjectRuntimeConfig(project, settings));
     }
 
     function renderState(state) {
@@ -873,9 +894,23 @@ export function controlCenterHtml(params: {
       if (runtimeMode instanceof HTMLSelectElement) {
         runtimeMode.value = config.autoMode ? "auto" : "manual";
       }
+      if (runtimeMaxTaskRetries instanceof HTMLInputElement) {
+        runtimeMaxTaskRetries.value = String(config.maxTaskRetries);
+      }
+      if (runtimePhaseTimeoutMs instanceof HTMLInputElement) {
+        runtimePhaseTimeoutMs.value = String(config.phaseTimeoutMs);
+      }
       if (runtimeSettingsStatus) {
         runtimeSettingsStatus.textContent =
-          "Mode: " + (config.autoMode ? "Auto" : "Manual") + " | Default CLI: " + config.defaultInternalWorkAssignee;
+          "Mode: " +
+          (config.autoMode ? "Auto" : "Manual") +
+          " | Default CLI: " +
+          config.defaultInternalWorkAssignee +
+          " | Max task retries: " +
+          config.maxTaskRetries +
+          " | Phase timeout: " +
+          config.phaseTimeoutMs +
+          " ms";
       }
     }
 
@@ -1402,12 +1437,35 @@ export function controlCenterHtml(params: {
           runtimeDefaultAssignee instanceof HTMLSelectElement
             ? runtimeDefaultAssignee.value
             : latestRuntimeConfig.defaultInternalWorkAssignee;
-        
-        const updated = await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/settings", {
+        const maxTaskRetriesValue =
+          runtimeMaxTaskRetries instanceof HTMLInputElement
+            ? Number.parseInt(runtimeMaxTaskRetries.value, 10)
+            : latestRuntimeConfig.maxTaskRetries;
+        if (
+          !Number.isInteger(maxTaskRetriesValue) ||
+          maxTaskRetriesValue < 0 ||
+          maxTaskRetriesValue > 20
+        ) {
+          throw new Error("Max task retries must be an integer between 0 and 20.");
+        }
+        const phaseTimeoutMsValue =
+          runtimePhaseTimeoutMs instanceof HTMLInputElement
+            ? Number.parseInt(runtimePhaseTimeoutMs.value, 10)
+            : latestRuntimeConfig.phaseTimeoutMs;
+        if (
+          !Number.isInteger(phaseTimeoutMsValue) ||
+          phaseTimeoutMsValue <= 0
+        ) {
+          throw new Error("Phase timeout must be a positive integer in milliseconds.");
+        }
+
+        await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/settings", {
           method: "PATCH",
           body: JSON.stringify({
             autoMode: modeValue === "auto",
             defaultAssignee: assigneeValue,
+            maxTaskRetries: maxTaskRetriesValue,
+            phaseTimeoutMs: phaseTimeoutMsValue,
           }),
         });
         await refreshProjects();

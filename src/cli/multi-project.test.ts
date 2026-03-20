@@ -297,6 +297,8 @@ describe("multi-project management", () => {
             executionSettings: {
               autoMode: false,
               defaultAssignee: "GEMINI_CLI",
+              maxTaskRetries: 4,
+              phaseTimeoutMs: 42_000,
             },
           },
         ],
@@ -308,6 +310,8 @@ describe("multi-project management", () => {
     expect(loaded.projects[0]?.executionSettings).toEqual({
       autoMode: false,
       defaultAssignee: "GEMINI_CLI",
+      maxTaskRetries: 4,
+      phaseTimeoutMs: 42_000,
     });
   });
 });

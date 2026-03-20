@@ -9,6 +9,8 @@ describe("P12-011: ProjectRecord schema", () => {
       executionSettings: {
         autoMode: true,
         defaultAssignee: "CODEX_CLI",
+        maxTaskRetries: 4,
+        phaseTimeoutMs: 120000,
       },
     };
     expect(ProjectRecordSchema.parse(valid)).toEqual(valid as any);

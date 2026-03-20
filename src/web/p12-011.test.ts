@@ -11,6 +11,8 @@ describe("P12-011: API-level tests", () => {
     executionSettings: {
       autoMode: false,
       defaultAssignee: "CODEX_CLI" as const,
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21_600_000,
     },
   };
 
@@ -26,7 +28,11 @@ describe("P12-011: API-level tests", () => {
     projects: [projectAlpha],
     telegram: { enabled: false },
     internalWork: { assignee: "MOCK_CLI" as const },
-    executionLoop: { autoMode: false },
+    executionLoop: {
+      autoMode: false,
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21_600_000,
+    },
     usage: { codexbarEnabled: true },
     agents: {
       MOCK_CLI: { enabled: true, timeoutMs: 1000 },
@@ -65,6 +71,8 @@ describe("P12-011: API-level tests", () => {
       getRuntimeConfig: async () => ({
         autoMode: false,
         defaultInternalWorkAssignee: "MOCK_CLI",
+        maxTaskRetries: 3,
+        phaseTimeoutMs: 21_600_000,
       }),
       updateRuntimeConfig: async (input: any) => input,
       getProjects: async () => [projectAlpha],
@@ -112,13 +120,20 @@ describe("P12-011: API-level tests", () => {
       new Request("http://localhost/api/projects/alpha/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoMode: true, defaultAssignee: "CLAUDE_CLI" }),
+        body: JSON.stringify({
+          autoMode: true,
+          defaultAssignee: "CLAUDE_CLI",
+          maxTaskRetries: 5,
+          phaseTimeoutMs: 42_000,
+        }),
       }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as ProjectRecord;
     expect(body.executionSettings?.autoMode).toBe(true);
     expect(body.executionSettings?.defaultAssignee).toBe("CLAUDE_CLI");
+    expect(body.executionSettings?.maxTaskRetries).toBe(5);
+    expect(body.executionSettings?.phaseTimeoutMs).toBe(42_000);
   });
 
   test("GET /api/settings", async () => {

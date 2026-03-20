@@ -56,6 +56,8 @@ describe("web app api", () => {
     const runtimeConfig = {
       defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
       autoMode: false,
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21_600_000,
     };
     const executionStatus = {
       running: false,
@@ -347,6 +349,8 @@ describe("web app api", () => {
     expect(htmlContent).toContain("task-edit-toggle-button");
     expect(htmlContent).toContain("task.rateLimitRetryAt");
     expect(htmlContent).toContain("phase.ciStatusContext");
+    expect(htmlContent).toContain('id="runtimeMaxTaskRetries"');
+    expect(htmlContent).toContain('id="runtimePhaseTimeoutMs"');
 
     const createPhaseResponse = await app.fetch(
       new Request("http://localhost/api/phases", {
@@ -406,6 +410,8 @@ describe("web app api", () => {
     const runtimeConfigPayload = await runtimeConfigResponse.json();
     expect(runtimeConfigPayload.defaultInternalWorkAssignee).toBe("CODEX_CLI");
     expect(runtimeConfigPayload.autoMode).toBe(false);
+    expect(runtimeConfigPayload.maxTaskRetries).toBe(3);
+    expect(runtimeConfigPayload.phaseTimeoutMs).toBe(21_600_000);
 
     const runtimeConfigUpdateResponse = await app.fetch(
       new Request("http://localhost/api/runtime-config", {
@@ -423,6 +429,8 @@ describe("web app api", () => {
       "GEMINI_CLI",
     );
     expect(runtimeConfigUpdatePayload.autoMode).toBe(true);
+    expect(runtimeConfigUpdatePayload.maxTaskRetries).toBe(3);
+    expect(runtimeConfigUpdatePayload.phaseTimeoutMs).toBe(21_600_000);
 
     const executionStatusResponse = await app.fetch(
       new Request("http://localhost/api/execution?projectName=IxADO"),
@@ -572,6 +580,8 @@ describe("multi-project api", () => {
     executionSettings: {
       autoMode: false,
       defaultAssignee: "CODEX_CLI" as const,
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21_600_000,
     },
   };
   const projectBeta = {
@@ -594,7 +604,12 @@ describe("multi-project api", () => {
       getProjectState?: (name: string) => Promise<typeof alphaState>;
       updateProjectSettings?: (
         name: string,
-        patch: { autoMode?: boolean; defaultAssignee?: CLIAdapterId },
+        patch: {
+          autoMode?: boolean;
+          defaultAssignee?: CLIAdapterId;
+          maxTaskRetries?: number;
+          phaseTimeoutMs?: number;
+        },
       ) => Promise<typeof projectAlpha>;
       getGlobalSettings?: () => Promise<any>;
       updateGlobalSettings?: (patch: any) => Promise<any>;
@@ -603,10 +618,17 @@ describe("multi-project api", () => {
     const runtimeConfig = {
       defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
       autoMode: false,
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21_600_000,
     };
     const globalSettings = {
       projects: [projectAlpha, projectBeta],
       internalWork: { assignee: "MOCK_CLI" },
+      executionLoop: {
+        autoMode: false,
+        maxTaskRetries: 3,
+        phaseTimeoutMs: 21_600_000,
+      },
       agents: {
         MOCK_CLI: { enabled: true, timeoutMs: 1000 },
       },
@@ -763,6 +785,8 @@ describe("multi-project api", () => {
     const capturedPatches: Array<{
       autoMode?: boolean;
       defaultAssignee?: CLIAdapterId;
+      maxTaskRetries?: number;
+      phaseTimeoutMs?: number;
     }> = [];
     const app = makeApp({
       updateProjectSettings: async (name, patch) => {
@@ -770,7 +794,12 @@ describe("multi-project api", () => {
         capturedPatches.push(patch);
         return {
           ...projectAlpha,
-          executionSettings: { autoMode: true, defaultAssignee: "CLAUDE_CLI" },
+          executionSettings: {
+            autoMode: true,
+            defaultAssignee: "CLAUDE_CLI",
+            maxTaskRetries: 5,
+            phaseTimeoutMs: 42_000,
+          },
         } as never;
       },
     });
@@ -779,7 +808,12 @@ describe("multi-project api", () => {
       new Request("http://localhost/api/projects/alpha/settings", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ autoMode: true, defaultAssignee: "CLAUDE_CLI" }),
+        body: JSON.stringify({
+          autoMode: true,
+          defaultAssignee: "CLAUDE_CLI",
+          maxTaskRetries: 5,
+          phaseTimeoutMs: 42_000,
+        }),
       }),
     );
     expect(response.status).toBe(200);
@@ -787,9 +821,13 @@ describe("multi-project api", () => {
     expect(payload.name).toBe("alpha");
     expect(payload.executionSettings?.autoMode).toBe(true);
     expect(payload.executionSettings?.defaultAssignee).toBe("CLAUDE_CLI");
+    expect(payload.executionSettings?.maxTaskRetries).toBe(5);
+    expect(payload.executionSettings?.phaseTimeoutMs).toBe(42_000);
     expect(capturedPatches).toHaveLength(1);
     expect(capturedPatches[0]?.autoMode).toBe(true);
     expect(capturedPatches[0]?.defaultAssignee).toBe("CLAUDE_CLI");
+    expect(capturedPatches[0]?.maxTaskRetries).toBe(5);
+    expect(capturedPatches[0]?.phaseTimeoutMs).toBe(42_000);
   });
 
   test("PATCH /api/projects/:name/settings returns 400 for unknown project", async () => {
@@ -1014,10 +1052,14 @@ describe("project tabs frontend (P12-006)", () => {
       getRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        maxTaskRetries: 3,
+        phaseTimeoutMs: 21_600_000,
       }),
       updateRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        maxTaskRetries: 3,
+        phaseTimeoutMs: 21_600_000,
       }),
       getProjects: async () => [],
       getProjectState: async () => ({}) as never,
@@ -1148,10 +1190,14 @@ describe("agent top bar frontend (P12-007)", () => {
       getRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        maxTaskRetries: 3,
+        phaseTimeoutMs: 21_600_000,
       }),
       updateRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        maxTaskRetries: 3,
+        phaseTimeoutMs: 21_600_000,
       }),
       getProjects: async () => [],
       getProjectState: async () => ({}) as never,

@@ -29,7 +29,12 @@ export interface ApiDependencies {
   getProjectState: (name: string) => Promise<ProjectState>;
   updateProjectSettings: (
     name: string,
-    patch: { autoMode?: boolean; defaultAssignee?: CLIAdapterId },
+    patch: {
+      autoMode?: boolean;
+      defaultAssignee?: CLIAdapterId;
+      maxTaskRetries?: number;
+      phaseTimeoutMs?: number;
+    },
   ) => Promise<ProjectRecord>;
   getGlobalSettings: () => Promise<CliSettings>;
   updateGlobalSettings: (patch: CliSettingsOverride) => Promise<CliSettings>;

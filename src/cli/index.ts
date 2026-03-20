@@ -163,7 +163,12 @@ async function resolveProjectRootDir(): Promise<string> {
 function resolveProjectExecutionSettings(
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
   projectName: string,
-): { autoMode: boolean; defaultAssignee: CLIAdapterId } {
+): {
+  autoMode: boolean;
+  defaultAssignee: CLIAdapterId;
+  maxTaskRetries: number;
+  phaseTimeoutMs: number;
+} {
   const project = settings.projects.find((p) => p.name === projectName);
   return {
     autoMode:
@@ -171,6 +176,12 @@ function resolveProjectExecutionSettings(
     defaultAssignee:
       project?.executionSettings?.defaultAssignee ??
       settings.internalWork.assignee,
+    maxTaskRetries:
+      project?.executionSettings?.maxTaskRetries ??
+      settings.executionLoop.maxTaskRetries,
+    phaseTimeoutMs:
+      project?.executionSettings?.phaseTimeoutMs ??
+      settings.executionLoop.phaseTimeoutMs,
   };
 }
 
@@ -1711,8 +1722,8 @@ async function runPhaseRunCommand({
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
-      maxTaskRetries: settings.executionLoop.maxTaskRetries,
-      phaseTimeoutMs: settings.executionLoop.phaseTimeoutMs,
+      maxTaskRetries: projectExecutionSettings.maxTaskRetries,
+      phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
       ciEnabled: settings.executionLoop.ciEnabled,
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
       ciPullRequest: settings.executionLoop.pullRequest,
@@ -2141,6 +2152,7 @@ async function runConfigModeCommand({
       : {
           ...project,
           executionSettings: {
+            ...(project.executionSettings ?? {}),
             autoMode,
             defaultAssignee:
               project.executionSettings?.defaultAssignee ??
@@ -2207,6 +2219,7 @@ async function runConfigAssigneeCommand({
       : {
           ...project,
           executionSettings: {
+            ...(project.executionSettings ?? {}),
             autoMode:
               project.executionSettings?.autoMode ??
               settings.executionLoop.autoMode,

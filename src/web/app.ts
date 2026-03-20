@@ -87,6 +87,8 @@ export type ControlCenterControl = {
 export type RuntimeConfig = {
   defaultInternalWorkAssignee: CLIAdapterId;
   autoMode: boolean;
+  maxTaskRetries: number;
+  phaseTimeoutMs: number;
 };
 
 export type ExecutionControl = {
@@ -113,7 +115,12 @@ export type WebAppDependencies = {
   getProjectState: (name: string) => Promise<ProjectState>;
   updateProjectSettings: (
     name: string,
-    patch: { autoMode?: boolean; defaultAssignee?: CLIAdapterId },
+    patch: {
+      autoMode?: boolean;
+      defaultAssignee?: CLIAdapterId;
+      maxTaskRetries?: number;
+      phaseTimeoutMs?: number;
+    },
   ) => Promise<ProjectRecord>;
   getGlobalSettings: () => Promise<CliSettings>;
   updateGlobalSettings: (patch: CliSettingsOverride) => Promise<CliSettings>;
