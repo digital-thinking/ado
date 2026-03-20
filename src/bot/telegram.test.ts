@@ -169,7 +169,7 @@ describe("telegram command handlers", () => {
     await handleTasksCommand(ctx, 123, async () => buildState());
 
     expect(ctx.replies).toHaveLength(1);
-    expect(ctx.replies[0]).toContain("Tasks for Phase 3:");
+    expect(ctx.replies[0]).toContain("Tasks for Phase 3 (CODING):");
     expect(ctx.replies[0]).toContain(
       "1. [IN_PROGRESS] Implement Telegram adapter (CODEX_CLI)",
     );
@@ -191,8 +191,8 @@ describe("telegram command handlers", () => {
     await handleTasksCommand(ctx, 123, async () => buildMultiActiveState());
 
     expect(ctx.replies).toHaveLength(1);
-    expect(ctx.replies[0]).toContain("Tasks for Phase 3:");
-    expect(ctx.replies[0]).toContain("Tasks for Phase 4:");
+    expect(ctx.replies[0]).toContain("Tasks for Phase 3 (CODING):");
+    expect(ctx.replies[0]).toContain("Tasks for Phase 4 (READY_FOR_REVIEW):");
     expect(ctx.replies[0]).toContain(
       "1. [TODO] Review integration output (CLAUDE_CLI)",
     );
@@ -275,7 +275,23 @@ describe("telegram command handlers", () => {
       return state;
     });
 
-    expect(ctx.replies).toEqual(["Active phase set to Phase 3."]);
+    expect(ctx.replies).toEqual(["Active phases: Phase 3 (CODING)."]);
+  });
+
+  test("setactivephase reports all active phases with status", async () => {
+    const ctx = createCtx(
+      123,
+      "/setactivephase +33333333-3333-3333-3333-333333333333",
+    );
+
+    await handleSetActivePhaseCommand(ctx, 123, async (input) => {
+      expect(input.phaseId).toBe("+33333333-3333-3333-3333-333333333333");
+      return buildMultiActiveState();
+    });
+
+    expect(ctx.replies).toEqual([
+      "Active phases: Phase 3 (CODING) | Phase 4 (READY_FOR_REVIEW).",
+    ]);
   });
 
   test("returns usage for invalid setactivephase command", async () => {
