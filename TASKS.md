@@ -75,7 +75,7 @@ Status markers:
 - [x] `P27-007` Replace `activePhaseId: string` with `activePhaseIds: string[]` in `ProjectStateSchema`; keep backward-compat read of legacy single-id field on load. Update `resolveActivePhaseStrict` to resolve a target phase by ID from the set. Update `ixado phase active` CLI to add/remove IDs from the set. Deps: `P27-006`.
 - [x] `P27-008` Update `ixado phase run` CLI to accept `--phase <id>` flag targeting a specific phase from `activePhaseIds`, enabling operators to launch parallel runners for different phases in separate terminals. Deps: `P27-007`.
 - [x] `P27-009` Add `ixado worktree list` (show all active worktrees with phase/branch/status) and `ixado worktree prune` (remove orphaned worktrees for terminal/missing phases) CLI subcommands. Deps: `P27-003`.
-- [ ] `P27-010` Update web UI and Telegram to show status of all phases in `activePhaseIds`, not just a single active phase — phase list view, runtime events, and notifications. Deps: `P27-007`.
+- [x] `P27-010` Update web UI and Telegram to show status of all phases in `activePhaseIds`, not just a single active phase — phase list view, runtime events, and notifications. Deps: `P27-007`.
 - [ ] `P27-011` Add regression/integration tests for Phase 27: worktree lifecycle (provision, teardown, prune), per-phase lock independence, concurrent state writes without corruption, `activePhaseIds` set operations, and `--phase` flag routing. Deps: `P27-001`..`P27-010`.
 - [ ] `P27-012` Create PR Task: open Phase 27 PR after coding tasks are done. Deps: `P27-011`.
 
