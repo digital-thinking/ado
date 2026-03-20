@@ -1885,6 +1885,21 @@ async function runWorktreeListCommand({
     projectRootDir,
     settings.worktrees.baseDir,
   );
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const stateEngine = new StateEngine(stateFilePath);
+  const phaseStatusById = new Map<string, string>();
+  try {
+    const state = await stateEngine.readProjectState();
+    for (const phase of state.phases) {
+      phaseStatusById.set(phase.id, phase.status);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("State file not found")) {
+      throw error;
+    }
+  }
+
   const active = await manager.listActive();
 
   if (active.length === 0) {
@@ -1894,8 +1909,9 @@ async function runWorktreeListCommand({
 
   console.info(`Active managed worktrees (${active.length}):`);
   for (const worktree of active) {
+    const status = phaseStatusById.get(worktree.phaseId) ?? "MISSING";
     console.info(
-      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${worktree.path}`,
+      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${status} ${worktree.path}`,
     );
   }
 }
