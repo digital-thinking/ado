@@ -57,6 +57,7 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.autoMode).toBe(false);
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
     expect(parsed.executionLoop.maxTaskRetries).toBe(3);
+    expect(parsed.executionLoop.phaseTimeoutMs).toBe(21_600_000);
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
     expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);
@@ -265,6 +266,17 @@ describe("type contracts", () => {
 
     expect(parsed.worktrees.enabled).toBe(true);
     expect(parsed.worktrees.baseDir).toBe("/tmp/ixado-worktrees");
+  });
+
+  test("supports phase timeout config overrides", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      executionLoop: {
+        phaseTimeoutMs: 42_000,
+      },
+    });
+
+    expect(parsed.executionLoop.phaseTimeoutMs).toBe(42_000);
   });
 
   test("rejects internal work assignee if disabled", () => {

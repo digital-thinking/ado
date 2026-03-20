@@ -33,6 +33,7 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     autoMode: false,
     countdownSeconds: 10,
     maxTaskRetries: 3,
+    phaseTimeoutMs: 21_600_000,
     testerCommand: null,
     testerArgs: null,
     testerTimeoutMs: 600_000,
