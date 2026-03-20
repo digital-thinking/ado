@@ -130,6 +130,22 @@ describe("type contracts", () => {
     expect(parsed.result.status).toBe("unfixable");
   });
 
+  test("accepts task rate-limit retry metadata", () => {
+    const parsed = TaskSchema.parse({
+      id: "33333333-3333-4333-8333-333333333333",
+      title: "Rate limited task",
+      description: "retry later",
+      status: "TODO",
+      assignee: "CODEX_CLI",
+      dependencies: [],
+      rateLimitRetryCount: 2,
+      rateLimitRetryAt: "2026-03-20T10:02:00.000Z",
+    });
+
+    expect(parsed.rateLimitRetryCount).toBe(2);
+    expect(parsed.rateLimitRetryAt).toBe("2026-03-20T10:02:00.000Z");
+  });
+
   test("supports task completion verification context for side effects", () => {
     const parsed = TaskSchema.parse({
       id: "33333333-3333-4333-8333-333333333333",

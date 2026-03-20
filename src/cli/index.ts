@@ -1711,6 +1711,7 @@ async function runPhaseRunCommand({
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+      maxTaskRetries: settings.executionLoop.maxTaskRetries,
       ciEnabled: settings.executionLoop.ciEnabled,
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
       ciPullRequest: settings.executionLoop.pullRequest,

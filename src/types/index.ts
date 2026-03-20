@@ -707,6 +707,8 @@ export const TaskSchema = z.object({
   errorLogs: z.string().optional(),
   errorCategory: ExceptionCategorySchema.optional(),
   adapterFailureKind: AdapterFailureKindSchema.optional(),
+  rateLimitRetryCount: z.number().int().min(0).optional(),
+  rateLimitRetryAt: z.string().datetime().optional(),
   completionVerification: TaskCompletionVerificationSchema.optional(),
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
