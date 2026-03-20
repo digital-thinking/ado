@@ -132,19 +132,19 @@ describe("GitManager", () => {
       force: true,
     });
 
+    // First call: check if branch exists via rev-parse
     expect(runner.calls[0]).toEqual({
       command: "git",
-      args: [
-        "worktree",
-        "add",
-        "-b",
-        "phase-2",
-        "C:/repo/.worktrees/phase-2",
-        "HEAD",
-      ],
+      args: ["rev-parse", "--verify", "refs/heads/phase-2"],
       cwd: "C:/repo",
     });
+    // Branch exists (rev-parse succeeded), so worktree add without -b
     expect(runner.calls[1]).toEqual({
+      command: "git",
+      args: ["worktree", "add", "C:/repo/.worktrees/phase-2", "phase-2"],
+      cwd: "C:/repo",
+    });
+    expect(runner.calls[2]).toEqual({
       command: "git",
       args: ["worktree", "remove", "--force", "C:/repo/.worktrees/phase-2"],
       cwd: "C:/repo",

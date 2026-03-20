@@ -151,6 +151,7 @@ export type StartTaskInput = {
 
 export type SetActivePhaseInput = {
   phaseId: string;
+  mode?: "set" | "add" | "remove";
 };
 
 export type SetPhasePrUrlInput = {
@@ -784,14 +785,42 @@ export class ControlCenterService {
     if (!phaseReference) {
       throw new Error("phaseId must not be empty.");
     }
+    const mode = input.mode ?? "set";
 
     const engine = await this.getEngine(input.projectName);
     const state = await engine.readProjectState();
     const phaseId = resolvePhaseIdForReference(state, phaseReference);
+    const activePhaseIds = Array.isArray(state.activePhaseIds)
+      ? state.activePhaseIds
+          .map((candidate) => candidate.trim())
+          .filter((candidate) => candidate.length > 0)
+      : [];
+    let nextActivePhaseIds: string[];
+    switch (mode) {
+      case "set":
+        nextActivePhaseIds = [phaseId];
+        break;
+      case "add":
+        if (activePhaseIds.includes(phaseId)) {
+          throw new Error(`Phase is already active: ${phaseReference}`);
+        }
+        nextActivePhaseIds = [...activePhaseIds, phaseId];
+        break;
+      case "remove":
+        if (!activePhaseIds.includes(phaseId)) {
+          throw new Error(`Phase is not active: ${phaseReference}`);
+        }
+        nextActivePhaseIds = activePhaseIds.filter(
+          (candidate) => candidate !== phaseId,
+        );
+        break;
+      default:
+        throw new Error(`Unsupported setActivePhase mode: ${mode}`);
+    }
 
     const nextState = await engine.writeProjectState({
       ...state,
-      activePhaseIds: [phaseId],
+      activePhaseIds: nextActivePhaseIds,
     });
     this.onStateChange?.(nextState.projectName, nextState);
     return nextState;
@@ -1149,10 +1178,11 @@ export class ControlCenterService {
           description: taskDescriptionOverride,
         }
       : task;
+    const effectiveRootDir = phase.worktreePath?.trim() || state.rootDir;
     const prompt = buildWorkerPrompt({
       archetype: "CODER",
       projectName: state.projectName,
-      rootDir: state.rootDir,
+      rootDir: effectiveRootDir,
       phase,
       task: taskForPrompt,
     });
@@ -1195,7 +1225,7 @@ export class ControlCenterService {
       startedFromStatus: task.status,
       resultContextPrefix,
       projectName: input.projectName,
-      cwd: state.rootDir,
+      cwd: effectiveRootDir,
     }).finally(() => {
       this.runningTaskExecutions.delete(runKey);
     });
@@ -1701,6 +1731,40 @@ export class ControlCenterService {
     };
   }
 
+  /** Extract the first GitHub PR URL from task output and persist it as phase.prUrl. */
+  private async maybeCapturePrUrlFromOutput(input: {
+    phaseId: string;
+    taskId: string;
+    output: string;
+    projectName?: string;
+  }): Promise<void> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find((p) => p.id === input.phaseId);
+    if (!phase || phase.prUrl?.trim()) return; // already set
+
+    const task = phase.tasks.find((t) => t.id === input.taskId);
+    if (!task) return;
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    if (!contracts.includes("PR_CREATION")) return;
+
+    const match = input.output.match(
+      /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/,
+    );
+    if (!match) return;
+
+    try {
+      await this.setPhasePrUrl({
+        phaseId: input.phaseId,
+        prUrl: match[0],
+        projectName: input.projectName,
+      });
+    } catch {
+      // best-effort; verification will attempt its own gh probe as fallback
+    }
+  }
+
   private async verifyTaskCompletionSideEffects(input: {
     phaseId: string;
     taskId: string;
@@ -1966,6 +2030,17 @@ export class ControlCenterService {
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
         .filter((value) => value.length > 0)
         .join("\n\n");
+
+      // If the task has a PR_CREATION contract and the output contains a GitHub
+      // PR URL, persist it to phase.prUrl before verification runs so the
+      // verifier does not have to re-probe GitHub.
+      await this.maybeCapturePrUrlFromOutput({
+        phaseId: input.phaseId,
+        taskId: input.taskId,
+        output: combinedResult,
+        projectName: input.projectName,
+      });
+
       const completionVerification = await this.verifyTaskCompletionSideEffects(
         {
           phaseId: input.phaseId,

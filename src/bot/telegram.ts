@@ -68,13 +68,7 @@ function formatStatus(
   agents: StatusAgent[],
   availableAssignees: CLIAdapterId[],
 ): string {
-  const activePhases = resolveActivePhases(state);
-  const activeStatus =
-    activePhases.length > 0
-      ? activePhases
-          .map((phase) => `${phase.name} (${phase.status})`)
-          .join(" | ")
-      : "none";
+  const activeStatus = formatActivePhaseStatus(state, "none");
   const tasksById = new Map(
     state.phases.flatMap((phase) =>
       phase.tasks.map(
@@ -103,6 +97,20 @@ function formatStatus(
   ].join("\n");
 }
 
+function formatActivePhaseStatus(
+  state: ProjectState,
+  emptyText: string,
+): string {
+  const activePhases = resolveActivePhases(state);
+  if (activePhases.length === 0) {
+    return emptyText;
+  }
+
+  return activePhases
+    .map((phase) => `${phase.name} (${phase.status})`)
+    .join(" | ");
+}
+
 function formatTasks(state: ProjectState): string {
   const activePhases = resolveActivePhases(state);
   if (activePhases.length === 0) {
@@ -118,7 +126,10 @@ function formatTasks(state: ProjectState): string {
       (task, index) =>
         `${index + 1}. [${task.status}] ${task.title} (${task.assignee})`,
     );
-    return [`Tasks for ${activePhase.name}:`, ...lines].join("\n");
+    return [
+      `Tasks for ${activePhase.name} (${activePhase.status}):`,
+      ...lines,
+    ].join("\n");
   });
 
   return sections.join("\n\n");
@@ -254,13 +265,8 @@ export async function handleSetActivePhaseCommand(
 
   try {
     const state = await setActivePhase({ phaseId });
-    const active = state.phases.find(
-      (phase) => phase.id === state.activePhaseIds[0],
-    );
     await ctx.reply(
-      active
-        ? `Active phase set to ${active.name}.`
-        : `Active phase updated to ${phaseId}.`,
+      `Active phases: ${formatActivePhaseStatus(state, "none")}.`,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

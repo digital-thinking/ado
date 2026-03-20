@@ -1760,13 +1760,29 @@ async function runPhaseRunCommand({
 async function runPhaseActiveCommand({
   args,
 }: CommandActionContext): Promise<void> {
-  const phaseId = args[0]?.trim() ?? "";
-  if (!phaseId) {
+  const phaseToken = args[0]?.trim() ?? "";
+  if (!phaseToken) {
     throw new ValidationError(
       "Missing required argument: <phaseNumber|phaseId>.",
       {
         usage: "ixado phase active <phaseNumber|phaseId>",
         hint: "Run 'ixado phase list' to see available phases.",
+      },
+    );
+  }
+  const mode: "set" | "add" | "remove" = phaseToken.startsWith("+")
+    ? "add"
+    : phaseToken.startsWith("-")
+      ? "remove"
+      : "set";
+  const phaseReference =
+    mode === "set" ? phaseToken : phaseToken.slice(1).trim();
+  if (!phaseReference) {
+    throw new ValidationError(
+      "Missing required argument: <phaseNumber|phaseId>.",
+      {
+        usage: "ixado phase active <phaseNumber|phaseId>",
+        hint: "Prefix with '+' to add or '-' to remove (for example: '+2' or '-phase-id').",
       },
     );
   }
@@ -1783,18 +1799,73 @@ async function runPhaseActiveCommand({
     projectName,
   );
   await control.ensureInitialized(projectName, projectRootDir);
-  const state = await control.setActivePhase({ phaseId });
-  const active = state.phases.find(
-    (phase) => phase.id === state.activePhaseIds[0],
+  const currentState = await control.getState();
+  const resolvedPhaseId = resolvePhaseIdForReference(
+    currentState,
+    phaseReference,
   );
-  if (!active) {
-    throw new Error(`Active phase not found after update: ${phaseId}`);
+  const isActive = currentState.activePhaseIds.some(
+    (candidate) => candidate.trim() === resolvedPhaseId,
+  );
+  if (mode === "add" && isActive) {
+    throw new ValidationError(`Phase '${phaseReference}' is already active.`, {
+      usage: "ixado phase active <phaseNumber|phaseId>",
+      hint: "Use '-' prefix to remove it from active phases.",
+    });
+  }
+  if (mode === "remove" && !isActive) {
+    throw new ValidationError(`Phase '${phaseReference}' is not active.`, {
+      usage: "ixado phase active <phaseNumber|phaseId>",
+      hint: "Use '+' prefix to add it to active phases.",
+    });
   }
 
-  console.info(`Active phase set to ${active.name} (${active.id}).`);
-  console.info(`Status:  ${active.status} — ${active.tasks.length} task(s)`);
+  const state = await control.setActivePhase({
+    phaseId: resolvedPhaseId,
+    mode,
+  });
+  const targetPhase = state.phases.find(
+    (phase) => phase.id === resolvedPhaseId,
+  );
+  if (!targetPhase) {
+    throw new Error(`Phase not found after update: ${resolvedPhaseId}`);
+  }
+
+  if (mode === "set") {
+    const active = resolveActivePhaseStrict(state, resolvedPhaseId);
+    console.info(`Active phase set to ${active.name} (${active.id}).`);
+    console.info(`Status:  ${active.status} — ${active.tasks.length} task(s)`);
+    console.info(
+      `Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.`,
+    );
+    return;
+  }
+
+  if (mode === "add") {
+    console.info(
+      `Active phase added: ${targetPhase.name} (${targetPhase.id}).`,
+    );
+    console.info(
+      `Status:  ${targetPhase.status} — ${targetPhase.tasks.length} task(s)`,
+    );
+    console.info(
+      `Next:    Run 'ixado phase run --phase ${targetPhase.id}' to execute it, or 'ixado phase list' to inspect active phases.`,
+    );
+    return;
+  }
+
   console.info(
-    `Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.`,
+    `Active phase removed: ${targetPhase.name} (${targetPhase.id}).`,
+  );
+  const nextActivePhaseId = resolvePrimaryActivePhaseId(state);
+  if (nextActivePhaseId) {
+    const nextActive = resolveActivePhaseStrict(state, nextActivePhaseId);
+    console.info(`Active now: ${nextActive.name} (${nextActive.id}).`);
+  } else {
+    console.info("Active now: none.");
+  }
+  console.info(
+    "Next:    Run 'ixado phase active <phaseNumber|phaseId>' to set one active phase, or 'ixado phase list' to inspect phases.",
   );
 }
 
@@ -1815,6 +1886,21 @@ async function runWorktreeListCommand({
     projectRootDir,
     settings.worktrees.baseDir,
   );
+  const stateFilePath = await resolveProjectAwareStateFilePath();
+  const stateEngine = new StateEngine(stateFilePath);
+  const phaseStatusById = new Map<string, string>();
+  try {
+    const state = await stateEngine.readProjectState();
+    for (const phase of state.phases) {
+      phaseStatusById.set(phase.id, phase.status);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("State file not found")) {
+      throw error;
+    }
+  }
+
   const active = await manager.listActive();
 
   if (active.length === 0) {
@@ -1824,8 +1910,9 @@ async function runWorktreeListCommand({
 
   console.info(`Active managed worktrees (${active.length}):`);
   for (const worktree of active) {
+    const status = phaseStatusById.get(worktree.phaseId) ?? "MISSING";
     console.info(
-      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${worktree.path}`,
+      `${worktree.phaseId} [${worktree.branchName ?? "detached"}] ${status} ${worktree.path}`,
     );
   }
 }
@@ -1867,6 +1954,18 @@ async function runWorktreePruneCommand({
   if (pruned.length === 0) {
     console.info("No orphaned worktrees found.");
     return;
+  }
+
+  // Clear stale worktreePath from phase state for each pruned worktree.
+  for (const worktree of pruned) {
+    const phase = state.phases.find((p) => p.id === worktree.phaseId);
+    if (phase?.worktreePath) {
+      await control.setPhaseStatus({
+        phaseId: worktree.phaseId,
+        status: phase.status,
+        worktreePath: null,
+      });
+    }
   }
 
   console.info(`Pruned orphaned worktrees (${pruned.length}):`);
