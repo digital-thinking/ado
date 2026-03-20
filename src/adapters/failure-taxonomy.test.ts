@@ -41,6 +41,48 @@ describe("adapter failure taxonomy", () => {
     expect(classifyAdapterFailure(new Error("boom"))).toBe("unknown");
   });
 
+  test("detects rate-limit signals across adapter stdout/stderr variants", () => {
+    const samples = [
+      {
+        stdout: "HTTP/1.1 429 Too Many Requests",
+        stderr: "",
+      },
+      {
+        stdout: "",
+        stderr: "Provider says: rate limit exceeded for this workspace",
+      },
+      {
+        stdout: "request rejected",
+        stderr: "retry-after: 120",
+      },
+      {
+        stdout: "",
+        stderr: "status code 429 from upstream gateway",
+      },
+      {
+        stdout: "agent stalled",
+        stderr: "RATE-LIMIT window exceeded",
+      },
+    ];
+
+    for (const [index, sample] of samples.entries()) {
+      expect(
+        classifyAdapterFailure(
+          new ProcessExecutionError(`rate-limit sample ${index + 1}`, {
+            command: "codex",
+            args: ["exec"],
+            cwd: "/tmp",
+            exitCode: 1,
+            signal: null,
+            stdout: sample.stdout,
+            stderr: sample.stderr,
+            durationMs: 10,
+          }),
+        ),
+      ).toBe("rate_limited");
+    }
+  });
+
   test("recovery policy: auth/missing-binary are not recoverable", () => {
     const auth = classifyRecoveryException({
       message: "Adapter failed: unauthorized",
