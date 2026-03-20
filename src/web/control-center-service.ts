@@ -1730,6 +1730,40 @@ export class ControlCenterService {
     };
   }
 
+  /** Extract the first GitHub PR URL from task output and persist it as phase.prUrl. */
+  private async maybeCapturePrUrlFromOutput(input: {
+    phaseId: string;
+    taskId: string;
+    output: string;
+    projectName?: string;
+  }): Promise<void> {
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phase = state.phases.find((p) => p.id === input.phaseId);
+    if (!phase || phase.prUrl?.trim()) return; // already set
+
+    const task = phase.tasks.find((t) => t.id === input.taskId);
+    if (!task) return;
+
+    const contracts = resolveTaskCompletionSideEffectContracts(task);
+    if (!contracts.includes("PR_CREATION")) return;
+
+    const match = input.output.match(
+      /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/,
+    );
+    if (!match) return;
+
+    try {
+      await this.setPhasePrUrl({
+        phaseId: input.phaseId,
+        prUrl: match[0],
+        projectName: input.projectName,
+      });
+    } catch {
+      // best-effort; verification will attempt its own gh probe as fallback
+    }
+  }
+
   private async verifyTaskCompletionSideEffects(input: {
     phaseId: string;
     taskId: string;
@@ -1995,6 +2029,17 @@ export class ControlCenterService {
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
         .filter((value) => value.length > 0)
         .join("\n\n");
+
+      // If the task has a PR_CREATION contract and the output contains a GitHub
+      // PR URL, persist it to phase.prUrl before verification runs so the
+      // verifier does not have to re-probe GitHub.
+      await this.maybeCapturePrUrlFromOutput({
+        phaseId: input.phaseId,
+        taskId: input.taskId,
+        output: combinedResult,
+        projectName: input.projectName,
+      });
+
       const completionVerification = await this.verifyTaskCompletionSideEffects(
         {
           phaseId: input.phaseId,
