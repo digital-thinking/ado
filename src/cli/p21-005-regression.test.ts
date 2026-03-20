@@ -238,6 +238,7 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("ixado config mode <auto|manual>");
     expect(out).toContain("ixado config assignee <CLI_ADAPTER>");
     expect(out).toContain("ixado config recovery <maxAttempts:0-10>");
+    expect(out).toContain("ixado config task-retries <maxRetries:0-20>");
     expect(out).toContain("ixado config usage <on|off>");
   });
 
@@ -253,6 +254,7 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("Set default phase-loop mode");
     expect(out).toContain("Set default coding CLI");
     expect(out).toContain("Set exception recovery max attempts");
+    expect(out).toContain("Set execution-loop max task retries");
     expect(out).toContain("Enable/disable codexbar usage telemetry");
   });
 
@@ -455,6 +457,24 @@ describe("P21-005 config command outcome summaries", () => {
     );
   });
 
+  test("config task-retries 2: stable outcome lines", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-task-retries-2-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["config", "task-retries", "2"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const out = result.stdout;
+    expect(out).toContain("Execution loop max task retries set to 2.");
+    expect(out).toContain("Settings saved to ");
+    expect(out).toContain("Scope: global defaults (");
+    expect(out).not.toContain("Precedence: project settings override");
+    expect(out).toContain(
+      "Next:    Run 'ixado phase run' to apply the updated task retry limit.",
+    );
+  });
+
   test("config usage off does not create local .ixado/settings.json", async () => {
     const sandbox = await TestSandbox.create(
       "ixado-p21-005-usage-global-only-",
@@ -487,6 +507,21 @@ describe("P21-005 config command outcome summaries", () => {
     );
     expect(result.stdout).toContain(
       "Next:    Run 'ixado phase run' to apply the updated recovery limit.",
+    );
+  });
+
+  test("config task-retries 0: value zero is accepted and reflected", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-task-retries-0-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["config", "task-retries", "0"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "Execution loop max task retries set to 0.",
+    );
+    expect(result.stdout).toContain(
+      "Next:    Run 'ixado phase run' to apply the updated task retry limit.",
     );
   });
 
@@ -711,6 +746,7 @@ describe("P21-005 config show output structure", () => {
     expect(out).toContain("Execution loop mode: ");
     expect(out).toContain("Default coding CLI: ");
     expect(out).toContain("Exception recovery max attempts: ");
+    expect(out).toContain("Execution loop max task retries: ");
     expect(out).toContain("Codexbar usage telemetry: ");
   });
 
@@ -722,10 +758,11 @@ describe("P21-005 config show output structure", () => {
 
     expect(result.exitCode).toBe(0);
     const out = result.stdout;
-    // DEFAULT_CLI_SETTINGS: autoMode=false, assignee=CODEX_CLI, maxAttempts=1, codexbarEnabled=true
+    // DEFAULT_CLI_SETTINGS: autoMode=false, assignee=CODEX_CLI, maxAttempts=1, maxTaskRetries=3, codexbarEnabled=true
     expect(out).toContain("Execution loop mode: MANUAL");
     expect(out).toContain("Default coding CLI: CODEX_CLI");
     expect(out).toContain("Exception recovery max attempts: 1");
+    expect(out).toContain("Execution loop max task retries: 3");
     expect(out).toContain("Codexbar usage telemetry: ON");
   });
 
@@ -808,6 +845,7 @@ describe("P21-005 config precedence message format", () => {
       ["config", "assignee", "MOCK_CLI"],
       ["config", "usage", "on"],
       ["config", "recovery", "3"],
+      ["config", "task-retries", "3"],
     ];
 
     for (const args of cases) {
@@ -844,6 +882,7 @@ describe("P21-005 validation error format stability", () => {
       ["config", "mode", "bogus"],
       ["config", "assignee", "BAD_CLI"],
       ["config", "recovery", "99"],
+      ["config", "task-retries", "99"],
     ];
 
     for (const args of cases) {
@@ -889,6 +928,10 @@ describe("P21-005 validation error format stability", () => {
         ["config", "recovery", "999"],
         "  Usage: ixado config recovery <maxAttempts:0-10>",
       ],
+      [
+        ["config", "task-retries", "999"],
+        "  Usage: ixado config task-retries <maxRetries:0-20>",
+      ],
     ];
 
     for (const [args, expectedUsageLine] of cases) {
@@ -909,6 +952,7 @@ describe("P21-005 validation error format stability", () => {
       ["config", "mode", "wrong"],
       ["config", "assignee", "BAD"],
       ["config", "recovery", "999"],
+      ["config", "task-retries", "999"],
     ];
 
     for (const args of cases) {

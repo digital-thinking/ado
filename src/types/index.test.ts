@@ -54,6 +54,7 @@ describe("type contracts", () => {
     expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
     expect(parsed.executionLoop.autoMode).toBe(false);
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
+    expect(parsed.executionLoop.maxTaskRetries).toBe(3);
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
     expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);

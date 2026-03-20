@@ -167,6 +167,7 @@ const PullRequestAutomationSettingsOverrideSchema = z
 export const ExecutionLoopSettingsSchema = z.object({
   autoMode: z.boolean().default(false),
   countdownSeconds: z.number().int().min(0).max(3_600).default(10),
+  maxTaskRetries: z.number().int().min(0).max(20).default(3),
   testerCommand: z.string().min(1).nullable().default(null),
   testerArgs: z.array(z.string()).min(1).nullable().default(null),
   testerTimeoutMs: z.number().int().positive().default(600_000),
@@ -304,6 +305,7 @@ export const CliSettingsSchema = z
     executionLoop: ExecutionLoopSettingsSchema.default({
       autoMode: false,
       countdownSeconds: 10,
+      maxTaskRetries: 3,
       testerCommand: null,
       testerArgs: null,
       testerTimeoutMs: 600_000,
@@ -464,6 +466,7 @@ const CliAgentSettingsOverrideSchema = z.object({
 const ExecutionLoopSettingsOverrideSchema = z.object({
   autoMode: z.boolean().optional(),
   countdownSeconds: z.number().int().min(0).max(3_600).optional(),
+  maxTaskRetries: z.number().int().min(0).max(20).optional(),
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),
   testerTimeoutMs: z.number().int().positive().optional(),
