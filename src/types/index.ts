@@ -725,6 +725,7 @@ export const PhaseStatusSchema = z.enum([
   "CREATING_PR", // All tasks done, pushing to remote and opening PR
   "AWAITING_CI", // Polling GitHub Actions
   "CI_FAILED", // CI returned errors, triggering the fix loop
+  "TIMED_OUT", // Phase exceeded the configured execution timeout
   "READY_FOR_REVIEW", // Green CI, awaiting human
   "DONE",
 ]);
@@ -739,7 +740,7 @@ export const PhaseSchema = z.object({
   status: PhaseStatusSchema.default("PLANNING"),
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
-  ciStatusContext: z.string().optional(), // Stores the GH CLI output if CI fails
+  ciStatusContext: z.string().optional(), // Stores terminal failure diagnostics
   failureKind: PhaseFailureKindSchema.optional(), // Why the phase entered CI_FAILED
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });

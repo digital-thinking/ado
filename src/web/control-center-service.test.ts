@@ -1064,6 +1064,31 @@ describe("ControlCenterService", () => {
     expect(recovered.phases[0].ciStatusContext).toBeUndefined();
   });
 
+  test("preserves timeout diagnostics while TIMED_OUT and clears them on recovery", async () => {
+    const created = await service.createPhase({
+      name: "Phase Timeout",
+      branchName: "phase-timeout",
+    });
+    const phaseId = created.phases[0].id;
+
+    const timedOut = await service.setPhaseStatus({
+      phaseId,
+      status: "TIMED_OUT",
+      ciStatusContext: "Phase exceeded timeout budget.",
+    });
+    expect(timedOut.phases[0].status).toBe("TIMED_OUT");
+    expect(timedOut.phases[0].ciStatusContext).toBe(
+      "Phase exceeded timeout budget.",
+    );
+
+    const recovered = await service.setPhaseStatus({
+      phaseId,
+      status: "CODING",
+    });
+    expect(recovered.phases[0].status).toBe("CODING");
+    expect(recovered.phases[0].ciStatusContext).toBeUndefined();
+  });
+
   // P26-001: failureKind semantics
   test("setPhaseStatus persists failureKind when transitioning to CI_FAILED", async () => {
     const created = await service.createPhase({

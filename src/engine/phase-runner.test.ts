@@ -1793,6 +1793,103 @@ describe("PhaseRunner", () => {
     expect((mockState.phases[0].tasks[0] as any).status).toBe("DEAD_LETTER");
   });
 
+  test("P33-005: marks the phase TIMED_OUT when deferred execution exceeds phaseTimeoutMs", async () => {
+    const phaseId = "88555555-5555-4555-8555-555555555555";
+    const taskId = "88666666-6666-4666-8666-666666666666";
+    let nowMs = Date.parse("2026-03-20T12:00:00.000Z");
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 33 timeout",
+          branchName: "phase-33-timeout",
+          status: "PLANNING",
+          ciStatusContext: undefined as string | undefined,
+          tasks: [
+            {
+              id: taskId,
+              title: "P33-005 delayed task",
+              description: "wait for retry window",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              rateLimitRetryAt: new Date(nowMs + 60_000).toISOString(),
+            },
+          ],
+        },
+      ],
+    };
+
+    const runtimeEvents: any[] = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = mockState.phases[0] as any;
+        phase.status = input.status;
+        phase.ciStatusContext = input.ciStatusContext;
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "phase-33-timeout", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        phaseTimeoutMs: 5_000,
+        now: () => nowMs,
+        sleep: async (ms) => {
+          nowMs += ms;
+        },
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push(event);
+      },
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((candidate) => candidate);
+    expect(error).toBeInstanceOf(Error);
+    expect((mockState.phases[0] as any).status).toBe("TIMED_OUT");
+    expect((mockState.phases[0] as any).ciStatusContext).toContain(
+      "configured limit: 5000ms",
+    );
+    expect((mockState.phases[0] as any).ciStatusContext).toContain(
+      "Current step: waiting 60s for deferred task availability.",
+    );
+    expect(mockControl.startActiveTaskAndWait).not.toHaveBeenCalled();
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task.lifecycle.phase-update" &&
+          event.payload.status === "TIMED_OUT",
+      ),
+    ).toBe(true);
+  });
+
   test("P19-003: each task uses its own persisted assignee instead of global default", async () => {
     const phaseId = "a0000000-0000-4000-8000-000000000001";
     const task1Id = "b0000000-0000-4000-8000-000000000001";

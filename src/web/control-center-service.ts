@@ -856,10 +856,11 @@ export class ControlCenterService {
 
     const phase = state.phases[phaseIndex];
     const normalizedContext = input.ciStatusContext?.trim();
-    const ciStatusContext =
-      status === "CI_FAILED"
-        ? normalizedContext || phase.ciStatusContext
-        : undefined;
+    const preservesDiagnostics =
+      status === "CI_FAILED" || status === "TIMED_OUT";
+    const ciStatusContext = preservesDiagnostics
+      ? normalizedContext || phase.ciStatusContext
+      : undefined;
     const rawFailureKind = input.failureKind
       ? PhaseFailureKindSchema.parse(input.failureKind)
       : undefined;

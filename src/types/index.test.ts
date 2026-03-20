@@ -279,6 +279,20 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.phaseTimeoutMs).toBe(42_000);
   });
 
+  test("accepts TIMED_OUT as a persisted phase status", () => {
+    const parsed = PhaseSchema.parse({
+      id: "99999999-9999-4999-8999-999999999999",
+      name: "Timed out phase",
+      branchName: "phase-timeout",
+      status: "TIMED_OUT",
+      ciStatusContext: "Phase exceeded timeout budget.",
+      tasks: [],
+    });
+
+    expect(parsed.status).toBe("TIMED_OUT");
+    expect(parsed.ciStatusContext).toBe("Phase exceeded timeout budget.");
+  });
+
   test("rejects internal work assignee if disabled", () => {
     expect(() =>
       CliSettingsSchema.parse({
