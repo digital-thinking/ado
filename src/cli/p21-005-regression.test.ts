@@ -240,6 +240,7 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("ixado config assignee <CLI_ADAPTER>");
     expect(out).toContain("ixado config recovery <maxAttempts:0-10>");
     expect(out).toContain("ixado config task-retries <maxRetries:0-20>");
+    expect(out).toContain("ixado config phase-timeout <ms>");
     expect(out).toContain("ixado config usage <on|off>");
   });
 
@@ -256,6 +257,7 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("Set default coding CLI");
     expect(out).toContain("Set exception recovery max attempts");
     expect(out).toContain("Set execution-loop max task retries");
+    expect(out).toContain("Set execution-loop phase timeout (milliseconds)");
     expect(out).toContain("Enable/disable codexbar usage telemetry");
   });
 
@@ -834,6 +836,7 @@ describe("P21-005 config show output structure", () => {
     expect(out).toContain("Default coding CLI: ");
     expect(out).toContain("Exception recovery max attempts: ");
     expect(out).toContain("Execution loop max task retries: ");
+    expect(out).toContain("Execution loop phase timeout: ");
     expect(out).toContain("Codexbar usage telemetry: ");
   });
 
@@ -850,6 +853,7 @@ describe("P21-005 config show output structure", () => {
     expect(out).toContain("Default coding CLI: CODEX_CLI");
     expect(out).toContain("Exception recovery max attempts: 1");
     expect(out).toContain("Execution loop max task retries: 3");
+    expect(out).toContain("Execution loop phase timeout: 21600000 ms");
     expect(out).toContain("Codexbar usage telemetry: ON");
   });
 

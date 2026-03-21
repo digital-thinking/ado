@@ -2180,6 +2180,21 @@ function parseConfigRecoveryMaxAttempts(rawValue: string): number {
   return maxAttempts;
 }
 
+function parseConfigPhaseTimeoutMs(rawValue: string): number {
+  const phaseTimeoutMs = Number(rawValue.trim());
+  if (!Number.isInteger(phaseTimeoutMs) || phaseTimeoutMs <= 0) {
+    throw new ValidationError(
+      `Invalid phase timeout: '${rawValue}'. Expected a positive integer (milliseconds).`,
+      {
+        usage: "ixado config phase-timeout <ms>",
+        hint: "Example: 21600000 for 6 hours. Use a positive integer in milliseconds.",
+      },
+    );
+  }
+
+  return phaseTimeoutMs;
+}
+
 function parseConfigMaxTaskRetries(rawValue: string): number {
   const maxTaskRetries = Number(rawValue.trim());
   if (
@@ -2224,6 +2239,9 @@ async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   );
   console.info(
     `Execution loop max task retries: ${settings.executionLoop.maxTaskRetries}`,
+  );
+  console.info(
+    `Execution loop phase timeout: ${settings.executionLoop.phaseTimeoutMs} ms`,
   );
   console.info(
     `Codexbar usage telemetry: ${settings.usage.codexbarEnabled ? "ON" : "OFF"}`,
@@ -2445,6 +2463,38 @@ async function runConfigTaskRetriesCommand({
   );
 }
 
+async function runConfigPhaseTimeoutCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
+  if (!rawValue) {
+    throw new ValidationError("Missing required argument: <ms>.", {
+      usage: "ixado config phase-timeout <ms>",
+      hint: "Example: 21600000 for 6 hours. Use a positive integer in milliseconds.",
+    });
+  }
+
+  const phaseTimeoutMs = parseConfigPhaseTimeoutMs(rawValue);
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    executionLoop: {
+      ...settings.executionLoop,
+      phaseTimeoutMs,
+    },
+  });
+
+  console.info(
+    `Execution loop phase timeout set to ${saved.executionLoop.phaseTimeoutMs} ms.`,
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated phase timeout.`,
+  );
+}
+
 async function runCompletionCommand(args: string[]): Promise<void> {
   const shell = parseCompletionShell(args[1]);
   const script = generateCompletionScript(shell);
@@ -2595,6 +2645,12 @@ async function runCli(args: string[]): Promise<void> {
           description: "Set execution-loop max task retries",
           usage: "task-retries <maxRetries:0-20>",
           action: runConfigTaskRetriesCommand,
+        },
+        {
+          name: "phase-timeout",
+          description: "Set execution-loop phase timeout (milliseconds)",
+          usage: "phase-timeout <ms>",
+          action: runConfigPhaseTimeoutCommand,
         },
         {
           name: "usage",
