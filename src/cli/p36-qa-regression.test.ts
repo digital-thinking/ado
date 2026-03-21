@@ -186,4 +186,27 @@ describe("P36 QA CLI regressions", () => {
     ) as Array<{ status: string }>;
     expect(persistedAgents[0]?.status).toBe("RUNNING");
   });
+
+  test("config judge updates the race judge adapter and config show reports it", async () => {
+    const sandbox = await TestSandbox.create("ixado-p36-cli-judge-config-");
+    sandboxes.push(sandbox);
+
+    const updateResult = runIxadoWithPath(
+      ["config", "judge", "CLAUDE_CLI"],
+      sandbox,
+      sandbox.projectDir,
+    );
+
+    expect(updateResult.exitCode).toBe(0);
+    expect(updateResult.stdout).toContain("Race judge CLI set to CLAUDE_CLI.");
+
+    const showResult = runIxadoWithPath(
+      ["config", "show"],
+      sandbox,
+      sandbox.projectDir,
+    );
+
+    expect(showResult.exitCode).toBe(0);
+    expect(showResult.stdout).toContain("Race judge CLI: CLAUDE_CLI");
+  });
 });

@@ -2202,6 +2202,7 @@ async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   console.info(
     `Default coding CLI: ${projectExecutionSettings.defaultAssignee}`,
   );
+  console.info(`Race judge CLI: ${settings.executionLoop.judgeAdapter}`);
   console.info(
     `Exception recovery max attempts: ${settings.exceptionRecovery.maxAttempts}`,
   );
@@ -2329,6 +2330,51 @@ async function runConfigAssigneeCommand({
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
   console.info(
     `Next:    Run 'ixado phase run' or 'ixado task start <n>' to use the new default.`,
+  );
+}
+
+async function runConfigJudgeCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawAssignee = args[0]?.trim() ?? "";
+  if (!rawAssignee) {
+    throw new ValidationError(
+      "Missing required argument: <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>.",
+      {
+        usage: "ixado config judge <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+        hint: "Run 'ixado config' to see available adapters.",
+      },
+    );
+  }
+
+  const parsedAssignee = CLIAdapterIdSchema.safeParse(rawAssignee);
+  if (!parsedAssignee.success) {
+    throw new ValidationError(`Invalid judge adapter: '${rawAssignee}'.`, {
+      usage: "ixado config judge <CODEX_CLI|CLAUDE_CLI|GEMINI_CLI|MOCK_CLI>",
+      hint: "Valid values: CODEX_CLI, CLAUDE_CLI, GEMINI_CLI, MOCK_CLI.",
+    });
+  }
+  const assignee = parsedAssignee.data;
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  if (!settings.agents[assignee].enabled) {
+    throw new ValidationError(`Agent '${assignee}' is disabled.`, {
+      hint: "Enable the agent in settings before setting it as the race judge.",
+    });
+  }
+
+  await saveCliSettings(settingsFilePath, {
+    ...settings,
+    executionLoop: {
+      ...settings.executionLoop,
+      judgeAdapter: assignee,
+    },
+  });
+  console.info(`Race judge CLI set to ${assignee}.`);
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    "Next:    Run 'ixado phase run' to use the new judge for raced tasks.",
   );
 }
 
@@ -2696,6 +2742,12 @@ async function runCli(args: string[]): Promise<void> {
           description: "Set default coding CLI",
           usage: "assignee <CLI_ADAPTER>",
           action: runConfigAssigneeCommand,
+        },
+        {
+          name: "judge",
+          description: "Set race judge CLI",
+          usage: "judge <CLI_ADAPTER>",
+          action: runConfigJudgeCommand,
         },
         {
           name: "recovery",
