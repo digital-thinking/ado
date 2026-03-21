@@ -206,6 +206,27 @@ export class GitManager {
     });
   }
 
+  async fetchBranch(input: {
+    branchName: string;
+    remote?: string;
+    cwd: string;
+  }): Promise<void> {
+    const remote = input.remote ?? "origin";
+    await this.runner.run({
+      command: "git",
+      args: ["fetch", remote, input.branchName],
+      cwd: input.cwd,
+    });
+  }
+
+  async pullFastForwardOnly(cwd: string): Promise<void> {
+    await this.runner.run({
+      command: "git",
+      args: ["pull", "--ff-only"],
+      cwd,
+    });
+  }
+
   async pushBranch(input: PushBranchInput): Promise<void> {
     if (!input.branchName.trim()) {
       throw new Error("branchName must not be empty.");

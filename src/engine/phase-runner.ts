@@ -741,6 +741,27 @@ export class PhaseRunner {
           `Run: git checkout ${allowedBase}`,
       );
     }
+
+    // Update base branch to latest remote before branching so the new
+    // phase branch starts from an up-to-date base, avoiding merge conflicts.
+    try {
+      console.info(
+        `Execution loop: fetching and fast-forwarding ${allowedBase} before branching.`,
+      );
+      await this.git.fetchBranch({
+        branchName: allowedBase,
+        cwd: this.config.projectRootDir,
+      });
+      await this.git.pullFastForwardOnly(this.config.projectRootDir);
+      console.info(`Execution loop: ${allowedBase} is up to date with remote.`);
+    } catch (error) {
+      // Non-fatal: if fetch/pull fails (e.g. offline, diverged history),
+      // proceed with the local state and log a warning.
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Execution loop: failed to update ${allowedBase} from remote (proceeding with local state): ${msg}`,
+      );
+    }
   }
 
   private async prepareBranch(phase: Phase): Promise<void> {
