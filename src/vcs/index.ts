@@ -23,6 +23,7 @@ export type {
   PollCiStatusInput,
 } from "./github-manager";
 export { parsePullRequestNumberFromUrl } from "./github-manager";
+export type { VcsProvider } from "./vcs-provider";
 
 export { WorktreeManager } from "./worktree-manager";
 export type {
