@@ -40,6 +40,7 @@ export function resolvePrimaryActivePhaseId(
 // Active phase selection policy is strict: no implicit fallback to phases[0].
 export function resolveActivePhaseStrict(
   state: Pick<ProjectState, "phases" | "activePhaseIds">,
+  targetPhaseId?: string,
 ): Phase {
   if (state.phases.length === 0) {
     throw new ActivePhaseResolutionError({
@@ -48,11 +49,26 @@ export function resolveActivePhaseStrict(
     });
   }
 
-  const activePhaseId = resolvePrimaryActivePhaseId(state);
+  const activePhaseIds = Array.isArray(state.activePhaseIds)
+    ? state.activePhaseIds
+        .map((candidate) => candidate.trim())
+        .filter((candidate) => candidate.length > 0)
+    : [];
+  const activePhaseId =
+    typeof targetPhaseId === "string" && targetPhaseId.trim().length > 0
+      ? targetPhaseId.trim()
+      : resolvePrimaryActivePhaseId({ activePhaseIds });
   if (!activePhaseId) {
     throw new ActivePhaseResolutionError({
       code: "ACTIVE_PHASE_ID_MISSING",
       message: "Active phase ID is not set in project state.",
+    });
+  }
+  if (!activePhaseIds.includes(activePhaseId)) {
+    throw new ActivePhaseResolutionError({
+      code: "ACTIVE_PHASE_ID_NOT_FOUND",
+      message: `Active phase ID "${activePhaseId}" is not in the active phase set.`,
+      activePhaseId,
     });
   }
 

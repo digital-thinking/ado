@@ -11,7 +11,8 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { TestSandbox, runIxado } from "./test-helpers";
 
 // ── 1. Global help output ────────────────────────────────────────────────────
@@ -333,6 +334,56 @@ describe("P21-005 worktree command outcomes", () => {
     expect(result.stdout).toContain("No active managed worktrees found.");
   });
 
+  test("worktree list: prints phase, branch, status, and path", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-worktree-list-o-");
+    sandboxes.push(sandbox);
+
+    const now = new Date().toISOString();
+    const phaseId = "11111111-1111-4111-8111-111111111111";
+    const branchName = "phase-27-a";
+    const worktreePath = resolve(
+      sandbox.projectDir,
+      ".ixado/worktrees",
+      phaseId,
+    );
+    const metadataDir = resolve(sandbox.projectDir, ".git/worktrees", "meta-1");
+
+    await sandbox.writeProjectState({
+      projectName: "ixado-worktree-list",
+      rootDir: sandbox.projectDir,
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 27 A",
+          branchName,
+          status: "CODING",
+          tasks: [],
+        },
+      ],
+      activePhaseIds: [phaseId],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await mkdir(metadataDir, { recursive: true });
+    await writeFile(
+      resolve(metadataDir, "gitdir"),
+      `${resolve(worktreePath, ".git")}\n`,
+    );
+    await writeFile(
+      resolve(metadataDir, "HEAD"),
+      `ref: refs/heads/${branchName}\n`,
+    );
+
+    const result = runIxado(["worktree", "list"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Active managed worktrees (1):");
+    expect(result.stdout).toContain(
+      `${phaseId} [${branchName}] CODING ${worktreePath}`,
+    );
+  });
   test("worktree prune: empty orphaned worktrees message is stable", async () => {
     const sandbox = await TestSandbox.create("ixado-p21-005-worktree-prune-");
     sandboxes.push(sandbox);
@@ -589,6 +640,42 @@ describe("P21-005 phase and task command outcome summaries", () => {
     expect(out).toContain(
       "Next:    Run 'ixado task list' to review tasks or 'ixado phase run' to start execution.",
     );
+  });
+
+  test("phase active +<n>: adds phase to active set", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-phase-active-add-");
+    sandboxes.push(sandbox);
+
+    runIxado(["phase", "create", "Phase A", "branch-a"], sandbox);
+    runIxado(["phase", "create", "Phase B", "branch-b"], sandbox);
+
+    const result = runIxado(["phase", "active", "+1"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Active phase added: Phase A (");
+    const state = await sandbox.readProjectState();
+    expect(state.activePhaseIds).toHaveLength(2);
+    expect(state.activePhaseIds[1]).toBe(state.phases[0].id);
+  });
+
+  test("phase active -<n>: removes phase from active set", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p21-005-phase-active-remove-",
+    );
+    sandboxes.push(sandbox);
+
+    runIxado(["phase", "create", "Phase A", "branch-a"], sandbox);
+    runIxado(["phase", "create", "Phase B", "branch-b"], sandbox);
+    runIxado(["phase", "active", "+1"], sandbox);
+
+    const result = runIxado(["phase", "active", "-2"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Active phase removed: Phase B (");
+    const state = await sandbox.readProjectState();
+    expect(state.activePhaseIds).toEqual([state.phases[0].id]);
   });
 
   test("task create: Created + Status + Next lines are stable", async () => {

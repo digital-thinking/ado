@@ -1011,6 +1011,31 @@ describe("ControlCenterService", () => {
     expect(updated.activePhaseIds[0]).toBe(firstPhaseId);
   });
 
+  test("adds and removes active phases without replacing the set", async () => {
+    const createdA = await service.createPhase({
+      name: "Phase A",
+      branchName: "phase-a",
+    });
+    const firstPhaseId = createdA.phases[0].id;
+    const createdB = await service.createPhase({
+      name: "Phase B",
+      branchName: "phase-b",
+    });
+    const secondPhaseId = createdB.phases[1].id;
+
+    const added = await service.setActivePhase({
+      phaseId: firstPhaseId,
+      mode: "add",
+    });
+    expect(added.activePhaseIds).toEqual([secondPhaseId, firstPhaseId]);
+
+    const removed = await service.setActivePhase({
+      phaseId: secondPhaseId,
+      mode: "remove",
+    });
+    expect(removed.activePhaseIds).toEqual([firstPhaseId]);
+  });
+
   test("fails fast when phase number is out of range", async () => {
     await service.createPhase({
       name: "Phase A",

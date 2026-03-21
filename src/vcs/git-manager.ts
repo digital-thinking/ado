@@ -149,18 +149,31 @@ export class GitManager {
       throw new Error("branchName must not be empty.");
     }
 
-    await this.runner.run({
-      command: "git",
-      args: [
-        "worktree",
-        "add",
-        "-b",
-        input.branchName,
-        input.path,
-        input.fromRef ?? "HEAD",
-      ],
-      cwd: input.cwd,
-    });
+    const branchExists = await this.localBranchExists(
+      input.branchName,
+      input.cwd,
+    );
+
+    if (branchExists) {
+      await this.runner.run({
+        command: "git",
+        args: ["worktree", "add", input.path, input.branchName],
+        cwd: input.cwd,
+      });
+    } else {
+      await this.runner.run({
+        command: "git",
+        args: [
+          "worktree",
+          "add",
+          "-b",
+          input.branchName,
+          input.path,
+          input.fromRef ?? "HEAD",
+        ],
+        cwd: input.cwd,
+      });
+    }
   }
 
   async removeWorktree(input: RemoveWorktreeInput): Promise<void> {

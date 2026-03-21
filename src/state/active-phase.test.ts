@@ -83,6 +83,64 @@ describe("resolveActivePhaseStrict", () => {
       );
     }
   });
+
+  test("resolves an explicit active target phase ID from the active set", () => {
+    const state = buildState();
+    const secondPhaseId = "22222222-2222-4222-8222-222222222222";
+    state.phases.push({
+      id: secondPhaseId,
+      name: "Phase 2",
+      branchName: "phase-2",
+      status: "PLANNING",
+      tasks: [],
+    });
+    state.activePhaseIds = [state.phases[0].id, secondPhaseId];
+
+    const phase = resolveActivePhaseStrict(state, secondPhaseId);
+
+    expect(phase.id).toBe(secondPhaseId);
+  });
+
+  test("throws when explicit target phase ID is not in active phase set", () => {
+    const state = buildState();
+    const secondPhaseId = "22222222-2222-4222-8222-222222222222";
+    state.phases.push({
+      id: secondPhaseId,
+      name: "Phase 2",
+      branchName: "phase-2",
+      status: "PLANNING",
+      tasks: [],
+    });
+
+    try {
+      resolveActivePhaseStrict(state, secondPhaseId);
+      throw new Error("Expected resolveActivePhaseStrict to throw.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ActivePhaseResolutionError);
+      expect((error as ActivePhaseResolutionError).code).toBe(
+        "ACTIVE_PHASE_ID_NOT_FOUND",
+      );
+    }
+  });
+});
+
+describe("resolvePrimaryActivePhaseId", () => {
+  test("returns first non-empty active phase id in order", () => {
+    const phaseId = resolvePrimaryActivePhaseId({
+      activePhaseIds: [
+        "   ",
+        "\t",
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+      ],
+    });
+
+    expect(phaseId).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  test("returns undefined when no active phase ids are set", () => {
+    expect(resolvePrimaryActivePhaseId({ activePhaseIds: [] })).toBeUndefined();
+  });
 });
 
 describe("resolvePrimaryActivePhaseId", () => {

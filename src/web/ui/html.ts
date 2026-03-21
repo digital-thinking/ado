@@ -330,7 +330,7 @@ export function controlCenterHtml(params: {
 <body>
   <main class="layout">
     <section class="card wide">
-      <h1>IxADO Control Center <span id="activePhaseBadge" class="pill">No active phase</span></h1>
+      <h1>IxADO Control Center <span id="activePhaseBadge" class="pill">No active phases</span></h1>
       <div class="small">Web log: <span id="webLogPath" class="mono"></span> | CLI log: <span id="cliLogPath" class="mono"></span></div>
     </section>
 
@@ -839,19 +839,39 @@ export function controlCenterHtml(params: {
       renderRuntimeConfig(resolveProjectRuntimeConfig(project, settings));
     }
 
-    function renderState(state) {
-      latestState = state;
+    function resolveActivePhases(state) {
       const phasesById = new Map(state.phases.map((phase) => [phase.id, phase]));
       const activePhases = [];
-      const activePhaseIds = new Set();
-      (state.activePhaseIds || []).forEach((phaseId) => {
-        const phase = phasesById.get(phaseId);
-        if (!phase || activePhaseIds.has(phase.id)) {
+      const seen = new Set();
+      (state.activePhaseIds || []).forEach((rawPhaseId) => {
+        const phaseId =
+          typeof rawPhaseId === "string" ? rawPhaseId.trim() : "";
+        if (!phaseId || seen.has(phaseId)) {
           return;
         }
-        activePhaseIds.add(phase.id);
+        const phase = phasesById.get(phaseId);
+        if (!phase) {
+          return;
+        }
+        seen.add(phaseId);
         activePhases.push(phase);
       });
+      return activePhases;
+    }
+
+    function formatActivePhaseStatus(state) {
+      const activePhases = resolveActivePhases(state);
+      if (activePhases.length === 0) {
+        return "No active phases";
+      }
+      return activePhases
+        .map((phase) => phase.name + " (" + phase.status + ")")
+        .join(" | ");
+    }
+
+    function renderState(state) {
+      latestState = state;
+      const activePhases = resolveActivePhases(state);
       const selectedPhaseId = activePhases[0] ? activePhases[0].id : undefined;
       if (activePhases.length === 0 && state.phases.length > 0) {
         console.warn(
@@ -869,11 +889,7 @@ export function controlCenterHtml(params: {
         taskPhase.appendChild(option);
       });
       if (activePhaseBadge) {
-        activePhaseBadge.textContent = activePhases.length > 0
-          ? activePhases
-              .map((phase) => phase.name + " (" + phase.status + ")")
-              .join(" | ")
-          : "No active phase";
+        activePhaseBadge.textContent = formatActivePhaseStatus(state);
       }
       renderTaskDependenciesOptions();
     }
@@ -1010,13 +1026,9 @@ export function controlCenterHtml(params: {
         return "TODO";
       }
 
-      const phasesById = new Map(state.phases.map((phase) => [phase.id, phase]));
-      const activePhaseIds = new Set();
-      (state.activePhaseIds || []).forEach((phaseId) => {
-        if (phasesById.has(phaseId)) {
-          activePhaseIds.add(phaseId);
-        }
-      });
+      const activePhaseIds = new Set(
+        resolveActivePhases(state).map((phase) => phase.id),
+      );
       if (activePhaseIds.size === 0) {
         console.warn(
           "Kanban has no valid active phases. Use Set Active to choose one.",

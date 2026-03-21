@@ -34,11 +34,13 @@ Goal: Make long-running and overnight phase executions resilient to transient ad
 Goal: Replace the hardwired "PR + green GitHub CI" completion path with a composable gate chain, and decouple VCS operations behind a provider interface so non-GitHub workflows (GitLab, Gitea, local-only) are first-class.
 
 ### VCS Provider Abstraction
+
 - Extract a `VcsProvider` interface from `GitHubManager` covering: push branch, open PR, poll checks, mark ready, merge.
 - Implement `GitHubProvider` (current behavior), a `LocalProvider` (push only, no PR), and a `NullProvider` (no remote ops — branch stays local).
 - Configuration selects the active provider per project; existing `ciEnabled` flag becomes a shorthand for `provider: github`.
 
 ### Pluggable Gate Chain
+
 - Replace the single `ciEnabled` boolean with an ordered `gates` array on the phase config. Gates execute in sequence; the phase only advances to `DONE` (or `READY_FOR_REVIEW`) when all gates pass.
 - Built-in gate types:
   - `command` — run a shell command; pass if exit code is 0. Covers test suites, linters, build steps.
@@ -49,6 +51,7 @@ Goal: Replace the hardwired "PR + green GitHub CI" completion path with a compos
 - On gate failure, surface the failing gate name and output in Telegram notifications and the Web Control Center.
 
 ### UI & Configuration
+
 - Expose gate chain editor in Web Control Center: add/remove/reorder gates, configure per gate, preview the effective chain before running.
 - Show per-gate status live during phase execution (pending / running / passed / failed).
 - Provide sensible migration: projects with `ciEnabled: true` automatically get the equivalent `[pr_ci]` gate chain; `ciEnabled: false` gets an empty chain (current `DONE` behavior preserved).
