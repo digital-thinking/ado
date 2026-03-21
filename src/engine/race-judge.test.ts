@@ -74,6 +74,29 @@ describe("race judge", () => {
     ).toThrow("duplicate index 1");
   });
 
+  test("truncates oversized candidate payloads to keep judge prompts bounded", () => {
+    const prompt = buildRaceJudgePrompt({
+      projectName: "ado",
+      rootDir: "/repo",
+      phaseName: "Phase 35",
+      taskTitle: "Bound judge prompt",
+      taskDescription: "Cap candidate payload sizes before judging.",
+      branches: [
+        {
+          index: 1,
+          branchName: "phase-35-race-task-1",
+          status: "fulfilled",
+          diff: "d".repeat(20_000),
+          stdout: "o".repeat(5_000),
+          stderr: "e".repeat(5_000),
+        },
+      ],
+    });
+
+    expect(prompt).toContain("[truncated ");
+    expect(prompt.length).toBeLessThan(25_000);
+  });
+
   test("parses PICK verdict and trailing reasoning", () => {
     const verdict = parseRaceJudgeVerdict(
       "PICK 2\nReasoning: Candidate 2 is smaller and keeps the existing contract intact.",

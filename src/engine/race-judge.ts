@@ -1,4 +1,7 @@
 type RaceJudgeBranchStatus = "fulfilled" | "rejected";
+const RACE_JUDGE_DIFF_MAX_CHARS = 12_000;
+const RACE_JUDGE_STDOUT_MAX_CHARS = 3_000;
+const RACE_JUDGE_STDERR_MAX_CHARS = 3_000;
 
 export type RaceJudgeBranchInput = {
   index: number;
@@ -54,6 +57,17 @@ function normalizeBlock(value: string): string {
   return normalized.length > 0 ? normalized : "(empty)";
 }
 
+function truncateBlock(value: string, maxChars: number): string {
+  const normalized = normalizeBlock(value);
+  if (normalized === "(empty)" || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const visibleChars = Math.max(0, maxChars);
+  const omittedChars = normalized.length - visibleChars;
+  return `${normalized.slice(0, visibleChars)}\n[truncated ${omittedChars} chars]`;
+}
+
 function formatBranchSection(branch: RaceJudgeBranchInput): string {
   const index = normalizeBranchIndex(branch.index);
   const status = normalizeBranchStatus(branch.status);
@@ -77,17 +91,17 @@ function formatBranchSection(branch: RaceJudgeBranchInput): string {
     "",
     "Git diff:",
     "```diff",
-    normalizeBlock(branch.diff),
+    truncateBlock(branch.diff, RACE_JUDGE_DIFF_MAX_CHARS),
     "```",
     "",
     "Captured stdout:",
     "```text",
-    normalizeBlock(branch.stdout),
+    truncateBlock(branch.stdout, RACE_JUDGE_STDOUT_MAX_CHARS),
     "```",
     "",
     "Captured stderr:",
     "```text",
-    normalizeBlock(branch.stderr),
+    truncateBlock(branch.stderr, RACE_JUDGE_STDERR_MAX_CHARS),
     "```",
   );
 
