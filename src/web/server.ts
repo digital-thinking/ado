@@ -142,6 +142,7 @@ export async function startWebControlCenter(
   let runtimeConfig = {
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     autoMode: input.defaultAutoMode,
+    defaultRace: settings.executionLoop.defaultRace,
     maxTaskRetries: settings.executionLoop.maxTaskRetries,
     phaseTimeoutMs: settings.executionLoop.phaseTimeoutMs,
   };
@@ -396,6 +397,7 @@ export async function startWebControlCenter(
       createPhase: (input) => control.createPhase(input),
       createTask: (input) => control.createTask(input),
       updateTask: (input) => control.updateTask(input),
+      updateTaskRaceState: (input) => control.updateTaskRaceState(input),
       setActivePhase: (input) => control.setActivePhase(input),
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),
@@ -590,6 +592,7 @@ export async function startWebControlCenter(
       runtimeConfig = {
         defaultInternalWorkAssignee: saved.internalWork.assignee,
         autoMode: saved.executionLoop.autoMode,
+        defaultRace: saved.executionLoop.defaultRace,
         maxTaskRetries: saved.executionLoop.maxTaskRetries,
         phaseTimeoutMs: saved.executionLoop.phaseTimeoutMs,
       };

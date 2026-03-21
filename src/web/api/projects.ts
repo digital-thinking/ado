@@ -29,6 +29,7 @@ export async function handleProjectsApi(
     const patch: {
       autoMode?: boolean;
       defaultAssignee?: CLIAdapterId;
+      defaultRace?: number;
       maxTaskRetries?: number;
       phaseTimeoutMs?: number;
     } = {};
@@ -38,6 +39,9 @@ export async function handleProjectsApi(
     const rawAssignee = asInternalAdapterAssignee(body.defaultAssignee);
     if (rawAssignee !== undefined) {
       patch.defaultAssignee = rawAssignee;
+    }
+    if (typeof body.defaultRace === "number") {
+      patch.defaultRace = body.defaultRace;
     }
     if (typeof body.maxTaskRetries === "number") {
       patch.maxTaskRetries = body.maxTaskRetries;

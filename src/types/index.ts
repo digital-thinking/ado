@@ -306,6 +306,7 @@ export type ExceptionRecoverySettings = z.infer<
 export const ProjectExecutionSettingsSchema = z.object({
   autoMode: z.boolean(),
   defaultAssignee: CLIAdapterIdSchema,
+  defaultRace: z.number().int().min(1).optional(),
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
 });
@@ -765,6 +766,34 @@ export type TaskCompletionVerification = z.infer<
   typeof TaskCompletionVerificationSchema
 >;
 
+export const TaskRaceBranchStatusSchema = z.enum([
+  "pending",
+  "fulfilled",
+  "rejected",
+  "picked",
+]);
+export type TaskRaceBranchStatus = z.infer<typeof TaskRaceBranchStatusSchema>;
+
+export const TaskRaceBranchSchema = z.object({
+  index: z.number().int().positive(),
+  branchName: z.string().min(1),
+  status: TaskRaceBranchStatusSchema,
+  error: z.string().min(1).optional(),
+});
+export type TaskRaceBranch = z.infer<typeof TaskRaceBranchSchema>;
+
+export const TaskRaceStateSchema = z.object({
+  status: z.enum(["running", "judged", "applied"]),
+  raceCount: z.number().int().positive(),
+  branches: z.array(TaskRaceBranchSchema),
+  judgeAdapter: CLIAdapterIdSchema.optional(),
+  pickedBranchIndex: z.number().int().positive().optional(),
+  reasoning: z.string().min(1).optional(),
+  commitCount: z.number().int().min(0).optional(),
+  updatedAt: z.string().datetime(),
+});
+export type TaskRaceState = z.infer<typeof TaskRaceStateSchema>;
+
 // 6. A Single Coding Task
 export const TaskSchema = z.object({
   id: z.string().uuid(),
@@ -772,6 +801,7 @@ export const TaskSchema = z.object({
   title: z.string(),
   description: z.string(),
   race: z.number().int().min(1).optional(),
+  raceState: TaskRaceStateSchema.optional(),
   deliberate: z.boolean().optional(),
   taskType: TaskTypeSchema.optional(),
   resolvedAssignee: CLIAdapterIdSchema.optional(),

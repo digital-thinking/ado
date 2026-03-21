@@ -41,6 +41,7 @@ import {
   type PhaseStatus,
   type ProjectState,
   type RecoveryAttemptRecord,
+  type TaskRaceState,
   type SideEffectContract,
   type Task,
   type TaskType,
@@ -87,6 +88,7 @@ export type CreateTaskInput = {
   phaseId: string;
   title: string;
   description: string;
+  race?: number;
   assignee?: WorkerAssignee;
   taskType?: TaskType;
   dependencies?: string[];
@@ -98,6 +100,7 @@ export type UpdateTaskInput = {
   taskId: string;
   title: string;
   description: string;
+  race?: number | null;
   dependencies: string[];
 };
 
@@ -209,6 +212,13 @@ export type CompleteTaskExecutionInput = {
   adapterFailureKind?: any;
   startedFromStatus: Task["status"];
   completionVerification?: TaskCompletionVerification;
+  projectName?: string;
+};
+
+export type UpdateTaskRaceStateInput = {
+  phaseId: string;
+  taskId: string;
+  raceState?: TaskRaceState;
   projectName?: string;
 };
 
@@ -686,6 +696,7 @@ export class ControlCenterService {
       id: randomUUID(),
       title,
       description,
+      race: input.race,
       taskType,
       assignee: input.assignee ?? "UNASSIGNED",
       dependencies: input.dependencies ?? [],
@@ -755,6 +766,12 @@ export class ControlCenterService {
     }
 
     const task = phase.tasks[taskIndex];
+    const race =
+      input.race === null
+        ? undefined
+        : input.race === undefined
+          ? task.race
+          : input.race;
     if (task.status === "IN_PROGRESS") {
       throw new Error("Cannot edit task while it is IN_PROGRESS.");
     }
@@ -777,6 +794,7 @@ export class ControlCenterService {
       ...task,
       title,
       description,
+      race,
       dependencies,
     });
 
@@ -1244,6 +1262,7 @@ export class ControlCenterService {
       resolvedAssignee,
       routingReason,
       status: "IN_PROGRESS",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       rateLimitRetryAt: undefined,
@@ -1342,6 +1361,50 @@ export class ControlCenterService {
     );
 
     return (await this.getEngine(input.projectName)).readProjectState();
+  }
+
+  async updateTaskRaceState(
+    input: UpdateTaskRaceStateInput,
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = TaskSchema.parse({
+      ...nextTasks[taskIndex],
+      raceState: input.raceState,
+    });
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async importFromTasksMarkdown(
@@ -2137,6 +2200,7 @@ export class ControlCenterService {
         return TaskSchema.parse({
           ...task,
           status: "TODO",
+          raceState: undefined,
           resultContext: undefined,
           errorLogs: undefined,
           errorCategory: undefined,
@@ -2211,6 +2275,7 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       status: "TODO",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       errorCategory: undefined,
@@ -2339,6 +2404,7 @@ export class ControlCenterService {
       ...task,
       status: "TODO",
       assignee: "UNASSIGNED",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       errorCategory: undefined,
@@ -2476,6 +2542,7 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       status: "TODO",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       errorCategory: undefined,

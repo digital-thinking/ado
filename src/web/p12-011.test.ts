@@ -11,6 +11,7 @@ describe("P12-011: API-level tests", () => {
     executionSettings: {
       autoMode: false,
       defaultAssignee: "CODEX_CLI" as const,
+      defaultRace: 1,
       maxTaskRetries: 3,
       phaseTimeoutMs: 21_600_000,
     },
@@ -30,6 +31,7 @@ describe("P12-011: API-level tests", () => {
     internalWork: { assignee: "MOCK_CLI" as const },
     executionLoop: {
       autoMode: false,
+      defaultRace: 1,
       maxTaskRetries: 3,
       phaseTimeoutMs: 21_600_000,
     },
@@ -71,6 +73,7 @@ describe("P12-011: API-level tests", () => {
       getRuntimeConfig: async () => ({
         autoMode: false,
         defaultInternalWorkAssignee: "MOCK_CLI",
+        defaultRace: 1,
         maxTaskRetries: 3,
         phaseTimeoutMs: 21_600_000,
       }),
@@ -123,6 +126,7 @@ describe("P12-011: API-level tests", () => {
         body: JSON.stringify({
           autoMode: true,
           defaultAssignee: "CLAUDE_CLI",
+          defaultRace: 4,
           maxTaskRetries: 5,
           phaseTimeoutMs: 42_000,
         }),
@@ -132,6 +136,7 @@ describe("P12-011: API-level tests", () => {
     const body = (await res.json()) as ProjectRecord;
     expect(body.executionSettings?.autoMode).toBe(true);
     expect(body.executionSettings?.defaultAssignee).toBe("CLAUDE_CLI");
+    expect(body.executionSettings?.defaultRace).toBe(4);
     expect(body.executionSettings?.maxTaskRetries).toBe(5);
     expect(body.executionSettings?.phaseTimeoutMs).toBe(42_000);
   });

@@ -363,6 +363,8 @@ export function controlCenterHtml(params: {
             </select>
             <label class="small" for="runtimeDefaultAssignee" style="margin-top: 8px; display: block;">Default Coding CLI</label>
             <select id="runtimeDefaultAssignee" required style="width: 100%;"></select>
+            <label class="small" for="runtimeDefaultRace" style="margin-top: 8px; display: block;">Default Race Count</label>
+            <input id="runtimeDefaultRace" type="number" min="1" step="1" required />
             <label class="small" for="runtimeMaxTaskRetries" style="margin-top: 8px; display: block;">Max Task Retries</label>
             <input id="runtimeMaxTaskRetries" type="number" min="0" max="20" step="1" required />
             <label class="small" for="runtimePhaseTimeoutMs" style="margin-top: 8px; display: block;">Phase Timeout (ms)</label>
@@ -396,6 +398,8 @@ export function controlCenterHtml(params: {
           <select id="taskPhase" required></select>
           <input id="taskTitle" placeholder="Task title" required />
           <textarea id="taskDescription" rows="3" placeholder="Task description" required></textarea>
+          <label class="small" for="taskRace">Race Count Override (optional)</label>
+          <input id="taskRace" type="number" min="1" step="1" placeholder="Leave empty to use the default race count" />
           <label class="small" for="taskDependencies">Dependencies (optional, selected phase)</label>
           <select id="taskDependencies" multiple size="6"></select>
           <button type="submit">Create Task</button>
@@ -456,6 +460,8 @@ export function controlCenterHtml(params: {
             </label>
             <label class="small" for="globalDefaultAssignee">Default CLI Assignee</label>
             <select id="globalDefaultAssignee"></select>
+            <label class="small" for="globalDefaultRace">Default Race Count</label>
+            <input id="globalDefaultRace" type="number" min="1" step="1" required />
             <label class="small" for="globalRecoveryMaxAttempts">Exception Recovery Max Attempts</label>
             <input id="globalRecoveryMaxAttempts" type="number" min="0" max="10" step="1" required />
             <button type="submit">Save Global Defaults</button>
@@ -536,6 +542,7 @@ export function controlCenterHtml(params: {
     const runtimeSettingsForm = document.getElementById("runtimeSettingsForm");
     const runtimeMode = document.getElementById("runtimeMode");
     const runtimeDefaultAssignee = document.getElementById("runtimeDefaultAssignee");
+    const runtimeDefaultRace = document.getElementById("runtimeDefaultRace");
     const runtimeMaxTaskRetries = document.getElementById("runtimeMaxTaskRetries");
     const runtimePhaseTimeoutMs = document.getElementById("runtimePhaseTimeoutMs");
     const runtimeSettingsStatus = document.getElementById("runtimeSettingsStatus");
@@ -545,6 +552,7 @@ export function controlCenterHtml(params: {
     const autoModeError = document.getElementById("autoModeError");
     const kanbanBoard = document.getElementById("kanbanBoard");
     const taskPhase = document.getElementById("taskPhase");
+    const taskRace = document.getElementById("taskRace");
     const taskDependencies = document.getElementById("taskDependencies");
     const agentTopTableBody = document.querySelector("#agentTopTable tbody");
     const agentTableBody = document.querySelector("#agentTable tbody");
@@ -572,6 +580,7 @@ export function controlCenterHtml(params: {
     let latestRuntimeConfig = {
       defaultInternalWorkAssignee,
       autoMode: Boolean(defaultAutoMode),
+      defaultRace: 1,
       maxTaskRetries: 3,
       phaseTimeoutMs: 21600000,
     };
@@ -671,6 +680,20 @@ export function controlCenterHtml(params: {
       return preferred.slice(0, 137) + "...";
     }
 
+    function parseOptionalPositiveInteger(value, fieldLabel) {
+      const text = String(value ?? "").trim();
+      if (!text) {
+        return null;
+      }
+
+      const parsed = Number.parseInt(text, 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(fieldLabel + " must be a positive integer.");
+      }
+
+      return parsed;
+    }
+
     function toAnchorToken(raw) {
       return String(raw || "")
         .trim()
@@ -691,6 +714,97 @@ export function controlCenterHtml(params: {
           return '<a class="mono small" href="' + href + '">' + label + "</a>";
         })
         .join(" | ");
+    }
+
+    function resolveTaskRaceCount(task) {
+      if (task && Number.isInteger(task.race)) {
+        return task.race;
+      }
+      return Number.isInteger(latestRuntimeConfig.defaultRace)
+        ? latestRuntimeConfig.defaultRace
+        : 1;
+    }
+
+    function renderTaskRaceState(task) {
+      const effectiveRace = resolveTaskRaceCount(task);
+      const usesDefaultRace = !(task && Number.isInteger(task.race));
+      const raceState =
+        task && task.raceState && typeof task.raceState === "object"
+          ? task.raceState
+          : null;
+      const branches = Array.isArray(raceState && raceState.branches)
+        ? raceState.branches
+        : [];
+      const branchSummary = branches.length
+        ? '<div class="dep-list">' +
+          branches
+            .map((branch) => {
+              const status = branch && typeof branch.status === "string"
+                ? branch.status
+                : "pending";
+              const statusClass =
+                status === "fulfilled" || status === "picked"
+                  ? "dep-done"
+                  : status === "rejected"
+                    ? "dep-todo"
+                    : "";
+              const branchLabel =
+                "#" +
+                escapeHtml(String(branch.index)) +
+                " " +
+                escapeHtml(status);
+              const branchTitleParts = [
+                branch.branchName || "",
+                branch.error || "",
+              ].filter(Boolean);
+              return (
+                '<span class="dep-pill mono ' +
+                statusClass +
+                '" title="' +
+                escapeHtml(branchTitleParts.join(" | ")) +
+                '">' +
+                branchLabel +
+                "</span>"
+              );
+            })
+            .join("") +
+          "</div>"
+        : "";
+      const judgeSummary =
+        raceState && raceState.judgeAdapter && raceState.pickedBranchIndex
+          ? '<div class="small">Judge: <span class="mono">' +
+            escapeHtml(raceState.judgeAdapter) +
+            "</span> picked <span class=\"mono\">#" +
+            escapeHtml(String(raceState.pickedBranchIndex)) +
+            "</span></div>"
+          : "";
+      const reasoningSummary =
+        raceState && typeof raceState.reasoning === "string" && raceState.reasoning.trim()
+          ? '<details><summary class="small">Judge reasoning</summary><div class="small">' +
+            escapeHtml(raceState.reasoning) +
+            "</div></details>"
+          : "";
+      const statusSummary =
+        effectiveRace > 1 || raceState
+          ? '<div class="small">Race: <span class="mono">' +
+            escapeHtml(String(effectiveRace)) +
+            "</span> (" +
+            (usesDefaultRace ? "default" : "task override") +
+            ")" +
+            (raceState
+              ? ' | Status: <span class="mono">' +
+                escapeHtml(raceState.status) +
+                "</span>"
+              : "") +
+            (raceState && Number.isInteger(raceState.commitCount)
+              ? ' | Applied commits: <span class="mono">' +
+                escapeHtml(String(raceState.commitCount)) +
+                "</span>"
+              : "") +
+            "</div>"
+          : "";
+
+      return statusSummary + branchSummary + judgeSummary + reasoningSummary;
     }
 
     function renderTabs() {
@@ -729,8 +843,8 @@ export function controlCenterHtml(params: {
         // Subsequent activation: render from cache immediately (no extra fetch)
         const cached = projectStateCache.get(name);
         renderState(cached);
-        renderKanban(cached);
         await refreshRuntimeSettingsPanel();
+        renderKanban(cached);
       }
       await refreshExecutionStatus();
     }
@@ -763,6 +877,9 @@ export function controlCenterHtml(params: {
           option.selected = settings.internalWork?.assignee === assignee;
           globalAssigneeSelect.appendChild(option);
         });
+        document.getElementById("globalDefaultRace").value = String(
+          settings.executionLoop?.defaultRace ?? 1,
+        );
         const globalRecoveryMaxAttemptsInput = document.getElementById("globalRecoveryMaxAttempts");
         globalRecoveryMaxAttemptsInput.value = String(
           settings.exceptionRecovery?.maxAttempts ?? 1,
@@ -950,8 +1067,8 @@ export function controlCenterHtml(params: {
         const state = await api("/api/projects/" + encodeURIComponent(name) + "/state");
         projectStateCache.set(name, state);
         renderState(state);
-        renderKanban(state);
         await refreshRuntimeSettingsPanel();
+        renderKanban(state);
         await refreshExecutionStatus();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -970,6 +1087,10 @@ export function controlCenterHtml(params: {
           project && project.executionSettings && project.executionSettings.defaultAssignee
             ? project.executionSettings.defaultAssignee
             : settings.internalWork?.assignee ?? defaultInternalWorkAssignee,
+        defaultRace:
+          project && project.executionSettings && Number.isInteger(project.executionSettings.defaultRace)
+            ? project.executionSettings.defaultRace
+            : settings.executionLoop?.defaultRace ?? latestRuntimeConfig.defaultRace,
         maxTaskRetries:
           project && project.executionSettings && Number.isInteger(project.executionSettings.maxTaskRetries)
             ? project.executionSettings.maxTaskRetries
@@ -1058,6 +1179,9 @@ export function controlCenterHtml(params: {
       if (runtimeMode instanceof HTMLSelectElement) {
         runtimeMode.value = config.autoMode ? "auto" : "manual";
       }
+      if (runtimeDefaultRace instanceof HTMLInputElement) {
+        runtimeDefaultRace.value = String(config.defaultRace);
+      }
       if (runtimeMaxTaskRetries instanceof HTMLInputElement) {
         runtimeMaxTaskRetries.value = String(config.maxTaskRetries);
       }
@@ -1070,6 +1194,8 @@ export function controlCenterHtml(params: {
           (config.autoMode ? "Auto" : "Manual") +
           " | Default CLI: " +
           config.defaultInternalWorkAssignee +
+          " | Default race: " +
+          config.defaultRace +
           " | Max task retries: " +
           config.maxTaskRetries +
           " | Phase timeout: " +
@@ -1280,6 +1406,8 @@ export function controlCenterHtml(params: {
                   }).join("");
                 }).join("");
                 const editDisabled = task.status === "IN_PROGRESS";
+                const taskRaceValue = Number.isInteger(task.race) ? task.race : null;
+                const raceDetailsHtml = renderTaskRaceState(task);
 
                 const optionsHtml = ['<option value="">Assign agent...</option>']
                   .concat(
@@ -1421,6 +1549,7 @@ export function controlCenterHtml(params: {
                         : "") +
                       '<div class="small">Dependencies:</div>' +
                       '<div class="dep-list">' + depsHtml + "</div>" +
+                      raceDetailsHtml +
                       (editDisabled
                         ? '<div class="small muted">Editing disabled while task is IN_PROGRESS.</div>'
                         : "") +
@@ -1430,6 +1559,8 @@ export function controlCenterHtml(params: {
                       '<input class="task-edit-title" value="' + escapeHtml(task.title) + '" />' +
                       '<label class="small">Description</label>' +
                       '<textarea class="task-edit-description" rows="3">' + escapeHtml(task.description) + "</textarea>" +
+                      '<label class="small">Race Count Override</label>' +
+                      '<input class="task-edit-race" type="number" min="1" step="1" placeholder="Use default race count" value="' + escapeHtml(taskRaceValue === null ? "" : String(taskRaceValue)) + '" />' +
                       '<label class="small">Dependencies</label>' +
                       '<select class="task-edit-dependencies" multiple size="6">' + dependencyOptionsHtml + "</select>" +
                       '<div class="row">' +
@@ -1597,6 +1728,13 @@ export function controlCenterHtml(params: {
           runtimeDefaultAssignee instanceof HTMLSelectElement
             ? runtimeDefaultAssignee.value
             : latestRuntimeConfig.defaultInternalWorkAssignee;
+        const defaultRaceValue =
+          runtimeDefaultRace instanceof HTMLInputElement
+            ? Number.parseInt(runtimeDefaultRace.value, 10)
+            : latestRuntimeConfig.defaultRace;
+        if (!Number.isInteger(defaultRaceValue) || defaultRaceValue <= 0) {
+          throw new Error("Default race count must be a positive integer.");
+        }
         const maxTaskRetriesValue =
           runtimeMaxTaskRetries instanceof HTMLInputElement
             ? Number.parseInt(runtimeMaxTaskRetries.value, 10)
@@ -1624,6 +1762,7 @@ export function controlCenterHtml(params: {
           body: JSON.stringify({
             autoMode: modeValue === "auto",
             defaultAssignee: assigneeValue,
+            defaultRace: defaultRaceValue,
             maxTaskRetries: maxTaskRetriesValue,
             phaseTimeoutMs: phaseTimeoutMsValue,
           }),
@@ -1683,6 +1822,10 @@ export function controlCenterHtml(params: {
           taskDependencies instanceof HTMLSelectElement
             ? Array.from(taskDependencies.selectedOptions).map((option) => option.value).filter(Boolean)
             : [];
+        const raceValue =
+          taskRace instanceof HTMLInputElement
+            ? parseOptionalPositiveInteger(taskRace.value, "Race count override")
+            : null;
         await api("/api/tasks", {
           method: "POST",
           body: JSON.stringify({
@@ -1690,6 +1833,7 @@ export function controlCenterHtml(params: {
             phaseId: document.getElementById("taskPhase").value,
             title: document.getElementById("taskTitle").value,
             description: document.getElementById("taskDescription").value,
+            race: raceValue === null ? undefined : raceValue,
             dependencies,
           }),
         });
@@ -1868,6 +2012,7 @@ export function controlCenterHtml(params: {
         const taskCard = target.closest(".task-card");
         const titleInput = taskCard ? taskCard.querySelector(".task-edit-title") : null;
         const descriptionInput = taskCard ? taskCard.querySelector(".task-edit-description") : null;
+        const raceInput = taskCard ? taskCard.querySelector(".task-edit-race") : null;
         const dependenciesSelect = taskCard ? taskCard.querySelector(".task-edit-dependencies") : null;
         const editError = taskCard ? taskCard.querySelector(".task-edit-error") : null;
         if (!phaseId || !taskId) {
@@ -1886,6 +2031,10 @@ export function controlCenterHtml(params: {
                 .map((option) => option.value)
                 .filter(Boolean)
             : [];
+        const raceValue =
+          raceInput instanceof HTMLInputElement
+            ? parseOptionalPositiveInteger(raceInput.value, "Race count override")
+            : null;
 
         setError("kanbanError", "");
         if (editError instanceof HTMLElement) {
@@ -1900,6 +2049,7 @@ export function controlCenterHtml(params: {
               taskId,
               title: titleInput.value,
               description: descriptionInput.value,
+              race: raceValue,
               dependencies,
               projectName: activeProjectName,
             }),
@@ -2148,6 +2298,10 @@ export function controlCenterHtml(params: {
           document.getElementById("globalRecoveryMaxAttempts").value,
           10,
         );
+        const globalDefaultRace = Number.parseInt(
+          document.getElementById("globalDefaultRace").value,
+          10,
+        );
         if (
           !Number.isInteger(recoveryMaxAttempts) ||
           recoveryMaxAttempts < 0 ||
@@ -2157,12 +2311,16 @@ export function controlCenterHtml(params: {
             "Exception recovery max attempts must be an integer between 0 and 10.",
           );
         }
+        if (!Number.isInteger(globalDefaultRace) || globalDefaultRace <= 0) {
+          throw new Error("Default race count must be a positive integer.");
+        }
 
         await api("/api/settings", {
           method: "PATCH",
           body: JSON.stringify({
             executionLoop: {
-              autoMode: document.getElementById("globalAutoMode").checked
+              autoMode: document.getElementById("globalAutoMode").checked,
+              defaultRace: globalDefaultRace,
             },
             internalWork: {
               assignee: document.getElementById("globalDefaultAssignee").value

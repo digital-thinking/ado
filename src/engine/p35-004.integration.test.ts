@@ -119,6 +119,11 @@ describe("P35-004 integration coverage", () => {
         task.errorLogs = input.errorLogs;
         return state;
       }),
+      updateTaskRaceState: mock(async (input: any) => {
+        const task = state.phases[0].tasks[0] as any;
+        task.raceState = input.raceState;
+        return state;
+      }),
       createTask: mock(async () => state),
       recordRecoveryAttempt: mock(async () => state),
       runInternalWork: mock(async (input: any) => {
@@ -213,6 +218,12 @@ describe("P35-004 integration coverage", () => {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
         if (input.args[0] === "cherry-pick") {
+          expect((state.phases[0].tasks[0] as any).raceState).toMatchObject({
+            status: "judged",
+            pickedBranchIndex: 2,
+            judgeAdapter: "CLAUDE_CLI",
+            reasoning: "Candidate 2 is the most coherent implementation.",
+          });
           return { exitCode: 0, stdout: "", stderr: "" };
         }
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -240,6 +251,7 @@ describe("P35-004 integration coverage", () => {
     expect(control.startActiveTaskAndWait).not.toHaveBeenCalled();
     expect(control.prepareTaskExecution).toHaveBeenCalledTimes(1);
     expect(control.completeTaskExecution).toHaveBeenCalledTimes(1);
+    expect(control.updateTaskRaceState).toHaveBeenCalled();
     expect(state.phases[0]?.tasks[0]?.status).toBe("DONE");
     expect(state.phases[0]?.tasks[0]?.resultContext).toContain(
       `Race mode selected candidate 2 (${raceBranch2}).`,
@@ -247,6 +259,13 @@ describe("P35-004 integration coverage", () => {
     expect(state.phases[0]?.tasks[0]?.resultContext).toContain(
       "Candidate 2 is the most coherent implementation.",
     );
+    expect((state.phases[0]?.tasks[0] as any)?.raceState).toMatchObject({
+      status: "applied",
+      pickedBranchIndex: 2,
+      commitCount: 2,
+      judgeAdapter: "CLAUDE_CLI",
+      reasoning: "Candidate 2 is the most coherent implementation.",
+    });
 
     const internalCalls = (
       control.runInternalWork as ReturnType<typeof mock>

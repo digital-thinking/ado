@@ -166,6 +166,7 @@ function resolveProjectExecutionSettings(
 ): {
   autoMode: boolean;
   defaultAssignee: CLIAdapterId;
+  defaultRace: number;
   maxTaskRetries: number;
   phaseTimeoutMs: number;
 } {
@@ -176,6 +177,9 @@ function resolveProjectExecutionSettings(
     defaultAssignee:
       project?.executionSettings?.defaultAssignee ??
       settings.internalWork.assignee,
+    defaultRace:
+      project?.executionSettings?.defaultRace ??
+      settings.executionLoop.defaultRace,
     maxTaskRetries:
       project?.executionSettings?.maxTaskRetries ??
       settings.executionLoop.maxTaskRetries,
@@ -1722,6 +1726,7 @@ async function runPhaseRunCommand({
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+      defaultRace: projectExecutionSettings.defaultRace,
       maxTaskRetries: projectExecutionSettings.maxTaskRetries,
       judgeAdapter: settings.executionLoop.judgeAdapter,
       phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,

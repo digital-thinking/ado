@@ -66,6 +66,8 @@ import {
   type Task,
   type GateConfig,
   type TaskRoutingReason,
+  type TaskRaceBranch,
+  type TaskRaceState,
   type TaskType,
   type VcsProviderType,
 } from "../types";
@@ -218,6 +220,7 @@ export type PhaseRunnerConfig = {
   testerCommand: string | null;
   testerArgs: string[] | null;
   testerTimeoutMs: number;
+  defaultRace?: number;
   maxTaskRetries?: number;
   judgeAdapter?: CLIAdapterId;
   phaseTimeoutMs?: number;
@@ -1422,7 +1425,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
   }
 
   private resolveTaskRaceCount(task: Task): number {
-    const raceCount = task.race ?? 1;
+    const raceCount = task.race ?? this.config.defaultRace ?? 1;
     if (!Number.isInteger(raceCount) || raceCount <= 0) {
       throw new Error("task.race must be a positive integer.");
     }
@@ -1462,6 +1465,26 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
 
     const orchestrator = new RaceOrchestrator(this.worktreeManager);
     let branchResults: RaceBranchResult<RaceBranchExecutionOutput>[] = [];
+    let raceState: TaskRaceState | undefined;
+    let raceStateUpdateQueue = Promise.resolve();
+    const persistRaceState = async (
+      nextState: TaskRaceState | undefined,
+    ): Promise<void> => {
+      raceState = nextState;
+      await this.control.updateTaskRaceState({
+        phaseId: input.phase.id,
+        taskId: input.task.id,
+        raceState: nextState,
+      });
+    };
+    const queueRaceStateUpdate = (
+      transform: (current: TaskRaceState | undefined) => TaskRaceState,
+    ): Promise<void> => {
+      raceStateUpdateQueue = raceStateUpdateQueue.then(() =>
+        persistRaceState(transform(raceState)),
+      );
+      return raceStateUpdateQueue;
+    };
 
     try {
       console.info(
@@ -1488,47 +1511,85 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           },
         }),
       );
-      const raceExecution = await orchestrator.run<RaceBranchExecutionOutput>({
+      const branches = await orchestrator.provisionBranches({
         phaseId: input.phase.id,
         taskId: input.task.id,
         raceCount: input.raceCount,
         baseBranchName: input.phase.branchName,
         fromRef: input.phase.branchName,
-        dispatch: async (branch) => {
-          try {
-            const result = await this.runRaceBranch({
-              phase: input.phase,
-              task: prepared.taskForPrompt,
-              assignee: input.assignee,
-              branch,
-              resume: prepared.resume,
-            });
-            await this.publishRaceBranchEvent({
-              phase: input.phase,
-              task: input.task,
-              taskNumber: input.taskNumber,
-              assignee: input.assignee,
-              branch,
-              status: "fulfilled",
-            });
-            return result;
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            await this.publishRaceBranchEvent({
-              phase: input.phase,
-              task: input.task,
-              taskNumber: input.taskNumber,
-              assignee: input.assignee,
-              branch,
-              status: "rejected",
-              error: message,
-            });
-            throw error;
-          }
-        },
       });
-      branchResults = raceExecution.branches;
+      await persistRaceState({
+        status: "running",
+        raceCount: input.raceCount,
+        branches: branches.map((branch) => ({
+          index: branch.index,
+          branchName: branch.branchName,
+          status: "pending",
+        })),
+        updatedAt: new Date().toISOString(),
+      });
+      branchResults = await Promise.all(
+        branches.map(
+          async (
+            branch,
+          ): Promise<RaceBranchResult<RaceBranchExecutionOutput>> => {
+            try {
+              const result = await this.runRaceBranch({
+                phase: input.phase,
+                task: prepared.taskForPrompt,
+                assignee: input.assignee,
+                branch,
+                resume: prepared.resume,
+              });
+              await queueRaceStateUpdate((current) =>
+                this.updateRaceStateBranch(current, {
+                  branchIndex: branch.index,
+                  branchName: branch.branchName,
+                  status: "fulfilled",
+                }),
+              );
+              await this.publishRaceBranchEvent({
+                phase: input.phase,
+                task: input.task,
+                taskNumber: input.taskNumber,
+                assignee: input.assignee,
+                branch,
+                status: "fulfilled",
+              });
+              return {
+                ...branch,
+                status: "fulfilled",
+                result,
+              };
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              await queueRaceStateUpdate((current) =>
+                this.updateRaceStateBranch(current, {
+                  branchIndex: branch.index,
+                  branchName: branch.branchName,
+                  status: "rejected",
+                  error: message,
+                }),
+              );
+              await this.publishRaceBranchEvent({
+                phase: input.phase,
+                task: input.task,
+                taskNumber: input.taskNumber,
+                assignee: input.assignee,
+                branch,
+                status: "rejected",
+                error: message,
+              });
+              return {
+                ...branch,
+                status: "rejected",
+                error: error instanceof Error ? error : new Error(message),
+              };
+            }
+          },
+        ),
+      );
 
       const judgedWinner = await this.judgeRaceBranches({
         phase: input.phase,
@@ -1537,6 +1598,14 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         implementerAssignee: input.assignee,
         branches: branchResults,
       });
+      await queueRaceStateUpdate((current) =>
+        this.markRaceStateJudged(current, {
+          judgeAdapter: judgedWinner.judgeAssignee,
+          pickedBranchIndex: judgedWinner.winner.index,
+          branchName: judgedWinner.winner.branchName,
+          reasoning: judgedWinner.reasoning,
+        }),
+      );
       await this.publishRaceJudgeEvent({
         phase: input.phase,
         task: input.task,
@@ -1546,6 +1615,13 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         reasoning: judgedWinner.reasoning,
       });
       const commitCount = await this.applyRaceWinner(judgedWinner.winner);
+      await queueRaceStateUpdate((current) =>
+        this.markRaceStateApplied(current, {
+          pickedBranchIndex: judgedWinner.winner.index,
+          branchName: judgedWinner.winner.branchName,
+          commitCount,
+        }),
+      );
       await this.publishRacePickEvent({
         phase: input.phase,
         task: input.task,
@@ -1937,6 +2013,131 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       input.resultContextPrefix.trim().length > 0
       ? `${input.resultContextPrefix.trimEnd()}\n\n${resultBody}`
       : resultBody;
+  }
+
+  private updateRaceStateBranch(
+    current: TaskRaceState | undefined,
+    input: {
+      branchIndex: number;
+      branchName: string;
+      status: "fulfilled" | "rejected";
+      error?: string;
+    },
+  ): TaskRaceState {
+    const existingBranches = current?.branches ?? [];
+    const nextBranches = existingBranches.some(
+      (branch) => branch.index === input.branchIndex,
+    )
+      ? existingBranches.map((branch) =>
+          branch.index === input.branchIndex
+            ? {
+                ...branch,
+                branchName: input.branchName,
+                status: input.status,
+                error: input.error,
+              }
+            : branch,
+        )
+      : [
+          ...existingBranches,
+          {
+            index: input.branchIndex,
+            branchName: input.branchName,
+            status: input.status,
+            error: input.error,
+          },
+        ];
+
+    return {
+      status: current?.status ?? "running",
+      raceCount: current?.raceCount ?? nextBranches.length,
+      branches: nextBranches.sort((a, b) => a.index - b.index),
+      judgeAdapter: current?.judgeAdapter,
+      pickedBranchIndex: current?.pickedBranchIndex,
+      reasoning: current?.reasoning,
+      commitCount: current?.commitCount,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private markRaceStateJudged(
+    current: TaskRaceState | undefined,
+    input: {
+      judgeAdapter: CLIAdapterId;
+      pickedBranchIndex: number;
+      branchName: string;
+      reasoning: string;
+    },
+  ): TaskRaceState {
+    const branches = this.ensureRaceStateBranch(
+      current?.branches ?? [],
+      input.pickedBranchIndex,
+      input.branchName,
+    ).map((branch) =>
+      branch.index === input.pickedBranchIndex
+        ? { ...branch, status: "picked" as const }
+        : branch,
+    );
+
+    return {
+      status: "judged",
+      raceCount: current?.raceCount ?? branches.length,
+      branches,
+      judgeAdapter: input.judgeAdapter,
+      pickedBranchIndex: input.pickedBranchIndex,
+      reasoning: input.reasoning,
+      commitCount: current?.commitCount,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private markRaceStateApplied(
+    current: TaskRaceState | undefined,
+    input: {
+      pickedBranchIndex: number;
+      branchName: string;
+      commitCount: number;
+    },
+  ): TaskRaceState {
+    const branches = this.ensureRaceStateBranch(
+      current?.branches ?? [],
+      input.pickedBranchIndex,
+      input.branchName,
+    ).map((branch) =>
+      branch.index === input.pickedBranchIndex
+        ? { ...branch, status: "picked" as const }
+        : branch,
+    );
+
+    return {
+      status: "applied",
+      raceCount: current?.raceCount ?? branches.length,
+      branches,
+      judgeAdapter: current?.judgeAdapter,
+      pickedBranchIndex: input.pickedBranchIndex,
+      reasoning: current?.reasoning,
+      commitCount: input.commitCount,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private ensureRaceStateBranch(
+    branches: readonly TaskRaceBranch[],
+    branchIndex: number,
+    branchName: string,
+  ): TaskRaceBranch[] {
+    if (branches.some((branch) => branch.index === branchIndex)) {
+      return [...branches].sort((a, b) => a.index - b.index);
+    }
+
+    return [
+      ...branches,
+      {
+        index: branchIndex,
+        branchName,
+        status: "pending" as const,
+      },
+    ].sort((a, b) => a.index - b.index);
   }
 
   private summarizeRaceFailure(
