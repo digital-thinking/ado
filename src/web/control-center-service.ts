@@ -184,6 +184,34 @@ export type StartActiveTaskInput = {
   resultContextPrefix?: string;
 };
 
+export type PrepareTaskExecutionInput = StartTaskInput & {
+  projectName?: string;
+  cwd?: string;
+};
+
+export type PreparedTaskExecution = {
+  projectName: string;
+  phase: Phase;
+  task: Task;
+  taskForPrompt: Task;
+  rootDir: string;
+  resume: boolean;
+  startedFromStatus: Task["status"];
+};
+
+export type CompleteTaskExecutionInput = {
+  phaseId: string;
+  taskId: string;
+  status: "DONE" | "FAILED";
+  resultContext?: string;
+  errorLogs?: string;
+  errorCategory?: any;
+  adapterFailureKind?: any;
+  startedFromStatus: Task["status"];
+  completionVerification?: TaskCompletionVerification;
+  projectName?: string;
+};
+
 export type ResetTaskInput = {
   phaseId: string;
   taskId: string;
@@ -1057,6 +1085,40 @@ export class ControlCenterService {
   async startTask(
     input: StartTaskInput & { projectName?: string },
   ): Promise<ProjectState> {
+    const prepared = await this.prepareTaskExecution(input);
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const assignee = CLIAdapterIdSchema.parse(input.assignee);
+    const runKey = taskExecutionKey(phaseId, taskId);
+    const prompt = buildWorkerPrompt({
+      archetype: "CODER",
+      projectName: prepared.projectName,
+      rootDir: prepared.rootDir,
+      phase: prepared.phase,
+      task: prepared.taskForPrompt,
+    });
+
+    const executionPromise = this.executeTaskRun({
+      phaseId,
+      taskId,
+      assignee,
+      prompt,
+      resume: prepared.resume,
+      startedFromStatus: prepared.startedFromStatus,
+      resultContextPrefix: input.resultContextPrefix,
+      projectName: input.projectName,
+      cwd: prepared.rootDir,
+    }).finally(() => {
+      this.runningTaskExecutions.delete(runKey);
+    });
+
+    this.runningTaskExecutions.set(runKey, executionPromise);
+    return (await this.getEngine(input.projectName)).readProjectState();
+  }
+
+  async prepareTaskExecution(
+    input: PrepareTaskExecutionInput,
+  ): Promise<PreparedTaskExecution> {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
@@ -1169,14 +1231,12 @@ export class ControlCenterService {
           description: taskDescriptionOverride,
         }
       : task;
-    const effectiveRootDir = phase.worktreePath?.trim() || state.rootDir;
-    const prompt = buildWorkerPrompt({
-      archetype: "CODER",
-      projectName: state.projectName,
-      rootDir: effectiveRootDir,
-      phase,
-      task: taskForPrompt,
-    });
+    const requestedCwd = input.cwd?.trim();
+    if (input.cwd !== undefined && !requestedCwd) {
+      throw new Error("cwd must not be empty when set.");
+    }
+    const effectiveRootDir =
+      requestedCwd || phase.worktreePath?.trim() || state.rootDir;
 
     const updatedTask = TaskSchema.parse({
       ...task,
@@ -1208,22 +1268,15 @@ export class ControlCenterService {
       Boolean(input.resume) ||
       (task.status === "FAILED" && task.assignee === assignee);
 
-    const executionPromise = this.executeTaskRun({
-      phaseId,
-      taskId,
-      assignee,
-      prompt,
+    return {
+      projectName: state.projectName,
+      phase,
+      task,
+      taskForPrompt,
+      rootDir: effectiveRootDir,
       resume: shouldResume,
       startedFromStatus: task.status,
-      resultContextPrefix,
-      projectName: input.projectName,
-      cwd: effectiveRootDir,
-    }).finally(() => {
-      this.runningTaskExecutions.delete(runKey);
-    });
-
-    this.runningTaskExecutions.set(runKey, executionPromise);
-    return nextState;
+    };
   }
 
   async startTaskAndWait(
@@ -1270,6 +1323,25 @@ export class ControlCenterService {
       stderr: result.stderr,
       durationMs: result.durationMs,
     };
+  }
+
+  async completeTaskExecution(
+    input: CompleteTaskExecutionInput,
+  ): Promise<ProjectState> {
+    await this.updateTaskResult(
+      input.phaseId,
+      input.taskId,
+      input.status,
+      input.resultContext,
+      input.errorLogs,
+      input.errorCategory,
+      input.adapterFailureKind,
+      input.startedFromStatus,
+      input.completionVerification,
+      input.projectName,
+    );
+
+    return (await this.getEngine(input.projectName)).readProjectState();
   }
 
   async importFromTasksMarkdown(

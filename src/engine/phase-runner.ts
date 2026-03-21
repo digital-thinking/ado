@@ -26,6 +26,13 @@ import {
   type DeliberationSummary,
 } from "./deliberation-pass";
 import { formatDeliberationSummaryForResultContext } from "./deliberation-summary";
+import { buildRaceJudgePrompt, parseRaceJudgeVerdict } from "./race-judge";
+import {
+  RaceOrchestrator,
+  type RaceBranch,
+  type RaceBranchResult,
+} from "./race-orchestrator";
+import { buildWorkerPrompt } from "./worker-prompts";
 import {
   AdapterCircuitBreaker,
   type AdapterCircuitBreakerConfig,
@@ -266,6 +273,12 @@ type PhaseTimeoutWatchdog = {
   deadlineMs: number;
   currentStep: string;
   tripped: boolean;
+};
+
+type RaceBranchExecutionOutput = {
+  diff: string;
+  stdout: string;
+  stderr: string;
 };
 
 export class PhaseRunner {
@@ -1129,10 +1142,11 @@ Recovery: ${recoveryMessage}`,
           preferredAssignee,
         });
       }
-      const updatedState = await this.control.startActiveTaskAndWait({
+      const updatedState = await this.executeTaskAttemptAndWait({
+        phase,
+        task,
         taskNumber,
         assignee: effectiveAssignee,
-        resolvedAssignee: effectiveAssignee,
         routingReason,
         resume: resumeSession,
         taskDescriptionOverride,
@@ -1376,6 +1390,432 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     throw new Error(
       `Execution loop stopped after FAILED task #${taskNumber}. Recovery retries were exhausted.`,
     );
+  }
+
+  private async executeTaskAttemptAndWait(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    assignee: CLIAdapterId;
+    routingReason: TaskRoutingReason;
+    resume: boolean;
+    taskDescriptionOverride?: string;
+    resultContextPrefix?: string;
+  }): Promise<any> {
+    const raceCount = this.resolveTaskRaceCount(input.task);
+    if (raceCount <= 1) {
+      return this.control.startActiveTaskAndWait({
+        taskNumber: input.taskNumber,
+        assignee: input.assignee,
+        resolvedAssignee: input.assignee,
+        routingReason: input.routingReason,
+        resume: input.resume,
+        taskDescriptionOverride: input.taskDescriptionOverride,
+        resultContextPrefix: input.resultContextPrefix,
+      });
+    }
+
+    return this.runRaceTaskAttemptAndWait({
+      ...input,
+      raceCount,
+    });
+  }
+
+  private resolveTaskRaceCount(task: Task): number {
+    const raceCount = task.race ?? 1;
+    if (!Number.isInteger(raceCount) || raceCount <= 0) {
+      throw new Error("task.race must be a positive integer.");
+    }
+
+    return raceCount;
+  }
+
+  private async runRaceTaskAttemptAndWait(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    assignee: CLIAdapterId;
+    routingReason: TaskRoutingReason;
+    resume: boolean;
+    taskDescriptionOverride?: string;
+    resultContextPrefix?: string;
+    raceCount: number;
+  }): Promise<any> {
+    if (!this.worktreeManager) {
+      throw new Error(
+        `Race execution for task #${input.taskNumber} requires worktrees.enabled=true.`,
+      );
+    }
+
+    const taskLabel = `task #${input.taskNumber} ${input.task.title}`;
+    const prepared = await this.control.prepareTaskExecution({
+      phaseId: input.phase.id,
+      taskId: input.task.id,
+      assignee: input.assignee,
+      resolvedAssignee: input.assignee,
+      routingReason: input.routingReason,
+      resume: input.resume,
+      taskDescriptionOverride: input.taskDescriptionOverride,
+      resultContextPrefix: input.resultContextPrefix,
+      cwd: this.executionCwd,
+    });
+
+    const orchestrator = new RaceOrchestrator(this.worktreeManager);
+    let branchResults: RaceBranchResult<RaceBranchExecutionOutput>[] = [];
+
+    try {
+      console.info(
+        `Execution loop: running ${taskLabel} in race mode with ${input.raceCount} branches.`,
+      );
+      const raceExecution = await orchestrator.run<RaceBranchExecutionOutput>({
+        phaseId: input.phase.id,
+        taskId: input.task.id,
+        raceCount: input.raceCount,
+        baseBranchName: input.phase.branchName,
+        fromRef: input.phase.branchName,
+        dispatch: async (branch) =>
+          this.runRaceBranch({
+            phase: input.phase,
+            task: prepared.taskForPrompt,
+            assignee: input.assignee,
+            branch,
+            resume: prepared.resume,
+          }),
+      });
+      branchResults = raceExecution.branches;
+
+      const judgedWinner = await this.judgeRaceBranches({
+        phase: input.phase,
+        task: prepared.taskForPrompt,
+        taskNumber: input.taskNumber,
+        implementerAssignee: input.assignee,
+        branches: branchResults,
+      });
+      await this.applyRaceWinner(judgedWinner.winner);
+      await orchestrator.teardownBranches(branchResults);
+      branchResults = [];
+
+      await this.control.completeTaskExecution({
+        phaseId: input.phase.id,
+        taskId: input.task.id,
+        status: "DONE",
+        resultContext: this.buildRaceResultContext({
+          resultContextPrefix: input.resultContextPrefix,
+          winner: judgedWinner.winner,
+          reasoning: judgedWinner.reasoning,
+        }),
+        startedFromStatus: prepared.startedFromStatus,
+      });
+    } catch (error) {
+      const failure = this.summarizeRaceFailure(error, branchResults);
+      let failureLogs = failure.message;
+
+      try {
+        if (branchResults.length > 0) {
+          await orchestrator.teardownBranches(branchResults);
+        }
+      } catch (teardownError) {
+        const teardownMessage =
+          teardownError instanceof Error
+            ? teardownError.message
+            : String(teardownError);
+        failureLogs = `${failureLogs}\nRace teardown failed: ${teardownMessage}`;
+      }
+
+      await this.control.completeTaskExecution({
+        phaseId: input.phase.id,
+        taskId: input.task.id,
+        status: "FAILED",
+        errorLogs: failureLogs,
+        errorCategory: failure.errorCategory,
+        adapterFailureKind: failure.adapterFailureKind,
+        startedFromStatus: prepared.startedFromStatus,
+      });
+    }
+
+    return this.control.getState();
+  }
+
+  private async runRaceBranch(input: {
+    phase: Phase;
+    task: Task;
+    assignee: CLIAdapterId;
+    branch: RaceBranch;
+    resume: boolean;
+  }): Promise<RaceBranchExecutionOutput> {
+    const phaseForBranch: Phase = {
+      ...input.phase,
+      branchName: input.branch.branchName,
+      worktreePath: input.branch.worktreePath,
+    };
+    const prompt = buildWorkerPrompt({
+      archetype: "CODER",
+      projectName: this.config.projectName,
+      rootDir: input.branch.worktreePath,
+      phase: phaseForBranch,
+      task: input.task,
+    });
+    const result = await this.control.runInternalWork({
+      assignee: input.assignee,
+      prompt,
+      phaseId: input.phase.id,
+      taskId: input.task.id,
+      resume: input.resume,
+      cwd: input.branch.worktreePath,
+    });
+    const diffResult = await this.testerRunner.run({
+      command: "git",
+      args: [
+        "diff",
+        "--no-color",
+        `${input.branch.fromRef}..${input.branch.branchName}`,
+      ],
+      cwd: input.branch.worktreePath,
+    });
+
+    return {
+      diff: diffResult.stdout,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
+
+  private async judgeRaceBranches(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    implementerAssignee: CLIAdapterId;
+    branches: RaceBranchResult<RaceBranchExecutionOutput>[];
+  }): Promise<{
+    winner: RaceBranchResult<RaceBranchExecutionOutput> & {
+      status: "fulfilled";
+    };
+    reasoning: string;
+  }> {
+    const fulfilledCount = input.branches.filter(
+      (branch) => branch.status === "fulfilled",
+    ).length;
+    if (fulfilledCount === 0) {
+      throw new Error("Race execution produced no successful candidates.");
+    }
+
+    const judgeAssignee = await this.resolveJudgeAssignee({
+      phase: input.phase,
+      task: input.task,
+      taskNumber: input.taskNumber,
+      implementerAssignee: input.implementerAssignee,
+    });
+    const judgePrompt = buildRaceJudgePrompt({
+      projectName: this.config.projectName,
+      rootDir: this.executionCwd,
+      phaseName: input.phase.name,
+      taskTitle: input.task.title,
+      taskDescription: input.task.description,
+      branches: input.branches.map((branch) => ({
+        index: branch.index,
+        branchName: branch.branchName,
+        status: branch.status,
+        diff: branch.status === "fulfilled" ? branch.result.diff : "",
+        stdout: branch.status === "fulfilled" ? branch.result.stdout : "",
+        stderr: branch.status === "fulfilled" ? branch.result.stderr : "",
+        error: branch.status === "rejected" ? branch.error.message : undefined,
+      })),
+    });
+    const judgeResult = await this.control.runInternalWork({
+      assignee: judgeAssignee,
+      prompt: judgePrompt,
+      phaseId: input.phase.id,
+      taskId: input.task.id,
+      cwd: this.executionCwd,
+    });
+    const verdict = parseRaceJudgeVerdict(
+      judgeResult.stdout,
+      input.branches.length,
+    );
+    const winner = input.branches.find(
+      (branch) => branch.index === verdict.pickedBranchIndex,
+    );
+    if (!winner) {
+      throw new Error(
+        `Judge selected unknown candidate ${verdict.pickedBranchIndex}.`,
+      );
+    }
+    if (winner.status !== "fulfilled") {
+      throw new Error(
+        `Judge selected candidate ${winner.index}, but that branch failed: ${winner.error.message}`,
+      );
+    }
+
+    return {
+      winner,
+      reasoning: verdict.reasoning,
+    };
+  }
+
+  private async resolveJudgeAssignee(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    implementerAssignee: CLIAdapterId;
+  }): Promise<CLIAdapterId> {
+    const preferredJudge =
+      this.config.judgeAdapter ?? this.config.activeAssignee;
+    const enabledAdapters = new Set(this.enabledAdapters);
+    const candidates: CLIAdapterId[] = [];
+
+    for (const candidate of [
+      preferredJudge,
+      input.implementerAssignee,
+      ...this.enabledAdapters,
+    ]) {
+      if (!candidates.includes(candidate)) {
+        candidates.push(candidate);
+      }
+    }
+
+    const openCandidates: CLIAdapterId[] = [];
+    for (const candidate of candidates) {
+      if (!enabledAdapters.has(candidate)) {
+        continue;
+      }
+
+      const decision = this.getAdapterBreaker(candidate).check(candidate);
+      await this.maybeEmitCircuitTransition({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        decision,
+      });
+
+      if (!decision.canExecute) {
+        openCandidates.push(candidate);
+        continue;
+      }
+
+      return candidate;
+    }
+
+    throw new Error(
+      `No race judge available for task #${input.taskNumber} ${input.task.title}. Open circuits: ${openCandidates.join(", ")}.`,
+    );
+  }
+
+  private async applyRaceWinner(
+    winner: RaceBranchResult<RaceBranchExecutionOutput> & {
+      status: "fulfilled";
+    },
+  ): Promise<void> {
+    const commitRange = `${winner.fromRef}..${winner.branchName}`;
+    const commits = await this.listCommitsInRange(
+      commitRange,
+      this.executionCwd,
+    );
+    if (commits.length === 0) {
+      return;
+    }
+
+    await this.git.ensureCleanWorkingTree(this.executionCwd);
+    await this.testerRunner.run({
+      command: "git",
+      args: ["cherry-pick", ...commits],
+      cwd: this.executionCwd,
+    });
+  }
+
+  private async listCommitsInRange(
+    range: string,
+    cwd: string,
+  ): Promise<string[]> {
+    const result = await this.testerRunner.run({
+      command: "git",
+      args: ["rev-list", "--reverse", range],
+      cwd,
+    });
+
+    return result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  private buildRaceResultContext(input: {
+    resultContextPrefix?: string;
+    winner: RaceBranchResult<RaceBranchExecutionOutput> & {
+      status: "fulfilled";
+    };
+    reasoning: string;
+  }): string {
+    const winnerOutput = [
+      input.winner.result.stdout.trim(),
+      input.winner.result.stderr.trim(),
+    ]
+      .filter((value) => value.length > 0)
+      .join("\n\n");
+    const resultBody = [
+      `Race mode selected candidate ${input.winner.index} (${input.winner.branchName}).`,
+      "",
+      "Judge reasoning:",
+      input.reasoning,
+      "",
+      winnerOutput || "Task finished without textual output.",
+    ].join("\n");
+
+    return input.resultContextPrefix &&
+      input.resultContextPrefix.trim().length > 0
+      ? `${input.resultContextPrefix.trimEnd()}\n\n${resultBody}`
+      : resultBody;
+  }
+
+  private summarizeRaceFailure(
+    error: unknown,
+    branchResults: readonly RaceBranchResult<RaceBranchExecutionOutput>[],
+  ): {
+    message: string;
+    errorCategory?: any;
+    adapterFailureKind?: any;
+  } {
+    const normalizedError =
+      error instanceof Error ? error : new Error(String(error));
+    if (
+      branchResults.length > 0 &&
+      branchResults.every((branch) => branch.status === "rejected")
+    ) {
+      const details = branchResults.map(
+        (branch) =>
+          `Candidate ${branch.index} (${branch.branchName}) failed: ${branch.error.message}`,
+      );
+      const adapterFailureKinds = [
+        ...new Set(
+          branchResults
+            .map((branch) => (branch.error as any).adapterFailureKind)
+            .filter((value) => value !== undefined),
+        ),
+      ];
+      const errorCategories = [
+        ...new Set(
+          branchResults
+            .map((branch) => (branch.error as any).category)
+            .filter((value) => value !== undefined),
+        ),
+      ];
+
+      return {
+        message: [
+          `Race execution failed: all ${branchResults.length} candidate branches failed.`,
+          ...details,
+        ].join("\n"),
+        errorCategory:
+          errorCategories.length === 1 ? errorCategories[0] : undefined,
+        adapterFailureKind:
+          adapterFailureKinds.length === 1 ? adapterFailureKinds[0] : undefined,
+      };
+    }
+
+    return {
+      message: normalizedError.message,
+      errorCategory: (normalizedError as any).category,
+      adapterFailureKind: (normalizedError as any).adapterFailureKind,
+    };
   }
 
   private resolveEnabledAdapters(): CLIAdapterId[] {
