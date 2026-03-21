@@ -1,5 +1,5 @@
 import { type Gate, type GateContext, type GateResult } from "./gate";
-import type { ProcessRunner } from "../process";
+import { ProcessExecutionError, type ProcessRunner } from "../process";
 
 export type CommandGateConfig = {
   /** Shell command to execute (e.g. "npm"). */
@@ -57,6 +57,20 @@ export class CommandGate implements Gate {
         retryable: false,
       };
     } catch (error) {
+      if (error instanceof ProcessExecutionError) {
+        const output = [error.result.stdout.trim(), error.result.stderr.trim()]
+          .filter((s) => s.length > 0)
+          .join("\n\n");
+        return {
+          gate: this.name,
+          passed: false,
+          diagnostics:
+            output ||
+            `Command exited with code ${error.result.exitCode}: ${this.config.command}`,
+          retryable: false,
+        };
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       return {
         gate: this.name,

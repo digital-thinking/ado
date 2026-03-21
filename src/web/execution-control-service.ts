@@ -44,6 +44,28 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+export function resolveExecutionProjectRootDir(
+  fallbackProjectRootDir: string,
+  projectName: string,
+  settings: { projects: Array<{ name: string; rootDir: string }> },
+): string {
+  const fallback = fallbackProjectRootDir.trim();
+  if (!fallback) {
+    throw new Error("fallbackProjectRootDir must not be empty.");
+  }
+
+  const normalizedProjectName = projectName.trim();
+  if (!normalizedProjectName) {
+    throw new Error("projectName must not be empty.");
+  }
+
+  const project = settings.projects.find((candidate) => {
+    return candidate.name === normalizedProjectName;
+  });
+  const projectRootDir = project?.rootDir?.trim();
+  return projectRootDir || fallback;
+}
+
 export class ExecutionControlService {
   private readonly control: ControlCenterService;
   private readonly agents: {
@@ -112,12 +134,18 @@ export class ExecutionControlService {
     if (!projectName) {
       throw new Error("projectName must not be empty.");
     }
+    const settings = await loadCliSettings(this.settingsFilePath);
+    const projectRootDir = resolveExecutionProjectRootDir(
+      this.projectRootDir,
+      projectName,
+      settings,
+    );
 
     const lockState = await this.control.getState(projectName);
     const lockPhaseId =
       lockState.activePhaseIds[0]?.trim() || "no-active-phase";
     const runLock = new ExecutionRunLock({
-      projectRootDir: this.projectRootDir,
+      projectRootDir,
       projectName,
       phaseId: lockPhaseId,
       owner: "WEB_AUTO_MODE",
@@ -226,7 +254,11 @@ export class ExecutionControlService {
       const state = await this.control.getState(projectName);
       const activePhase = resolveActivePhaseStrict(state);
 
-      const projectRootDir = project?.rootDir ?? this.projectRootDir;
+      const projectRootDir = resolveExecutionProjectRootDir(
+        this.projectRootDir,
+        projectName,
+        settings,
+      );
 
       const config: PhaseRunnerConfig = {
         mode: "AUTO",

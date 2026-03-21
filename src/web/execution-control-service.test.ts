@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { ExecutionControlService } from "./execution-control-service";
+import {
+  ExecutionControlService,
+  resolveExecutionProjectRootDir,
+} from "./execution-control-service";
 
 const DUMMY_SETTINGS_FILE = "/tmp/nonexistent-settings.json";
 const DUMMY_AGENT_SETTINGS = {
@@ -35,6 +38,25 @@ const DUMMY_AGENT_SETTINGS = {
 } as never;
 
 describe("ExecutionControlService", () => {
+  test("resolveExecutionProjectRootDir prefers the configured project root", () => {
+    expect(
+      resolveExecutionProjectRootDir("/tmp/fallback", "beta", {
+        projects: [
+          { name: "alpha", rootDir: "/tmp/alpha" },
+          { name: "beta", rootDir: "/tmp/beta" },
+        ],
+      }),
+    ).toBe("/tmp/beta");
+  });
+
+  test("resolveExecutionProjectRootDir falls back to service root for unknown project", () => {
+    expect(
+      resolveExecutionProjectRootDir("/tmp/fallback", "gamma", {
+        projects: [{ name: "alpha", rootDir: "/tmp/alpha" }],
+      }),
+    ).toBe("/tmp/fallback");
+  });
+
   test("initial status is idle", () => {
     const service = new ExecutionControlService({
       control: {} as never,

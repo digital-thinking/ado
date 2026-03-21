@@ -1464,6 +1464,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     });
 
     const orchestrator = new RaceOrchestrator(this.worktreeManager);
+    let provisionedBranches: RaceBranch[] = [];
     let branchResults: RaceBranchResult<RaceBranchExecutionOutput>[] = [];
     let raceState: TaskRaceState | undefined;
     let raceStateUpdateQueue = Promise.resolve();
@@ -1518,6 +1519,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         baseBranchName: input.phase.branchName,
         fromRef: input.phase.branchName,
       });
+      provisionedBranches = branches;
       await persistRaceState({
         status: "running",
         raceCount: input.raceCount,
@@ -1631,6 +1633,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       });
       await orchestrator.teardownBranches(branchResults);
       branchResults = [];
+      provisionedBranches = [];
 
       await this.control.completeTaskExecution({
         phaseId: input.phase.id,
@@ -1648,8 +1651,10 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       let failureLogs = failure.message;
 
       try {
-        if (branchResults.length > 0) {
-          await orchestrator.teardownBranches(branchResults);
+        const teardownTargets =
+          branchResults.length > 0 ? branchResults : provisionedBranches;
+        if (teardownTargets.length > 0) {
+          await orchestrator.teardownBranches(teardownTargets);
         }
       } catch (teardownError) {
         const teardownMessage =
@@ -1705,7 +1710,9 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       args: [
         "diff",
         "--no-color",
-        `${input.branch.fromRef}..${input.branch.branchName}`,
+        "--binary",
+        "--full-index",
+        input.branch.fromRef,
       ],
       cwd: input.branch.worktreePath,
     });
@@ -1849,15 +1856,15 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       commitRange,
       this.executionCwd,
     );
-    if (commits.length === 0) {
-      return 0;
-    }
-
     await this.git.ensureCleanWorkingTree(this.executionCwd);
+    if (!winner.result.diff.trim()) {
+      return commits.length;
+    }
     await this.testerRunner.run({
       command: "git",
-      args: ["cherry-pick", ...commits],
+      args: ["apply", "--index", "--binary", "-"],
       cwd: this.executionCwd,
+      stdin: winner.result.diff,
     });
     return commits.length;
   }
