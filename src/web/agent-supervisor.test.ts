@@ -279,6 +279,33 @@ describe("AgentSupervisor", () => {
     expect(found?.taskId).toBe("task-shared");
   });
 
+  test("flushes run-to-completion RUNNING agents to the shared registry immediately", () => {
+    const registryFilePath = join(sandboxDir, ".ixado", "agents.json");
+    const child = createFakeChild();
+    const primary = new AgentSupervisor({
+      spawnFn: () => child,
+      registryFilePath,
+    });
+    const secondary = new AgentSupervisor({
+      registryFilePath,
+    });
+
+    void primary.runToCompletion({
+      name: "Shared run worker",
+      command: "codex",
+      args: ["exec", "-"],
+      cwd: "/tmp/repo",
+      approvedAdapterSpawn: true,
+      taskId: "task-shared-run",
+    });
+
+    const found = secondary
+      .list()
+      .find((agent) => agent.taskId === "task-shared-run");
+    expect(found).toBeDefined();
+    expect(found?.status).toBe("RUNNING");
+  });
+
   test("calls onFailure hook when agent fails", (done) => {
     const child = createFakeChild();
     const supervisor = new AgentSupervisor({

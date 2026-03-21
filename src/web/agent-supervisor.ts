@@ -943,6 +943,9 @@ export class AgentSupervisor {
           });
         },
       });
+      // Mirror start(): registry-backed observers should see RUNNING agents
+      // immediately, even for run-to-completion helper executions.
+      this.doFlushRegistry();
     });
   }
 

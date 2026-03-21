@@ -312,11 +312,12 @@ function createControlCenterServiceWithAgentTracking(
       const adapter = createAdapter(workInput.assignee, processManager, {
         bypassApprovalsAndSandbox: assigneeSettings.bypassApprovalsAndSandbox,
       });
+      const effectiveCwd = workInput.cwd ?? projectRootDir;
       const startupDiagnostic = buildAdapterInitializationDiagnostic({
         adapterId: workInput.assignee,
         command: adapter.contract.command,
         baseArgs: adapter.contract.baseArgs,
-        cwd: projectRootDir,
+        cwd: effectiveCwd,
         timeoutMs: assigneeSettings.timeoutMs,
         startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
       });
@@ -345,7 +346,7 @@ function createControlCenterServiceWithAgentTracking(
           name: agentName,
           command: adapter.contract.command,
           args,
-          cwd: projectRootDir,
+          cwd: effectiveCwd,
           timeoutMs: assigneeSettings.timeoutMs,
           startupSilenceTimeoutMs: assigneeSettings.startupSilenceTimeoutMs,
           stdin,
