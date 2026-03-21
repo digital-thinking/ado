@@ -212,6 +212,7 @@ export type PhaseRunnerConfig = {
   testerArgs: string[] | null;
   testerTimeoutMs: number;
   maxTaskRetries?: number;
+  judgeAdapter?: CLIAdapterId;
   phaseTimeoutMs?: number;
   ciEnabled: boolean;
   vcsProvider: VcsProviderType;

@@ -61,6 +61,7 @@ const DEFAULT_LOOP_SETTINGS = {
   countdownSeconds: 10,
   maxTaskRetries: 3,
   defaultRace: 1,
+  judgeAdapter: "CODEX_CLI" as const,
   phaseTimeoutMs: 21600000,
   testerCommand: null,
   testerArgs: null,
@@ -395,6 +396,20 @@ describe("cli settings", () => {
       reviewerAdapter: "CODEX_CLI",
       maxRefinePasses: 3,
     });
+  });
+
+  test("loads executionLoop.judgeAdapter overrides in a single config file", async () => {
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify({
+        executionLoop: {
+          judgeAdapter: "CLAUDE_CLI",
+        },
+      }),
+    );
+
+    const settings = await loadCliSettings(settingsFilePath);
+    expect(settings.executionLoop.judgeAdapter).toBe("CLAUDE_CLI");
   });
 
   test("deep-merges discovery overrides in a single config file", async () => {

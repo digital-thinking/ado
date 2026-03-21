@@ -1723,6 +1723,7 @@ async function runPhaseRunCommand({
       testerArgs: settings.executionLoop.testerArgs,
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
       maxTaskRetries: projectExecutionSettings.maxTaskRetries,
+      judgeAdapter: settings.executionLoop.judgeAdapter,
       phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
       ciEnabled: settings.executionLoop.ciEnabled,
       vcsProvider: settings.executionLoop.vcsProvider,

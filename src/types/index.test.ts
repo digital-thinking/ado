@@ -58,6 +58,7 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
     expect(parsed.executionLoop.maxTaskRetries).toBe(3);
     expect(parsed.executionLoop.defaultRace).toBe(1);
+    expect(parsed.executionLoop.judgeAdapter).toBe("CODEX_CLI");
     expect(parsed.executionLoop.phaseTimeoutMs).toBe(21_600_000);
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
@@ -306,6 +307,17 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.defaultRace).toBe(4);
   });
 
+  test("supports judge adapter config overrides", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      executionLoop: {
+        judgeAdapter: "CLAUDE_CLI",
+      },
+    });
+
+    expect(parsed.executionLoop.judgeAdapter).toBe("CLAUDE_CLI");
+  });
+
   test("accepts TIMED_OUT as a persisted phase status", () => {
     const parsed = PhaseSchema.parse({
       id: "99999999-9999-4999-8999-999999999999",
@@ -358,6 +370,25 @@ describe("type contracts", () => {
         },
       }),
     ).toThrow("executionLoop.deliberation.reviewerAdapter");
+  });
+
+  test("rejects judge adapter if disabled", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        telegram: {
+          enabled: false,
+        },
+        executionLoop: {
+          judgeAdapter: "CLAUDE_CLI",
+        },
+        agents: {
+          CODEX_CLI: { enabled: true, timeoutMs: 1_000 },
+          CLAUDE_CLI: { enabled: false, timeoutMs: 1_000 },
+          GEMINI_CLI: { enabled: true, timeoutMs: 1_000 },
+          MOCK_CLI: { enabled: true, timeoutMs: 1_000 },
+        },
+      }),
+    ).toThrow("executionLoop.judgeAdapter");
   });
 
   test("accepts adapter affinities that target enabled adapters", () => {

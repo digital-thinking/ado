@@ -205,6 +205,7 @@ export const ExecutionLoopSettingsSchema = z
     countdownSeconds: z.number().int().min(0).max(3_600).default(10),
     maxTaskRetries: z.number().int().min(0).max(20).default(3),
     defaultRace: z.number().int().min(1).default(1),
+    judgeAdapter: CLIAdapterIdSchema.default("CODEX_CLI"),
     phaseTimeoutMs: z.number().int().positive().default(21_600_000),
     testerCommand: z.string().min(1).nullable().default(null),
     testerArgs: z.array(z.string()).min(1).nullable().default(null),
@@ -364,6 +365,7 @@ export const CliSettingsSchema = z
       countdownSeconds: 10,
       maxTaskRetries: 3,
       defaultRace: 1,
+      judgeAdapter: "CODEX_CLI",
       phaseTimeoutMs: 21_600_000,
       testerCommand: null,
       testerArgs: null,
@@ -488,6 +490,13 @@ export const CliSettingsSchema = z
         path: ["executionLoop", "deliberation", "reviewerAdapter"],
       });
     }
+    if (!value.agents[value.executionLoop.judgeAdapter].enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `executionLoop.judgeAdapter '${value.executionLoop.judgeAdapter}' must be enabled in settings.agents.`,
+        path: ["executionLoop", "judgeAdapter"],
+      });
+    }
 
     for (const [taskType, adapterId] of Object.entries(
       value.agents.adapterAffinities ?? {},
@@ -529,6 +538,7 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   countdownSeconds: z.number().int().min(0).max(3_600).optional(),
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
   defaultRace: z.number().int().min(1).optional(),
+  judgeAdapter: CLIAdapterIdSchema.optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),

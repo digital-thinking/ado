@@ -163,7 +163,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 
 - [x] `P35-001` Add optional `race: number` property to `TaskSchema` and `defaultRace: number` (default 1) to phase config in `CliSettingsSchema`. Deps: none.
 - [x] `P35-002` Implement `RaceOrchestrator` in `src/engine/`: uses `WorktreeManager` to provision N parallel worktree branches under `.ixado/worktrees/<phase-id>/race-<task-id>-<n>/`, dispatches the same task to each, and collects results. Deps: `P35-001`.
-- [ ] `P35-003` Implement judge adapter prompt: build a structured prompt with all branch diffs and outputs; parse response for `PICK <N>` verdict and reasoning text. Configurable `judgeAdapter` in phase settings. Deps: `P35-002`.
+- [x] `P35-003` Implement judge adapter prompt: build a structured prompt with all branch diffs and outputs; parse response for `PICK <N>` verdict and reasoning text. Configurable `judgeAdapter` in phase settings. Deps: `P35-002`.
 - [ ] `P35-004` Wire `RaceOrchestrator` into `PhaseRunner`: when `race > 1`, fan out to N branches; after all complete, run judge; merge/cherry-pick winner; prune loser worktrees. Fall back to single execution when `race` is unset or 1. Deps: `P35-002`, `P35-003`.
 - [ ] `P35-005` Emit race events (`race:start`, `race:branch`, `race:judge`, `race:pick`) through the unified runtime event contract. Deps: `P35-004`.
 - [ ] `P35-006` Expose race config in Web Control Center: set `race` count per task or as phase default, view per-branch status live, display judge reasoning before pick is applied. Deps: `P35-004`, `P35-005`.
