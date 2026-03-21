@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { ProcessExecutionError, type ProcessRunner } from "../process";
 import type { Phase } from "../types";
 import { MockProcessRunner } from "../vcs/test-utils";
+import { GitHubProvider } from "../vcs";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
 import { runTesterWorkflow } from "./tester-workflow";
@@ -72,6 +73,8 @@ describe("execution loop integration", () => {
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
       commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
+      vcsProvider: new GitHubProvider(runner),
+      vcsProviderType: "github" as const,
       role: "admin",
       policy: {
         version: "1",
@@ -127,6 +130,8 @@ describe("execution loop integration", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: null,
         policy: {
           version: "1",

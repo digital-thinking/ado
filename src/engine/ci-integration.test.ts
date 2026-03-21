@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { OrchestrationAuthorizationDeniedError } from "../security/orchestration-authorizer";
 import { MockProcessRunner } from "../vcs/test-utils";
+import { GitHubProvider } from "../vcs";
 import { derivePullRequestMetadata, runCiIntegration } from "./ci-integration";
 import { type Task } from "../types";
 
@@ -164,6 +165,8 @@ describe("runCiIntegration", () => {
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
       commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
+      vcsProvider: new GitHubProvider(runner),
+      vcsProviderType: "github" as const,
       role: "admin",
       policy: {
         version: "1",
@@ -252,6 +255,8 @@ describe("runCiIntegration", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "admin",
         policy: {
           version: "1",
@@ -291,6 +296,8 @@ describe("runCiIntegration", () => {
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
       commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
+      vcsProvider: new GitHubProvider(runner),
+      vcsProviderType: "github" as const,
       role: "operator",
       policy: {
         version: "1",
@@ -340,6 +347,8 @@ describe("runCiIntegration", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "admin",
         policy: {
           version: "1",
@@ -392,6 +401,8 @@ describe("runCiIntegration", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "admin",
         policy: {
           version: "1",
@@ -433,6 +444,8 @@ describe("runCiIntegration", () => {
       tasks: [],
       cwd: "C:/repo",
       baseBranch: "main",
+      vcsProvider: new GitHubProvider(runner),
+      vcsProviderType: "github" as const,
       pullRequest: {
         defaultTemplatePath: ".github/pull_request_template.md",
         templateMappings: [

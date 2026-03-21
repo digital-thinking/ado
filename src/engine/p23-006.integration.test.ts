@@ -20,6 +20,8 @@ function createBaseConfig(): PhaseRunnerConfig {
     testerArgs: null,
     testerTimeoutMs: 1_000,
     ciEnabled: true,
+    vcsProvider: "github" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: ".github/pull_request_template.md",
@@ -739,6 +741,7 @@ describe("P25-005 integration coverage", () => {
       {
         ...createBaseConfig(),
         ciEnabled: false,
+        vcsProvider: "null" as const,
       },
       undefined,
       async (event) => {

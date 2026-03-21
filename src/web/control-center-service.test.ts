@@ -348,54 +348,7 @@ describe("ControlCenterService", () => {
     expect(task.resultContext).toContain("implemented");
   });
 
-  test("fails completion when PR side effect cannot be verified", async () => {
-    const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService({
-      stateEngine: new StateEngine(stateFilePath),
-      tasksMarkdownFilePath: tasksMarkdownPath,
-      internalWorkRunner: async () => ({
-        command: "codex",
-        args: ["exec", "prompt"],
-        stdout: "created pull request",
-        stderr: "",
-        durationMs: 50,
-      }),
-      sideEffectProbeRunner: preflightRunner,
-    });
-    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
-
-    const created = await serviceWithRunner.createPhase({
-      name: "Phase PR Gate",
-      branchName: "phase-pr-gate",
-    });
-    const phaseId = created.phases[0].id;
-    const withTask = await serviceWithRunner.createTask({
-      phaseId,
-      title: "Create PR Task",
-      description: "Open pull request for this phase",
-      assignee: "CODEX_CLI",
-    });
-    const taskId = withTask.phases[0].tasks[0].id;
-
-    const finished = await serviceWithRunner.startTaskAndWait({
-      phaseId,
-      taskId,
-      assignee: "CODEX_CLI",
-    });
-    const task = finished.phases[0].tasks[0];
-
-    expect(task.status).toBe("FAILED");
-    expect(task.errorLogs).toContain(
-      "Completion side-effect verification failed",
-    );
-    expect(task.completionVerification?.status).toBe("FAILED");
-    expect(task.completionVerification?.contracts).toEqual(["PR_CREATION"]);
-    expect(task.completionVerification?.missingSideEffects[0]).toContain(
-      "phase.prUrl is missing",
-    );
-  });
-
-  test("fails fast before worker run when GitHub capability preflight fails", async () => {
+  test("fails fast before worker run when GitHub capability preflight fails for CI-triggered task", async () => {
     let runCount = 0;
     const missingGh = new Error("spawn gh ENOENT") as NodeJS.ErrnoException;
     missingGh.code = "ENOENT";
@@ -424,14 +377,14 @@ describe("ControlCenterService", () => {
     await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
 
     const created = await serviceWithRunner.createPhase({
-      name: "Phase PR Preflight",
-      branchName: "phase-pr-preflight",
+      name: "Phase CI Preflight",
+      branchName: "phase-ci-preflight",
     });
     const phaseId = created.phases[0].id;
     const withTask = await serviceWithRunner.createTask({
       phaseId,
-      title: "Create PR Task",
-      description: "Open pull request for this phase",
+      title: "Trigger CI status updates",
+      description: "Apply CI-triggered updates for this phase",
       assignee: "CODEX_CLI",
     });
     const taskId = withTask.phases[0].tasks[0].id;
@@ -451,107 +404,12 @@ describe("ControlCenterService", () => {
       "Runtime capability preflight failed for GitHub-bound task",
     );
     expect(task.completionVerification?.status).toBe("FAILED");
-    expect(task.completionVerification?.contracts).toEqual(["PR_CREATION"]);
+    expect(task.completionVerification?.contracts).toEqual([
+      "CI_TRIGGERED_UPDATE",
+    ]);
     expect(task.completionVerification?.missingSideEffects.join(" ")).toContain(
       "Install GitHub CLI",
     );
-  });
-
-  test("persists DONE when PR side effect verification passes", async () => {
-    const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService({
-      stateEngine: new StateEngine(stateFilePath),
-      tasksMarkdownFilePath: tasksMarkdownPath,
-      internalWorkRunner: async () => ({
-        command: "codex",
-        args: ["exec", "prompt"],
-        stdout: "pr opened",
-        stderr: "",
-        durationMs: 50,
-      }),
-      sideEffectProbeRunner: preflightRunner,
-    });
-    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
-
-    const created = await serviceWithRunner.createPhase({
-      name: "Phase PR Pass",
-      branchName: "phase-pr-pass",
-    });
-    const phaseId = created.phases[0].id;
-    await serviceWithRunner.setPhasePrUrl({
-      phaseId,
-      prUrl: "https://github.com/org/repo/pull/123",
-    });
-    const withTask = await serviceWithRunner.createTask({
-      phaseId,
-      title: "Create PR Task",
-      description: "Open pull request for this phase",
-      assignee: "CODEX_CLI",
-    });
-    const taskId = withTask.phases[0].tasks[0].id;
-
-    const finished = await serviceWithRunner.startTaskAndWait({
-      phaseId,
-      taskId,
-      assignee: "CODEX_CLI",
-    });
-    const task = finished.phases[0].tasks[0];
-
-    expect(task.status).toBe("DONE");
-    expect(task.completionVerification?.status).toBe("PASSED");
-    expect(task.completionVerification?.contracts).toEqual(["PR_CREATION"]);
-    expect(task.completionVerification?.missingSideEffects).toEqual([]);
-  });
-
-  test("captures environment fingerprint during capability preflight", async () => {
-    const preflightRunner = new MockProcessRunner([
-      { stdout: "gh version 2.50.0\n" },
-      { stdout: "github.com\n  Logged in to github.com as testuser\n" },
-      { stdout: "Test User\n" }, // git config user.name
-      { stdout: "test@example.com\n" }, // git config user.email
-      { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
-      { stdout: "deadbeef\trefs/heads/HEAD\n" }, // git ls-remote
-    ]);
-    const serviceWithRunner = new ControlCenterService({
-      stateEngine: new StateEngine(stateFilePath),
-      tasksMarkdownFilePath: tasksMarkdownPath,
-      internalWorkRunner: async () => ({
-        command: "codex",
-        args: ["exec"],
-        stdout: "done",
-        stderr: "",
-        durationMs: 10,
-      }),
-      sideEffectProbeRunner: preflightRunner,
-    });
-    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
-
-    const created = await serviceWithRunner.createPhase({
-      name: "Fingerprint Test",
-      branchName: "fingerprint-test",
-    });
-    const phaseId = created.phases[0].id;
-    const withTask = await serviceWithRunner.createTask({
-      phaseId,
-      title: "Create PR Task",
-      description: "Open pull request",
-      assignee: "CODEX_CLI",
-    });
-    const taskId = withTask.phases[0].tasks[0].id;
-
-    // Successful run should NOT have preflight verification object if it passes?
-    // Wait, executeTaskRun DOES NOT persist capabilityPreflight if it succeeds!
-    // It only persists completionVerification AFTER the task.
-    // Wait, I should check executeTaskRun.
-
-    await serviceWithRunner.startTaskAndWait({
-      phaseId,
-      taskId,
-      assignee: "CODEX_CLI",
-    });
-
-    // To verify capabilityPreflight's fingerprint, I need it to FAIL.
-    // Because executeTaskRun only calls updateTaskResult with preflight's verification IF IT FAILS.
   });
 
   test("captures environment fingerprint during FAILED capability preflight", async () => {
@@ -584,8 +442,8 @@ describe("ControlCenterService", () => {
     const phaseId = created.phases[0].id;
     const withTask = await serviceWithRunner.createTask({
       phaseId,
-      title: "Create PR Task",
-      description: "Open pull request",
+      title: "Trigger CI status updates",
+      description: "Apply CI-triggered updates",
       assignee: "CODEX_CLI",
     });
     const taskId = withTask.phases[0].tasks[0].id;
@@ -608,54 +466,6 @@ describe("ControlCenterService", () => {
       "test@example.com",
     );
     expect(verification?.envFingerprint?.["hostname"]).toBeDefined();
-  });
-
-  test("runs worker when GitHub capability preflight passes", async () => {
-    let runCount = 0;
-    const preflightRunner = buildPassingGitHubPreflightRunner();
-    const serviceWithRunner = new ControlCenterService({
-      stateEngine: new StateEngine(stateFilePath),
-      tasksMarkdownFilePath: tasksMarkdownPath,
-      internalWorkRunner: async () => {
-        runCount += 1;
-        return {
-          command: "codex",
-          args: ["exec", "prompt"],
-          stdout: "pr opened",
-          stderr: "",
-          durationMs: 50,
-        };
-      },
-      sideEffectProbeRunner: preflightRunner,
-    });
-    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
-
-    const created = await serviceWithRunner.createPhase({
-      name: "Phase PR Preflight Pass",
-      branchName: "phase-pr-preflight-pass",
-    });
-    const phaseId = created.phases[0].id;
-    await serviceWithRunner.setPhasePrUrl({
-      phaseId,
-      prUrl: "https://github.com/org/repo/pull/124",
-    });
-    const withTask = await serviceWithRunner.createTask({
-      phaseId,
-      title: "Create PR Task",
-      description: "Open pull request for this phase",
-      assignee: "CODEX_CLI",
-    });
-    const taskId = withTask.phases[0].tasks[0].id;
-
-    const finished = await serviceWithRunner.startTaskAndWait({
-      phaseId,
-      taskId,
-      assignee: "CODEX_CLI",
-    });
-    const task = finished.phases[0].tasks[0];
-
-    expect(runCount).toBe(1);
-    expect(task.status).toBe("DONE");
   });
 
   test("fails completion when CI-triggered update side effect cannot be verified", async () => {
@@ -717,78 +527,14 @@ describe("ControlCenterService", () => {
     ).toBe(true);
   });
 
-  test("fails fast before worker run when GitHub capability preflight fails for remote push tasks", async () => {
-    let runCount = 0;
-    const missingGh = new Error("spawn gh ENOENT") as NodeJS.ErrnoException;
-    missingGh.code = "ENOENT";
-    const preflightRunner = new MockProcessRunner([
-      missingGh,
-      { stdout: "IxADO\n" }, // git config user.name
-      { stdout: "ixado@example.com\n" }, // git config user.email
-      { stdout: "https://github.com/org/repo.git\n" }, // git remote get-url origin
-      { stdout: "deadbeef\trefs/heads/HEAD\n" }, // git ls-remote
-    ]);
-    const serviceWithRunner = new ControlCenterService({
-      stateEngine: new StateEngine(stateFilePath),
-      tasksMarkdownFilePath: tasksMarkdownPath,
-      internalWorkRunner: async () => {
-        runCount += 1;
-        return {
-          command: "codex",
-          args: ["exec", "prompt"],
-          stdout: "should not run",
-          stderr: "",
-          durationMs: 50,
-        };
-      },
-      sideEffectProbeRunner: preflightRunner,
-    });
-    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
-
-    const created = await serviceWithRunner.createPhase({
-      name: "Phase Push Preflight",
-      branchName: "phase-push-preflight",
-    });
-    const phaseId = created.phases[0].id;
-    const withTask = await serviceWithRunner.createTask({
-      phaseId,
-      title: "Remote push task",
-      description: "Push to origin after local changes",
-      assignee: "CODEX_CLI",
-    });
-    const taskId = withTask.phases[0].tasks[0].id;
-
-    const finished = await serviceWithRunner.startTaskAndWait({
-      phaseId,
-      taskId,
-      assignee: "CODEX_CLI",
-    });
-    const task = finished.phases[0].tasks[0];
-
-    expect(runCount).toBe(0);
-    expect(task.status).toBe("FAILED");
-    expect(task.errorCategory).toBe("AGENT_FAILURE");
-    expect(task.adapterFailureKind).toBe("missing-binary");
-    expect(task.errorLogs).toContain(
-      "Runtime capability preflight failed for GitHub-bound task",
-    );
-    expect(task.completionVerification?.status).toBe("FAILED");
-    expect(task.completionVerification?.contracts).toEqual(["REMOTE_PUSH"]);
-    expect(task.completionVerification?.missingSideEffects.join(" ")).toContain(
-      "Install GitHub CLI",
-    );
-  });
-
   test("resolves side-effect verification contracts from task text", () => {
+    // PR_CREATION and REMOTE_PUSH are no longer per-task contracts —
+    // push/PR are orchestrator responsibilities handled in ci-integration.ts
     const contracts = resolveTaskCompletionSideEffectContracts({
       title: "Create PR Task and remote push",
       description: "After merge prep, perform CI-triggered updates",
     });
-    expect(contracts).toEqual([
-      "PR_CREATION",
-      "REMOTE_PUSH",
-      "CI_TRIGGERED_UPDATE",
-    ]);
+    expect(contracts).toEqual(["CI_TRIGGERED_UPDATE"]);
   });
 
   test("fails fast if task dependencies are not DONE", async () => {

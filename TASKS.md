@@ -77,7 +77,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [x] `P27-009` Add `ixado worktree list` (show all active worktrees with phase/branch/status) and `ixado worktree prune` (remove orphaned worktrees for terminal/missing phases) CLI subcommands. Deps: `P27-003`.
 - [x] `P27-010` Update web UI and Telegram to show status of all phases in `activePhaseIds`, not just a single active phase — phase list view, runtime events, and notifications. Deps: `P27-007`.
 - [x] `P27-011` Add regression/integration tests for Phase 27: worktree lifecycle (provision, teardown, prune), per-phase lock independence, concurrent state writes without corruption, `activePhaseIds` set operations, and `--phase` flag routing. Deps: `P27-001`..`P27-010`.
-- [ ] `P27-012` Create PR Task: open Phase 27 PR after coding tasks are done. Deps: `P27-011`.
+- [ ] `P27-012` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation deterministically via `ci-integration.ts`. Deps: `P27-011`.
 
 ### Phase 28: Semantic Task Routing
 
@@ -107,7 +107,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [x] `P30-004` Wire deliberation into `PhaseRunner`: when a task has `deliberate: true`, run the deliberation pass first, then hand the refined prompt to the standard execution path. Store the deliberation summary in task `resultContext`. Deps: `P30-003`.
 - [x] `P30-005` Surface deliberation summary in PR body (collapsible section) and Telegram notification for the task. Deps: `P30-004`.
 - [x] `P30-006` Add regression/integration tests for Phase 30: deliberation pass execution, refined-prompt handoff to execution, summary in PR body and Telegram, graceful fallback when reviewer adapter is unavailable. Deps: `P30-001`..`P30-005`.
-- [ ] `P30-007` Create PR Task: open Phase 30 PR after coding tasks are done. Deps: `P30-006`.
+- [ ] `P30-007` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P30-006`.
 
 ### Phase 31: Autonomous Task Discovery
 
@@ -116,7 +116,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [x] `P31-003` Add `ixado discover` CLI command: `--dry-run` flag prints ranked candidates without queuing; `--queue` flag adds approved candidates to the active phase as TODO tasks. Deps: `P31-001`, `P31-002`.
 - [x] `P31-004` Add `discovery` config section to `CliSettingsSchema`: `includePatterns`, `excludePatterns`, `priorityWeights` (`recency`, `frequency`, `tags`), `maxCandidates`. Deps: `P31-001`.
 - [x] `P31-005` Add regression/integration tests for Phase 31: scanner extraction, issue mapping, priority ranking, dry-run output correctness, task queuing, and config validation. Deps: `P31-001`..`P31-004`.
-- [ ] `P31-006` Create PR Task: open Phase 31 PR after coding tasks are done. Deps: `P31-005`.
+- [ ] `P31-006` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P31-005`.
 
 ### Phase 32: Telegram Natural Language Assistant
 
@@ -140,24 +140,24 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [x] `P33-006` Emit `task:rate_limit_retry` and `phase:timeout` events through the unified runtime event contract; surface in Web Control Center and Telegram. Deps: `P33-003`, `P33-005`.
 - [x] `P33-007` Expose `maxTaskRetries` and `phaseTimeoutMs` in Web Control Center project settings panel. Deps: `P33-001`, `P33-004`.
 - [x] `P33-008` Add regression/integration tests: rate-limit detection across adapter outputs, retry counter and backoff timing, dead-letter after exhaustion, phase timeout transition, event emission. Deps: `P33-003`, `P33-005`, `P33-006`.
-- [ ] `P33-009` Create PR Task. Deps: `P33-008`.
+- [ ] `P33-009` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P33-008`.
 
 ### Phase 34: Pluggable Completion Gates & VCS Provider Abstraction
 
 - [x] `P34-001` Extract `VcsProvider` interface from `GitHubManager` in `src/vcs/`: `pushBranch`, `openPr`, `pollChecks`, `markReady`, `mergePr`. Deps: none.
 - [x] `P34-002` Implement `GitHubProvider` wrapping existing `GitHubManager` logic behind the `VcsProvider` interface (preserves all current behavior). Deps: `P34-001`.
 - [x] `P34-003` Implement `LocalProvider` (push to remote only, no PR operations) and `NullProvider` (no remote ops — branch stays local). Deps: `P34-001`.
-- [ ] `P34-004` Add `vcsProvider` config to project settings (`github | local | null`, default `github`). Migrate `ciEnabled: true` → `provider: github` on load. Update `PrivilegedGitActions` to route through active provider. Deps: `P34-002`, `P34-003`.
-- [ ] `P34-005` Define `Gate` interface (`evaluate(context: GateContext): Promise<GateResult>`) and `GateChain` runner that executes gates in sequence. Deps: none.
-- [ ] `P34-006` Implement `CommandGate`: run a configurable shell command; pass if exit code is 0; capture stdout/stderr for diagnostics. Deps: `P34-005`.
-- [ ] `P34-007` Implement `CoverageGate`: parse a coverage report file (lcov, JSON, Cobertura) and compare against a configurable `minPct` threshold. Deps: `P34-005`.
-- [ ] `P34-008` Implement `AiEvalGate`: send git diff + user-defined rubric to a configured adapter; scan response for configurable pass/fail keywords; retry up to `maxRetries` on fail verdict. Deps: `P34-005`.
-- [ ] `P34-009` Implement `PrCiGate`: refactor current CI polling logic from `PhaseRunner` into the gate interface. Deps: `P34-005`, `P34-004`.
-- [ ] `P34-010` Replace `ciEnabled` code path in `PhaseRunner` with `GateChain` execution. Auto-migrate legacy config: `ciEnabled: true` → `gates: [pr_ci]`, `ciEnabled: false` → `gates: []`. Deps: `P34-006`..`P34-009`.
-- [ ] `P34-011` Emit typed gate events (`gate:start`, `gate:pass`, `gate:fail`, `gate:retry`) through the unified runtime event contract. Surface gate failures in Telegram notifications. Deps: `P34-010`.
-- [ ] `P34-012` Add gate chain editor in Web Control Center: add/remove/reorder gates, configure per gate, show live per-gate status during execution (pending / running / passed / failed). Deps: `P34-010`, `P34-011`.
-- [ ] `P34-013` Add regression/integration tests: VcsProvider routing, gate chain sequencing, each gate type independently, legacy migration, event emission, gate failure surfacing. Deps: `P34-004`, `P34-010`, `P34-011`, `P34-012`.
-- [ ] `P34-014` Create PR Task. Deps: `P34-013`.
+- [x] `P34-003a` Remove per-task `REMOTE_PUSH` and `PR_CREATION` side-effect contracts from `verifyTaskCompletionSideEffects`. These are orchestrator responsibilities (push/PR happen deterministically in `ci-integration.ts` after execution loop), not agent task side-effects. Updated tests to use `CI_TRIGGERED_UPDATE` contracts. Deps: `P34-003`.
+- [x] `P34-004` Add `vcsProvider` config to project settings (`github | local | null`, default `null`). Migrate `ciEnabled: true` → `vcsProvider: github` via Zod transform. Wire `VcsProvider` into `runCiIntegration` (replaces direct `GitManager`/`GitHubManager`/`PrivilegedGitActions` instantiation). Provider-aware: `NullProvider` skips push/PR, `LocalProvider` pushes but skips PR → DONE, `GitHubProvider` does full push/PR/CI flow. Added `createVcsProvider` factory. Deps: `P34-002`, `P34-003a`.
+- [x] `P34-005` Define `Gate` interface (`evaluate(context: GateContext): Promise<GateResult>`) and `GateChain` runner (`runGateChain`) that executes gates in sequence, stops at first failure, supports `onGateStart`/`onGateResult` callbacks. `GateContext` carries phase, VCS provider type, branch info, PR details. `GateResult` includes `passed`, `diagnostics`, `retryable`. 8 tests. Deps: none.
+- [x] `P34-006` Implement `CommandGate`: run a configurable shell command; pass if exit code is 0; capture stdout/stderr for diagnostics. Retryable on exceptions. 8 tests. Deps: `P34-005`.
+- [x] `P34-007` Implement `CoverageGate`: parse lcov/JSON/Cobertura coverage reports, enforce configurable `minPct` threshold, auto-detect format. 9 tests. Deps: `P34-005`.
+- [x] `P34-008` Implement `AiEvalGate`: send `git diff` + user-defined rubric to adapter CLI, scan response for configurable pass/fail keywords (case-insensitive), retry up to `maxRetries` on fail verdict. 12 tests. Deps: `P34-005`.
+- [x] `P34-009` Implement `PrCiGate`: polls CI via `VcsProvider.pollChecks()`, configurable interval/timeout/confirmations, includes check details + URLs in diagnostics. 8 tests. Deps: `P34-005`, `P34-004`.
+- [x] `P34-010` Replace `ciEnabled` code path in `PhaseRunner` with `GateChain` execution. Auto-migrate legacy config: `ciEnabled: true` → `gates: [pr_ci]`, `ciEnabled: false` → `gates: []`. Added `GateConfigSchema` discriminated union, `gates` field to `ExecutionLoopSettingsSchema` with Zod transforms for backward compat, `createGatesFromConfig` factory, `runPostIntegrationGateChain` in PhaseRunner. All 1134 tests pass. Deps: `P34-006`..`P34-009`.
+- [x] `P34-011` Emit typed gate events (`gate.activity` with stages `start`, `pass`, `fail`, `retry`) through the unified runtime event contract. Added `GateActivityEventSchema` to `runtime-events.ts`, CLI/Telegram formatters, notification level rules (fail at critical, start suppressed at important), dedup keys. Wired into PhaseRunner `runPostIntegrationGateChain` via async callbacks. Updated `runGateChain` to support async callbacks with gate index. 3 new tests. Deps: `P34-010`.
+- [x] `P34-012` Add gate chain editor in Web Control Center: add/remove/reorder gates, configure per gate type (command, coverage, ai_eval, pr_ci), save via `PATCH /api/settings` with `executionLoop.gates`. Dynamic form fields per gate type, up/down reorder, remove. Live gate status shown via phase status polling. Deps: `P34-010`, `P34-011`.
+- [x] `P34-013` Regression tests in `src/engine/p34-013-regression.test.ts` (32 tests across 7 groups): VcsProvider routing (3), gate factory (3), legacy config migration (5), GateConfig schema validation (5), gate chain sequencing (5), gate event emission (4), gate failure notification surfacing (4). Deps: `P34-004`, `P34-010`, `P34-011`, `P34-012`.
 
 ### Phase 35: Race Mode — Multi-Try Task Execution with AI Judge
 
@@ -168,7 +168,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [ ] `P35-005` Emit race events (`race:start`, `race:branch`, `race:judge`, `race:pick`) through the unified runtime event contract. Deps: `P35-004`.
 - [ ] `P35-006` Expose race config in Web Control Center: set `race` count per task or as phase default, view per-branch status live, display judge reasoning before pick is applied. Deps: `P35-004`, `P35-005`.
 - [ ] `P35-007` Add regression/integration tests: worktree fan-out, judge prompt construction and verdict parsing, winner merge + loser pruning, fallback to single execution, race events. Deps: `P35-004`, `P35-005`, `P35-006`.
-- [ ] `P35-008` Create PR Task. Deps: `P35-007`.
+- [ ] `P35-008` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P35-007`.
 
 ### Phase 36: Phase Execution DAG
 
@@ -179,4 +179,4 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [ ] `P36-005` Highlight the critical path (longest chain of dependent nodes) in the DAG view to surface bottlenecks. Deps: `P36-004`.
 - [ ] `P36-006` Include gate outcomes (from Phase 34) and race branch selection (from Phase 35) as first-class node types in the DAG renderer. Deps: `P36-004`.
 - [ ] `P36-007` Add regression/integration tests: trace recording for each node type, persistence across restarts, DAG rendering data correctness, critical path calculation. Deps: `P36-002`..`P36-006`.
-- [ ] `P36-008` Create PR Task. Deps: `P36-007`.
+- [ ] `P36-008` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P36-007`.

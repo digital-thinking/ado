@@ -461,8 +461,8 @@ describe("P26-017/P26-016: GitHub capability preflight parity diagnostics", () =
     const phaseId = created.phases[0].id;
     const withTask = await service.createTask({
       phaseId,
-      title: "Create PR Task",
-      description: "Open pull request for phase",
+      title: "Trigger CI status updates",
+      description: "Apply CI-triggered updates for phase",
       assignee: "CODEX_CLI",
     });
     const taskId = withTask.phases[0].tasks[0].id;

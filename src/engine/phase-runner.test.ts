@@ -23,6 +23,8 @@ describe("PhaseRunner", () => {
     testerTimeoutMs: 1000,
     maxTaskRetries: 3,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -775,6 +777,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         testerCommand: null,
         testerArgs: null,
         ciPullRequest: {
@@ -1065,6 +1068,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         testerCommand: null,
         testerArgs: null,
       },
@@ -1244,6 +1248,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         testerCommand: null,
         testerArgs: null,
       },
@@ -2622,6 +2627,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         activeAssignee: "CODEX_CLI",
         enabledAdapters: ["CODEX_CLI", "CLAUDE_CLI"],
         adapterCircuitBreakers: {
@@ -2895,6 +2901,8 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -3238,6 +3246,8 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -3689,6 +3699,8 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -3902,6 +3914,8 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -4281,6 +4295,8 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,

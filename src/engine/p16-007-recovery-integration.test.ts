@@ -42,6 +42,8 @@ const BASE_CONFIG: PhaseRunnerConfig = {
   testerArgs: ["test"],
   testerTimeoutMs: 1000,
   ciEnabled: false,
+  vcsProvider: "null" as const,
+  gates: [],
   ciBaseBranch: "main",
   ciPullRequest: {
     defaultTemplatePath: null,
