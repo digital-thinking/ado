@@ -167,7 +167,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 - [x] `P35-004` Wire `RaceOrchestrator` into `PhaseRunner`: when `race > 1`, fan out to N branches; after all complete, run judge; merge/cherry-pick winner; prune loser worktrees. Fall back to single execution when `race` is unset or 1. Deps: `P35-002`, `P35-003`.
 - [x] `P35-005` Emit race events (`race:start`, `race:branch`, `race:judge`, `race:pick`) through the unified runtime event contract. Deps: `P35-004`.
 - [ ] `P35-006` Expose race config in Web Control Center: set `race` count per task or as phase default, view per-branch status live, display judge reasoning before pick is applied. Deps: `P35-004`, `P35-005`.
-- [ ] `P35-007` Add regression/integration tests: worktree fan-out, judge prompt construction and verdict parsing, winner merge + loser pruning, fallback to single execution, race events. Deps: `P35-004`, `P35-005`, `P35-006`.
+- [x] `P35-007` Add regression/integration tests: worktree fan-out, judge prompt construction and verdict parsing, winner merge + loser pruning, fallback to single execution, race events. Deps: `P35-004`, `P35-005`, `P35-006`.
 - [ ] `P35-008` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P35-007`.
 
 ### Phase 36: Phase Execution DAG

@@ -173,9 +173,9 @@ export function parseRaceJudgeVerdict(
     .slice(verdictMatch.index + verdictMatch[0].length)
     .trim();
   const reasoning = [inlineReasoning, trailingReasoning]
+    .map((value) => value.replace(/^Reasoning:\s*/i, "").trim())
     .filter((value) => value.length > 0)
     .join("\n")
-    .replace(/^Reasoning:\s*/i, "")
     .trim();
 
   if (!reasoning) {

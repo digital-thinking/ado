@@ -44,6 +44,36 @@ describe("race judge", () => {
     expect(prompt).toContain("(empty)");
   });
 
+  test("rejects duplicate candidate indexes in the judge prompt input", () => {
+    expect(() =>
+      buildRaceJudgePrompt({
+        projectName: "ado",
+        rootDir: "/repo",
+        phaseName: "Phase 35",
+        taskTitle: "Implement judge prompt",
+        taskDescription: "Compare race candidates and select one winner.",
+        branches: [
+          {
+            index: 1,
+            branchName: "phase-35-race-task-1",
+            status: "fulfilled",
+            diff: "",
+            stdout: "",
+            stderr: "",
+          },
+          {
+            index: 1,
+            branchName: "phase-35-race-task-2",
+            status: "fulfilled",
+            diff: "",
+            stdout: "",
+            stderr: "",
+          },
+        ],
+      }),
+    ).toThrow("duplicate index 1");
+  });
+
   test("parses PICK verdict and trailing reasoning", () => {
     const verdict = parseRaceJudgeVerdict(
       "PICK 2\nReasoning: Candidate 2 is smaller and keeps the existing contract intact.",
@@ -66,6 +96,18 @@ describe("race judge", () => {
     expect(verdict).toEqual({
       pickedBranchIndex: 1,
       reasoning: "Best diff and clean output",
+    });
+  });
+
+  test("combines inline and trailing reasoning while stripping labels", () => {
+    const verdict = parseRaceJudgeVerdict(
+      "Notes\npick 2 - Smaller diff\nReasoning: Keeps the existing contract intact.",
+      2,
+    );
+
+    expect(verdict).toEqual({
+      pickedBranchIndex: 2,
+      reasoning: "Smaller diff\nKeeps the existing contract intact.",
     });
   });
 

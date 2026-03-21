@@ -63,6 +63,36 @@ describe("RaceOrchestrator", () => {
     ]);
   });
 
+  test("fans out all race branches from the explicit source ref", async () => {
+    const fake = createFakeWorktreeManager();
+    const orchestrator = new RaceOrchestrator(fake.api);
+
+    const branches = await orchestrator.provisionBranches({
+      phaseId: "phase-35",
+      taskId: "task-321",
+      raceCount: 2,
+      baseBranchName: "phase-35-branch",
+      fromRef: "origin/main",
+    });
+
+    expect(fake.provisionCalls).toEqual([
+      {
+        phaseId: "phase-35/race-task-321-1",
+        branchName: "phase-35-branch-race-task-321-1",
+        fromRef: "origin/main",
+      },
+      {
+        phaseId: "phase-35/race-task-321-2",
+        branchName: "phase-35-branch-race-task-321-2",
+        fromRef: "origin/main",
+      },
+    ]);
+    expect(branches.map((branch) => branch.fromRef)).toEqual([
+      "origin/main",
+      "origin/main",
+    ]);
+  });
+
   test("dispatches every branch and collects fulfilled results", async () => {
     const fake = createFakeWorktreeManager();
     const orchestrator = new RaceOrchestrator(fake.api);
