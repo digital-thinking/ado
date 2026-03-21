@@ -387,6 +387,177 @@ describe("runtime event contract", () => {
     );
   });
 
+  test("creates and formats gate activity events", () => {
+    const startEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "start",
+        gateName: "command",
+        gateIndex: 0,
+        totalGates: 3,
+        summary: 'Starting gate "command" (1/3).',
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-34",
+        phaseName: "Phase 34",
+      },
+    });
+
+    const failEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "fail",
+        gateName: "coverage",
+        gateIndex: 1,
+        totalGates: 3,
+        summary: 'Gate "coverage" failed (2/3): Coverage 72% < 80% threshold.',
+        diagnostics: "Coverage 72% < 80% threshold.",
+        retryable: false,
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-34",
+        phaseName: "Phase 34",
+      },
+    });
+
+    const passEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "pass",
+        gateName: "pr_ci",
+        gateIndex: 2,
+        totalGates: 3,
+        summary: 'Gate "pr_ci" passed (3/3).',
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-34",
+        phaseName: "Phase 34",
+      },
+    });
+
+    expect(startEvent.family).toBe("gate-lifecycle");
+    expect(startEvent.type).toBe("gate.activity");
+
+    expect(formatRuntimeEventForCli(startEvent)).toBe(
+      'Starting gate "command" (1/3).',
+    );
+    expect(formatRuntimeEventForTelegram(startEvent)).toBe(
+      'Gate: Starting gate "command" (1/3).',
+    );
+    expect(formatRuntimeEventForCli(failEvent)).toContain("coverage");
+    expect(formatRuntimeEventForTelegram(failEvent)).toContain("Gate:");
+    expect(formatRuntimeEventForCli(passEvent)).toContain("pr_ci");
+  });
+
+  test("applies Telegram notification levels to gate events", () => {
+    const startEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "start",
+        gateName: "command",
+        gateIndex: 0,
+        totalGates: 2,
+        summary: 'Starting gate "command" (1/2).',
+      },
+      context: { source: "PHASE_RUNNER" },
+    });
+
+    const failEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "fail",
+        gateName: "coverage",
+        gateIndex: 1,
+        totalGates: 2,
+        summary: 'Gate "coverage" failed (2/2).',
+        diagnostics: "Coverage too low.",
+        retryable: false,
+      },
+      context: { source: "PHASE_RUNNER" },
+    });
+
+    const passEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "pass",
+        gateName: "command",
+        gateIndex: 0,
+        totalGates: 2,
+        summary: 'Gate "command" passed (1/2).',
+      },
+      context: { source: "PHASE_RUNNER" },
+    });
+
+    // "all" level: everything
+    expect(shouldNotifyRuntimeEventForTelegram(startEvent, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(failEvent, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(passEvent, "all")).toBe(true);
+
+    // "important" level: pass and fail but not start
+    expect(shouldNotifyRuntimeEventForTelegram(startEvent, "important")).toBe(
+      false,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(failEvent, "important")).toBe(
+      true,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(passEvent, "important")).toBe(
+      true,
+    );
+
+    // "critical" level: only fail
+    expect(shouldNotifyRuntimeEventForTelegram(startEvent, "critical")).toBe(
+      false,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(failEvent, "critical")).toBe(
+      true,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(passEvent, "critical")).toBe(
+      false,
+    );
+  });
+
+  test("generates unique notification keys for gate events", () => {
+    const event1 = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "start",
+        gateName: "command",
+        gateIndex: 0,
+        totalGates: 2,
+        summary: 'Starting gate "command" (1/2).',
+      },
+      context: { source: "PHASE_RUNNER", phaseId: "phase-34" },
+    });
+
+    const event2 = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
+      payload: {
+        stage: "pass",
+        gateName: "command",
+        gateIndex: 0,
+        totalGates: 2,
+        summary: 'Gate "command" passed (1/2).',
+      },
+      context: { source: "PHASE_RUNNER", phaseId: "phase-34" },
+    });
+
+    const key1 = createRuntimeEventNotificationKey(event1);
+    const key2 = createRuntimeEventNotificationKey(event2);
+    expect(key1).toContain("gate.activity");
+    expect(key1).not.toBe(key2); // different stages
+  });
+
   test("suppresses duplicate Telegram notifications when configured", () => {
     const event = createRuntimeEvent({
       family: "tester-recovery",

@@ -13,6 +13,8 @@ describe("PhaseRunner CI_FIX guardrails", () => {
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
     ciEnabled: true,
+    vcsProvider: "github" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -146,7 +148,7 @@ describe("PhaseRunner CI_FIX guardrails", () => {
 
     const runner = new PhaseRunner(
       mockControl as any,
-      { ...baseConfig, ciEnabled: false },
+      { ...baseConfig, ciEnabled: false, vcsProvider: "null" as const },
       undefined,
       undefined,
       mockRunner as any,

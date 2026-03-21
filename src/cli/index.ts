@@ -1725,6 +1725,8 @@ async function runPhaseRunCommand({
       maxTaskRetries: projectExecutionSettings.maxTaskRetries,
       phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
       ciEnabled: settings.executionLoop.ciEnabled,
+      vcsProvider: settings.executionLoop.vcsProvider,
+      gates: settings.executionLoop.gates,
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
       ciPullRequest: settings.executionLoop.pullRequest,
       validationMaxRetries: settings.executionLoop.validationMaxRetries,

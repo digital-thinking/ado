@@ -62,6 +62,8 @@ const DEFAULT_LOOP_SETTINGS = {
   testerArgs: null,
   testerTimeoutMs: 600000,
   ciEnabled: false,
+  vcsProvider: "null" as const,
+  gates: [],
   ciBaseBranch: "main",
   validationMaxRetries: 3,
   ciFixMaxFanOut: 10,

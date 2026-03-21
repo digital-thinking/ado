@@ -482,6 +482,26 @@ export function controlCenterHtml(params: {
         </div>
         <div id="adaptersSettingsError" class="error"></div>
       </section>
+
+      <section class="card wide" style="margin-top: 16px;">
+        <h2>Completion Gates</h2>
+        <div class="small">Post-execution gates run in sequence after CI integration. Each gate must pass before the phase is marked ready for review.</div>
+        <div id="gatesList" style="margin-top: 12px;"></div>
+        <div class="row" style="margin-top: 12px; gap: 8px;">
+          <select id="addGateType" style="width: auto;">
+            <option value="command">Command</option>
+            <option value="coverage">Coverage</option>
+            <option value="ai_eval">AI Eval</option>
+            <option value="pr_ci">PR CI</option>
+          </select>
+          <button id="addGateButton" type="button" class="secondary">+ Add Gate</button>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <button id="saveGatesButton">Save Gates</button>
+          <div id="gatesSettingsStatus" class="small"></div>
+        </div>
+        <div id="gatesSettingsError" class="error"></div>
+      </section>
     </div>
 
     <section class="card wide">
@@ -774,9 +794,137 @@ export function controlCenterHtml(params: {
           \`;
           adaptersList.appendChild(div);
         });
+
+        // Completion Gates
+        renderGatesList(settings.executionLoop?.gates || []);
       } catch (error) {
         console.error("Failed to refresh settings:", error);
       }
+    }
+
+    let currentGates = [];
+
+    function renderGatesList(gates) {
+      currentGates = JSON.parse(JSON.stringify(gates));
+      const container = document.getElementById("gatesList");
+      container.innerHTML = "";
+      if (currentGates.length === 0) {
+        container.innerHTML = '<div class="small muted">No gates configured.</div>';
+        return;
+      }
+      currentGates.forEach((gate, index) => {
+        const div = document.createElement("div");
+        div.className = "card";
+        div.style.cssText = "margin-bottom: 8px; padding: 12px;";
+        div.innerHTML = renderGateFields(gate, index);
+        container.appendChild(div);
+      });
+    }
+
+    function renderGateFields(gate, index) {
+      const moveUp = index > 0 ? \`<button type="button" class="secondary small" onclick="moveGate(\${index}, -1)">↑</button>\` : "";
+      const moveDown = index < currentGates.length - 1 ? \`<button type="button" class="secondary small" onclick="moveGate(\${index}, 1)">↓</button>\` : "";
+      const header = \`<div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+        <strong class="mono">#\${index + 1} \${gate.type}</strong>
+        <div class="row" style="gap: 4px;">\${moveUp}\${moveDown}<button type="button" class="secondary small" onclick="removeGate(\${index})">Remove</button></div>
+      </div>\`;
+
+      let fields = "";
+      switch (gate.type) {
+        case "command":
+          fields = \`
+            <label class="small">Command</label>
+            <input class="gate-field" data-index="\${index}" data-key="command" value="\${escAttr(gate.command || "")}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Args (comma-separated)</label>
+            <input class="gate-field" data-index="\${index}" data-key="args" value="\${escAttr((gate.args || []).join(", "))}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Timeout (ms)</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="timeoutMs" value="\${gate.timeoutMs || ""}" style="width:100%;">
+          \`;
+          break;
+        case "coverage":
+          fields = \`
+            <label class="small">Report Path</label>
+            <input class="gate-field" data-index="\${index}" data-key="reportPath" value="\${escAttr(gate.reportPath || "")}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Min Coverage %</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="minPct" value="\${gate.minPct ?? ""}" min="0" max="100" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Format</label>
+            <select class="gate-field" data-index="\${index}" data-key="format" style="width:100%;">
+              <option value="">Auto-detect</option>
+              <option value="lcov" \${gate.format === "lcov" ? "selected" : ""}>lcov</option>
+              <option value="json" \${gate.format === "json" ? "selected" : ""}>JSON</option>
+              <option value="cobertura" \${gate.format === "cobertura" ? "selected" : ""}>Cobertura</option>
+            </select>
+          \`;
+          break;
+        case "ai_eval":
+          fields = \`
+            <label class="small">Command</label>
+            <input class="gate-field" data-index="\${index}" data-key="command" value="\${escAttr(gate.command || "")}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Args (comma-separated)</label>
+            <input class="gate-field" data-index="\${index}" data-key="args" value="\${escAttr((gate.args || []).join(", "))}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Rubric</label>
+            <textarea class="gate-field" data-index="\${index}" data-key="rubric" rows="3" style="width:100%;">\${escAttr(gate.rubric || "")}</textarea>
+            <label class="small" style="margin-top:6px; display:block;">Pass Keywords (comma-separated)</label>
+            <input class="gate-field" data-index="\${index}" data-key="passKeywords" value="\${escAttr((gate.passKeywords || []).join(", "))}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Fail Keywords (comma-separated)</label>
+            <input class="gate-field" data-index="\${index}" data-key="failKeywords" value="\${escAttr((gate.failKeywords || []).join(", "))}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Max Retries</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="maxRetries" value="\${gate.maxRetries ?? ""}" min="0" max="10" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Timeout (ms)</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="timeoutMs" value="\${gate.timeoutMs || ""}" style="width:100%;">
+          \`;
+          break;
+        case "pr_ci":
+          fields = \`
+            <label class="small">Poll Interval (ms)</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="intervalMs" value="\${gate.intervalMs || ""}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Timeout (ms)</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="timeoutMs" value="\${gate.timeoutMs || ""}" style="width:100%;">
+            <label class="small" style="margin-top:6px; display:block;">Terminal Confirmations</label>
+            <input type="number" class="gate-field" data-index="\${index}" data-key="terminalConfirmations" value="\${gate.terminalConfirmations ?? ""}" min="1" max="10" style="width:100%;">
+          \`;
+          break;
+      }
+      return header + fields;
+    }
+
+    function escAttr(str) {
+      return String(str).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    window.moveGate = function(index, direction) {
+      const target = index + direction;
+      if (target < 0 || target >= currentGates.length) return;
+      collectGateFieldValues();
+      const temp = currentGates[index];
+      currentGates[index] = currentGates[target];
+      currentGates[target] = temp;
+      renderGatesList(currentGates);
+    };
+
+    window.removeGate = function(index) {
+      collectGateFieldValues();
+      currentGates.splice(index, 1);
+      renderGatesList(currentGates);
+    };
+
+    function collectGateFieldValues() {
+      document.querySelectorAll(".gate-field").forEach(input => {
+        const idx = parseInt(input.getAttribute("data-index"), 10);
+        const key = input.getAttribute("data-key");
+        const gate = currentGates[idx];
+        if (!gate) return;
+        const val = input.value.trim();
+        if (key === "args" || key === "passKeywords" || key === "failKeywords") {
+          gate[key] = val ? val.split(",").map(s => s.trim()).filter(Boolean) : undefined;
+        } else if (key === "timeoutMs" || key === "intervalMs" || key === "minPct" || key === "maxRetries" || key === "terminalConfirmations") {
+          gate[key] = val ? Number(val) : undefined;
+        } else if (key === "format") {
+          gate[key] = val || undefined;
+        } else {
+          gate[key] = val;
+        }
+      });
     }
 
     async function refreshProjects() {
@@ -2050,6 +2198,44 @@ export function controlCenterHtml(params: {
         await api("/api/settings", {
           method: "PATCH",
           body: JSON.stringify({ agents })
+        });
+        status.textContent = "Saved.";
+      } catch (err) {
+        status.textContent = "";
+        error.textContent = err.message;
+      }
+    });
+
+    document.getElementById("addGateButton").addEventListener("click", () => {
+      collectGateFieldValues();
+      const type = document.getElementById("addGateType").value;
+      const defaults = { type };
+      if (type === "command") { defaults.command = ""; }
+      if (type === "coverage") { defaults.reportPath = ""; defaults.minPct = 80; }
+      if (type === "ai_eval") { defaults.command = ""; defaults.rubric = ""; }
+      currentGates.push(defaults);
+      renderGatesList(currentGates);
+    });
+
+    document.getElementById("saveGatesButton").addEventListener("click", async () => {
+      const status = document.getElementById("gatesSettingsStatus");
+      const error = document.getElementById("gatesSettingsError");
+      status.textContent = "Saving...";
+      error.textContent = "";
+      try {
+        collectGateFieldValues();
+        const cleanGates = currentGates.map(g => {
+          const clean = { type: g.type };
+          for (const [k, v] of Object.entries(g)) {
+            if (v !== undefined && v !== "" && k !== "type") {
+              clean[k] = v;
+            }
+          }
+          return clean;
+        });
+        await api("/api/settings", {
+          method: "PATCH",
+          body: JSON.stringify({ executionLoop: { gates: cleanGates } })
         });
         status.textContent = "Saved.";
       } catch (err) {

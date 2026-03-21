@@ -226,6 +226,20 @@ export const CiActivityEventSchema = RuntimeEventBaseSchema.extend({
   }),
 });
 
+export const GateActivityEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("gate-lifecycle"),
+  type: z.literal("gate.activity"),
+  payload: z.object({
+    stage: z.enum(["start", "pass", "fail", "retry"]),
+    gateName: z.string().min(1),
+    gateIndex: z.number().int().min(0),
+    totalGates: z.number().int().positive(),
+    summary: z.string().min(1),
+    diagnostics: z.string().optional(),
+    retryable: z.boolean().optional(),
+  }),
+});
+
 export const TerminalOutcomeEventSchema = RuntimeEventBaseSchema.extend({
   family: z.literal("terminal-outcome"),
   type: z.literal("terminal.outcome"),
@@ -250,6 +264,7 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   RecoveryActivityEventSchema,
   PrActivityEventSchema,
   CiActivityEventSchema,
+  GateActivityEventSchema,
   TerminalOutcomeEventSchema,
 ]);
 export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
@@ -348,6 +363,8 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
       return `PR: ${event.payload.summary}`;
     case "ci.activity":
       return `CI: ${event.payload.summary}`;
+    case "gate.activity":
+      return `Gate: ${event.payload.summary}`;
     case "terminal.outcome":
       return `Outcome: ${event.payload.summary}`;
     case "adapter.output":
@@ -373,6 +390,8 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
       return event.payload.summary;
     case "tester.activity":
     case "recovery.activity":
+      return event.payload.summary;
+    case "gate.activity":
       return event.payload.summary;
     case "terminal.outcome":
       return event.payload.summary;
@@ -420,6 +439,9 @@ export function shouldNotifyRuntimeEventForTelegram(
     ) {
       return false;
     }
+    if (event.type === "gate.activity" && event.payload.stage === "start") {
+      return false;
+    }
     if (event.type === "adapter.output") {
       return false;
     }
@@ -459,6 +481,8 @@ export function shouldNotifyRuntimeEventForTelegram(
         event.payload.stage === "succeeded" ||
         event.payload.stage === "validation-max-retries"
       );
+    case "gate.activity":
+      return event.payload.stage === "fail";
     case "adapter.circuit":
       return true;
     default:
@@ -567,6 +591,14 @@ export function createRuntimeEventNotificationKey(event: RuntimeEvent): string {
         event.agentId ?? "",
         event.payload.stream,
         event.payload.line,
+      ].join("|");
+    case "gate.activity":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.payload.stage,
+        event.payload.gateName,
+        event.payload.gateIndex,
       ].join("|");
     case "adapter.circuit":
       return [

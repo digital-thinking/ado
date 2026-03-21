@@ -25,6 +25,8 @@ function createBaseConfig(): PhaseRunnerConfig {
     testerTimeoutMs: 1_000,
     maxTaskRetries: 3,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,

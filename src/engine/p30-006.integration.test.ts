@@ -20,6 +20,8 @@ function createBaseConfig(): PhaseRunnerConfig {
     testerArgs: null,
     testerTimeoutMs: 1_000,
     ciEnabled: true,
+    vcsProvider: "github" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,

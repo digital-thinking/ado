@@ -1,17 +1,21 @@
 import type { ProcessRunner } from "../process";
 import { MissingCommitError } from "../errors";
 import type { AuthPolicy, Role } from "../security/policy";
-import type { PullRequestAutomationSettings, Task } from "../types";
+import type {
+  PullRequestAutomationSettings,
+  Task,
+  VcsProviderType,
+} from "../types";
 import {
   OrchestrationAuthorizationDeniedError,
   authorizeOrchestratorAction,
 } from "../security/orchestration-authorizer";
 import { ORCHESTRATOR_ACTIONS } from "../security/workflow-profiles";
 import {
-  GitHubManager,
   GitManager,
-  PrivilegedGitActions,
   type CommitTrailers,
+  type VcsProvider,
+  UnsupportedVcsProviderOperationError,
 } from "../vcs";
 import { parseDeliberationSummaryFromResultContext } from "./deliberation-summary";
 
@@ -23,6 +27,8 @@ export type RunCiIntegrationInput = {
   baseBranch: string;
   pullRequest: PullRequestAutomationSettings;
   runner: ProcessRunner;
+  vcsProvider: VcsProvider;
+  vcsProviderType: VcsProviderType;
   role: Role | null;
   policy: AuthPolicy;
   commitTrailers: CommitTrailers;
@@ -33,7 +39,7 @@ export type RunCiIntegrationResult = {
   phaseId: string;
   headBranch: string;
   baseBranch: string;
-  prUrl: string;
+  prUrl: string | undefined;
 };
 
 function escapeMarkdownTableCell(value: string): string {
@@ -166,14 +172,8 @@ export async function runCiIntegration(
   }
 
   const git = new GitManager(input.runner);
-  const github = new GitHubManager(input.runner);
-  const privileged = new PrivilegedGitActions({
-    git,
-    github,
-    role: input.role,
-    policy: input.policy,
-  });
 
+  // Stage and commit any remaining changes (local git, provider-independent)
   await git.stageAll(input.cwd);
   const hasChangesToCommit = await git.hasStagedChanges(input.cwd);
   if (hasChangesToCommit) {
@@ -192,31 +192,46 @@ export async function runCiIntegration(
   }
 
   const headBranch = await git.getCurrentBranch(input.cwd);
+  let prUrl: string | undefined;
 
-  await privileged.pushBranch({
+  // Push branch through VcsProvider (real push for github/local; NullProvider never reaches here)
+  await input.vcsProvider.pushBranch({
     branchName: headBranch,
     cwd: input.cwd,
     setUpstream: true,
   });
 
-  const metadata = derivePullRequestMetadata(input.phaseName, input.tasks);
+  // Open PR through VcsProvider (skipped for local/null providers)
+  if (input.vcsProviderType === "github") {
+    const metadata = derivePullRequestMetadata(input.phaseName, input.tasks);
 
-  const prUrl = await privileged.createPullRequest({
-    base: baseBranch,
-    head: headBranch,
-    title: metadata.title,
-    body: metadata.body,
-    templatePath: resolveTemplatePath(input.pullRequest, headBranch),
-    labels: input.pullRequest.labels,
-    assignees: input.pullRequest.assignees,
-    draft: input.pullRequest.createAsDraft,
-    cwd: input.cwd,
-  });
+    try {
+      prUrl = await input.vcsProvider.openPr({
+        base: baseBranch,
+        head: headBranch,
+        title: metadata.title,
+        body: metadata.body,
+        templatePath: resolveTemplatePath(input.pullRequest, headBranch),
+        labels: input.pullRequest.labels,
+        assignees: input.pullRequest.assignees,
+        draft: input.pullRequest.createAsDraft,
+        cwd: input.cwd,
+      });
 
-  await input.setPhasePrUrl({
-    phaseId: input.phaseId,
-    prUrl,
-  });
+      await input.setPhasePrUrl({
+        phaseId: input.phaseId,
+        prUrl,
+      });
+    } catch (error) {
+      if (error instanceof UnsupportedVcsProviderOperationError) {
+        console.info(
+          `VCS provider does not support PR creation: ${error.message}`,
+        );
+      } else {
+        throw error;
+      }
+    }
+  }
 
   return {
     phaseId: input.phaseId,

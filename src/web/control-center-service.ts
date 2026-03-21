@@ -48,7 +48,6 @@ import {
   type TaskRoutingReason,
   type WorkerAssignee,
 } from "../types";
-import { parsePullRequestNumberFromUrl } from "../vcs";
 
 const DEFAULT_TASKS_MARKDOWN_PATH = "TASKS.md";
 const TASKS_IMPORT_TIMEOUT_MS = 180_000;
@@ -424,28 +423,14 @@ function resolvePhaseIdForReference(
   throw new Error(`Phase not found: ${phaseReference}`);
 }
 
+// PR_CREATION and REMOTE_PUSH contracts still exist in the schema and
+// worker-prompts for backward compatibility, but are no longer auto-detected
+// from task descriptions here — these operations are now orchestrator
+// responsibilities handled deterministically in ci-integration.ts.
 const SIDE_EFFECT_CONTRACT_PATTERNS: ReadonlyArray<{
   contract: SideEffectContract;
   patterns: ReadonlyArray<RegExp>;
 }> = [
-  {
-    contract: "PR_CREATION",
-    patterns: [
-      /\bcreate pr task\b/i,
-      /\bcreate pull request\b/i,
-      /\bopen pr\b/i,
-      /\bpull request\b/i,
-    ],
-  },
-  {
-    contract: "REMOTE_PUSH",
-    patterns: [
-      /\bremote push\b/i,
-      /\bpush branch\b/i,
-      /\bpush to origin\b/i,
-      /\bpush changes\b/i,
-    ],
-  },
   {
     contract: "CI_TRIGGERED_UPDATE",
     patterns: [
@@ -458,8 +443,6 @@ const SIDE_EFFECT_CONTRACT_PATTERNS: ReadonlyArray<{
 ];
 
 const GITHUB_BOUND_SIDE_EFFECT_CONTRACTS: readonly SideEffectContract[] = [
-  "PR_CREATION",
-  "REMOTE_PUSH",
   "CI_TRIGGERED_UPDATE",
 ];
 
@@ -1740,40 +1723,6 @@ export class ControlCenterService {
     };
   }
 
-  /** Extract the first GitHub PR URL from task output and persist it as phase.prUrl. */
-  private async maybeCapturePrUrlFromOutput(input: {
-    phaseId: string;
-    taskId: string;
-    output: string;
-    projectName?: string;
-  }): Promise<void> {
-    const engine = await this.getEngine(input.projectName);
-    const state = await engine.readProjectState();
-    const phase = state.phases.find((p) => p.id === input.phaseId);
-    if (!phase || phase.prUrl?.trim()) return; // already set
-
-    const task = phase.tasks.find((t) => t.id === input.taskId);
-    if (!task) return;
-
-    const contracts = resolveTaskCompletionSideEffectContracts(task);
-    if (!contracts.includes("PR_CREATION")) return;
-
-    const match = input.output.match(
-      /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/,
-    );
-    if (!match) return;
-
-    try {
-      await this.setPhasePrUrl({
-        phaseId: input.phaseId,
-        prUrl: match[0],
-        projectName: input.projectName,
-      });
-    } catch {
-      // best-effort; verification will attempt its own gh probe as fallback
-    }
-  }
-
   private async verifyTaskCompletionSideEffects(input: {
     phaseId: string;
     taskId: string;
@@ -1804,155 +1753,6 @@ export class ControlCenterService {
 
     const probes: SideEffectProbeResult[] = [];
     const missingSideEffects: string[] = [];
-
-    if (contracts.includes("PR_CREATION")) {
-      let prUrl = phase.prUrl?.trim();
-      // If prUrl is not recorded yet, try to discover it from GitHub by branch name
-      if (!prUrl) {
-        try {
-          const ghProbe = await this.runCommandProbe(state.rootDir, "gh", [
-            "pr",
-            "list",
-            "--head",
-            phase.branchName,
-            "--json",
-            "url",
-            "--jq",
-            ".[0].url",
-          ]);
-          if (ghProbe.success && ghProbe.stdout.trim().startsWith("http")) {
-            prUrl = ghProbe.stdout.trim();
-            // Persist the discovered URL so subsequent checks and the CI loop can use it
-            const engine2 = await this.getEngine(input.projectName);
-            const state2 = await engine2.readProjectState();
-            const phaseIndex = state2.phases.findIndex(
-              (p) => p.id === phase.id,
-            );
-            if (phaseIndex >= 0) {
-              const nextPhases = [...state2.phases];
-              nextPhases[phaseIndex] = PhaseSchema.parse({
-                ...state2.phases[phaseIndex],
-                prUrl,
-              });
-              await engine2.writeProjectState({
-                ...state2,
-                phases: nextPhases,
-              });
-            }
-          }
-        } catch {
-          // gh lookup failed; fall through to missing-prUrl failure
-        }
-      }
-      if (!prUrl) {
-        probes.push({
-          name: "phase.prUrl",
-          success: false,
-          details:
-            "Missing phase PR URL and no open PR found for branch on GitHub.",
-        });
-        missingSideEffects.push(
-          "PR creation was not verified because phase.prUrl is missing.",
-        );
-      } else {
-        try {
-          parsePullRequestNumberFromUrl(prUrl);
-          probes.push({
-            name: "phase.prUrl",
-            success: true,
-            details: `PR URL present: ${prUrl}`,
-          });
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          probes.push({
-            name: "phase.prUrl",
-            success: false,
-            details: `Invalid PR URL: ${prUrl}`,
-          });
-          missingSideEffects.push(
-            `PR creation was not verified because phase.prUrl is invalid (${message}).`,
-          );
-        }
-      }
-    }
-
-    if (contracts.includes("REMOTE_PUSH")) {
-      const branchProbe = await this.runSideEffectProbe(state.rootDir, [
-        "branch",
-        "--show-current",
-      ]);
-      const branchName = branchProbe.stdout.trim();
-      if (!branchProbe.success || !branchName) {
-        probes.push({
-          name: "git branch --show-current",
-          success: false,
-          details: branchProbe.success
-            ? "Current branch is empty."
-            : branchProbe.details,
-        });
-        missingSideEffects.push(
-          "Remote push was not verified because current branch could not be resolved.",
-        );
-      } else {
-        probes.push({
-          name: "git branch --show-current",
-          success: true,
-          details: `Current branch: ${branchName}`,
-        });
-
-        const upstreamProbe = await this.runSideEffectProbe(state.rootDir, [
-          "for-each-ref",
-          "--format=%(upstream:short)",
-          `refs/heads/${branchName}`,
-        ]);
-        const upstream = upstreamProbe.stdout.trim();
-        if (!upstreamProbe.success || !upstream) {
-          probes.push({
-            name: "git upstream",
-            success: false,
-            details: upstreamProbe.success
-              ? "No upstream configured."
-              : upstreamProbe.details,
-          });
-          missingSideEffects.push(
-            `Remote push was not verified because branch "${branchName}" has no upstream tracking ref.`,
-          );
-        } else {
-          probes.push({
-            name: "git upstream",
-            success: true,
-            details: `Upstream: ${upstream}`,
-          });
-        }
-
-        const remoteHeadProbe = await this.runSideEffectProbe(state.rootDir, [
-          "ls-remote",
-          "--heads",
-          "origin",
-          branchName,
-        ]);
-        const hasRemoteHead = remoteHeadProbe.stdout.trim().length > 0;
-        if (!remoteHeadProbe.success || !hasRemoteHead) {
-          probes.push({
-            name: "git ls-remote",
-            success: false,
-            details: remoteHeadProbe.success
-              ? `Remote branch origin/${branchName} not found.`
-              : remoteHeadProbe.details,
-          });
-          missingSideEffects.push(
-            `Remote push was not verified because origin/${branchName} is missing.`,
-          );
-        } else {
-          probes.push({
-            name: "git ls-remote",
-            success: true,
-            details: `Remote branch origin/${branchName} exists.`,
-          });
-        }
-      }
-    }
 
     if (contracts.includes("CI_TRIGGERED_UPDATE")) {
       const hasSignal = hasCiTriggeredUpdateSignal(phase);
@@ -2039,16 +1839,6 @@ export class ControlCenterService {
       const combinedResult = [result.stdout.trim(), result.stderr.trim()]
         .filter((value) => value.length > 0)
         .join("\n\n");
-
-      // If the task has a PR_CREATION contract and the output contains a GitHub
-      // PR URL, persist it to phase.prUrl before verification runs so the
-      // verifier does not have to re-probe GitHub.
-      await this.maybeCapturePrUrlFromOutput({
-        phaseId: input.phaseId,
-        taskId: input.taskId,
-        output: combinedResult,
-        projectName: input.projectName,
-      });
 
       const completionVerification = await this.verifyTaskCompletionSideEffects(
         {

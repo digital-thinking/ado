@@ -16,6 +16,7 @@ import {
 } from "../security/orchestration-authorizer";
 import { ORCHESTRATOR_ACTIONS } from "../security/workflow-profiles";
 import { MockProcessRunner } from "../vcs/test-utils";
+import { GitHubProvider } from "../vcs";
 
 const TEST_CWD = process.cwd();
 
@@ -71,6 +72,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "admin",
         policy,
         setPhasePrUrl: async () => {},
@@ -87,6 +90,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner([{ stdout: "feature/p11-008\n" }]),
+        vcsProvider: new GitHubProvider(new MockProcessRunner()),
+        vcsProviderType: "github" as const,
         role: "admin",
         policy,
         setPhasePrUrl: async () => {},
@@ -117,6 +122,8 @@ describe("P11-008 integration coverage", () => {
       pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
       commitTrailers: DEFAULT_COMMIT_TRAILERS,
       runner,
+      vcsProvider: new GitHubProvider(runner),
+      vcsProviderType: "github" as const,
       role: "admin",
       policy: clonePolicy(DEFAULT_AUTH_POLICY),
       setPhasePrUrl: async ({ prUrl }) => {
@@ -171,6 +178,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "admin",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
         setPhasePrUrl: async () => {},
@@ -224,6 +233,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: null,
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
         setPhasePrUrl: async () => {},
@@ -283,6 +294,8 @@ describe("P11-008 integration coverage", () => {
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
           commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
+          vcsProvider: new GitHubProvider(runner),
+          vcsProviderType: "github" as const,
           role: "operator",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
           setPhasePrUrl: async () => {},
@@ -305,6 +318,8 @@ describe("P11-008 integration coverage", () => {
           pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
           commitTrailers: DEFAULT_COMMIT_TRAILERS,
           runner,
+          vcsProvider: new GitHubProvider(runner),
+          vcsProviderType: "github" as const,
           role: "viewer",
           policy: clonePolicy(DEFAULT_AUTH_POLICY),
           setPhasePrUrl: async () => {},
@@ -324,6 +339,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
+        vcsProvider: new GitHubProvider(new MockProcessRunner()),
+        vcsProviderType: "github" as const,
         role: "operator",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
         setPhasePrUrl: async () => {},
@@ -347,6 +364,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner: new MockProcessRunner(),
+        vcsProvider: new GitHubProvider(new MockProcessRunner()),
+        vcsProviderType: "github" as const,
         role: "viewer",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
         setPhasePrUrl: async () => {},
@@ -384,6 +403,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
         setPhasePrUrl: async () => {},
@@ -417,6 +438,8 @@ describe("P11-008 integration coverage", () => {
         pullRequest: DEFAULT_PULL_REQUEST_SETTINGS,
         commitTrailers: DEFAULT_COMMIT_TRAILERS,
         runner,
+        vcsProvider: new GitHubProvider(runner),
+        vcsProviderType: "github" as const,
         role: "owner",
         policy: clonePolicy(DEFAULT_AUTH_POLICY),
         setPhasePrUrl: async ({ prUrl }) => {

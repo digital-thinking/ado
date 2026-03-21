@@ -23,6 +23,8 @@ describe("PhaseRunner", () => {
     testerTimeoutMs: 1000,
     maxTaskRetries: 3,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -775,6 +777,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         testerCommand: null,
         testerArgs: null,
         ciPullRequest: {
@@ -1065,6 +1068,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         testerCommand: null,
         testerArgs: null,
       },
@@ -1244,6 +1248,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         testerCommand: null,
         testerArgs: null,
       },
@@ -2622,6 +2627,7 @@ describe("PhaseRunner", () => {
       {
         ...mockConfig,
         ciEnabled: true,
+        vcsProvider: "github" as const,
         activeAssignee: "CODEX_CLI",
         enabledAdapters: ["CODEX_CLI", "CLAUDE_CLI"],
         adapterCircuitBreakers: {
@@ -2895,6 +2901,8 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -3238,6 +3246,8 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -3689,6 +3699,8 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -3902,6 +3914,8 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -4281,6 +4295,8 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     testerArgs: null,
     testerTimeoutMs: 1000,
     ciEnabled: false,
+    vcsProvider: "null" as const,
+    gates: [],
     ciBaseBranch: "main",
     ciPullRequest: {
       defaultTemplatePath: null,
@@ -4533,5 +4549,120 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     expect(error).toBeInstanceOf(PhasePreflightError);
     // Must contain the actionable checkout instruction
     expect((error as PhasePreflightError).message).toMatch(/git checkout main/);
+  });
+
+  test("fetches and fast-forwards base branch before creating a new phase branch", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [],
+        },
+      ],
+    };
+
+    const gitCalls: string[][] = [];
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        gitCalls.push(input.args);
+        if (
+          input.args.includes("rev-parse") &&
+          input.args.includes("--verify")
+        ) {
+          throw new Error("unknown revision or path");
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "main", stderr: "" };
+        }
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("checkout") && !input.args.includes("-b")) {
+          throw new Error("pathspec 'feat/phase-1' did not match");
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const pr = new PhaseRunner(
+      makeMockControl(state),
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await pr.run();
+
+    const fetchCall = gitCalls.find(
+      (args) => args[0] === "fetch" && args.includes("main"),
+    );
+    expect(fetchCall).toBeDefined();
+
+    const pullCall = gitCalls.find(
+      (args) => args[0] === "pull" && args.includes("--ff-only"),
+    );
+    expect(pullCall).toBeDefined();
+  });
+
+  test("proceeds gracefully when fetch fails (e.g. offline)", async () => {
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 1",
+          branchName: "feat/phase-1",
+          status: "PLANNING",
+          tasks: [],
+        },
+      ],
+    };
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (
+          input.args.includes("rev-parse") &&
+          input.args.includes("--verify")
+        ) {
+          throw new Error("unknown revision or path");
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "main", stderr: "" };
+        }
+        if (input.args[0] === "fetch") {
+          throw new Error("Could not resolve host: github.com");
+        }
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("checkout") && !input.args.includes("-b")) {
+          throw new Error("pathspec 'feat/phase-1' did not match");
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const mockControl = makeMockControl(state);
+    const pr = new PhaseRunner(
+      mockControl,
+      baseConfig,
+      undefined,
+      undefined,
+      mockRunner,
+    );
+    await pr.run();
+
+    // Should still complete despite fetch failure
+    expect(mockControl.setPhaseStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "DONE" }),
+    );
   });
 });

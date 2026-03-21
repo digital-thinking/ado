@@ -13,6 +13,8 @@ import {
 } from "./ci-check-mapping";
 import { runCiIntegration } from "./ci-integration";
 import { runCiValidationLoop } from "./ci-validation-loop";
+import { runGateChain, type GateContext } from "./gate";
+import { createGatesFromConfig } from "./gate-factory";
 import { PhaseLoopControl } from "./phase-loop-control";
 import {
   waitForAutoAdvance as waitForAutoAdvanceGate,
@@ -34,7 +36,9 @@ import {
   GitHubManager,
   GitManager,
   WorktreeManager,
+  createVcsProvider,
   type CiPollTransition,
+  type VcsProvider,
   parsePullRequestNumberFromUrl,
   PrivilegedGitActions,
 } from "../vcs";
@@ -53,8 +57,10 @@ import {
   type PhaseFailureKind,
   type PullRequestAutomationSettings,
   type Task,
+  type GateConfig,
   type TaskRoutingReason,
   type TaskType,
+  type VcsProviderType,
 } from "../types";
 import { createRuntimeEvent, type RuntimeEvent } from "../types/runtime-events";
 
@@ -208,6 +214,8 @@ export type PhaseRunnerConfig = {
   maxTaskRetries?: number;
   phaseTimeoutMs?: number;
   ciEnabled: boolean;
+  vcsProvider: VcsProviderType;
+  gates: GateConfig[];
   ciBaseBranch: string;
   ciPullRequest: PullRequestAutomationSettings;
   validationMaxRetries: number;
@@ -516,7 +524,7 @@ export class PhaseRunner {
       const completedPhase = await this.executionLoop(phase, rl);
       await this.assertPhaseNotTimedOut();
 
-      if (completedPhase && this.config.ciEnabled) {
+      if (completedPhase && this.config.vcsProvider !== "null") {
         this.setPhaseTimeoutStep("CI integration");
         await this.handleCiIntegration(completedPhase);
         shouldTeardownOnSuccess = true;
@@ -731,6 +739,27 @@ export class PhaseRunner {
         `Cannot create phase branch "${phase.branchName}" from "${currentBranch}". ` +
           `HEAD must be on the base branch "${allowedBase}" before creating a new phase branch. ` +
           `Run: git checkout ${allowedBase}`,
+      );
+    }
+
+    // Update base branch to latest remote before branching so the new
+    // phase branch starts from an up-to-date base, avoiding merge conflicts.
+    try {
+      console.info(
+        `Execution loop: fetching and fast-forwarding ${allowedBase} before branching.`,
+      );
+      await this.git.fetchBranch({
+        branchName: allowedBase,
+        cwd: this.config.projectRootDir,
+      });
+      await this.git.pullFastForwardOnly(this.config.projectRootDir);
+      console.info(`Execution loop: ${allowedBase} is up to date with remote.`);
+    } catch (error) {
+      // Non-fatal: if fetch/pull fails (e.g. offline, diverged history),
+      // proceed with the local state and log a warning.
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Execution loop: failed to update ${allowedBase} from remote (proceeding with local state): ${msg}`,
       );
     }
   }
@@ -1949,17 +1978,21 @@ ${testerResult.fixTaskDescription}`.trim(),
   private async handleCiIntegration(phase: Phase): Promise<void> {
     this.setPhaseTimeoutStep("CI integration");
     await this.assertPhaseNotTimedOut();
+    const isGitHub = this.config.vcsProvider === "github";
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "CREATING_PR",
     });
+    const ciMessage = isGitHub
+      ? "Creating PR and running CI integration."
+      : `Pushing branch via ${this.config.vcsProvider} provider.`;
     await this.publishRuntimeEvent(
       createRuntimeEvent({
         family: "task-lifecycle",
         type: "task.lifecycle.phase-update",
         payload: {
           status: "CREATING_PR",
-          message: "Creating PR and running CI integration.",
+          message: ciMessage,
         },
         context: {
           source: "PHASE_RUNNER",
@@ -1970,7 +2003,9 @@ ${testerResult.fixTaskDescription}`.trim(),
       }),
     );
     console.info(
-      "Optional CI integration enabled. Pushing branch and creating PR via gh.",
+      isGitHub
+        ? "CI integration enabled. Pushing branch and creating PR."
+        : `CI integration enabled (${this.config.vcsProvider} provider). Pushing branch.`,
     );
     const commitTrailers = this.resolveCommitTrailersForPhase(phase);
 
@@ -1982,6 +2017,10 @@ ${testerResult.fixTaskDescription}`.trim(),
     ) {
       try {
         this.setPhaseTimeoutStep(`CI integration attempt ${ciAttempt}`);
+        const vcsProvider = createVcsProvider(
+          this.config.vcsProvider,
+          this.testerRunner,
+        );
         ciResult = await runCiIntegration({
           phaseId: phase.id,
           phaseName: phase.name,
@@ -1991,6 +2030,8 @@ ${testerResult.fixTaskDescription}`.trim(),
           pullRequest: this.config.ciPullRequest,
           commitTrailers,
           runner: this.testerRunner,
+          vcsProvider,
+          vcsProviderType: this.config.vcsProvider,
           role: this.config.role,
           policy: this.config.policy,
           setPhasePrUrl: async (input) => {
@@ -2024,12 +2065,44 @@ ${testerResult.fixTaskDescription}`.trim(),
       throw new Error("CI integration did not produce a result.");
     }
 
+    // For providers without PR support (local), run gates if configured, then mark DONE
+    if (!ciResult.prUrl) {
+      if (this.config.gates.length > 0) {
+        await this.runPostIntegrationGateChain(phase, ciResult);
+        return;
+      }
+      console.info(
+        `CI integration completed (provider: ${this.config.vcsProvider}). Branch pushed: ${ciResult.headBranch}. No PR created.`,
+      );
+      await this.control.setPhaseStatus({
+        phaseId: phase.id,
+        status: "DONE",
+      });
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "terminal-outcome",
+          type: "terminal.outcome",
+          payload: {
+            outcome: "success",
+            summary: `Phase ${phase.name} completed (${this.config.vcsProvider} provider, branch: ${ciResult.headBranch}).`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+      return;
+    }
+
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "AWAITING_CI",
     });
     console.info(
-      `Optional CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`,
+      `CI integration completed. PR: ${ciResult.prUrl} (head: ${ciResult.headBranch}, base: ${ciResult.baseBranch}).`,
     );
     await this.publishRuntimeEvent(
       createRuntimeEvent({
@@ -2053,7 +2126,169 @@ ${testerResult.fixTaskDescription}`.trim(),
       }),
     );
 
-    await this.runCiValidationStep(phase);
+    // Run post-integration gate chain if configured
+    if (this.config.gates.length > 0) {
+      await this.runPostIntegrationGateChain(phase, ciResult);
+    } else {
+      // Legacy path: direct CI validation
+      await this.runCiValidationStep(phase);
+    }
+  }
+
+  private async runPostIntegrationGateChain(
+    phase: Phase,
+    ciResult: { prUrl?: string; headBranch: string; baseBranch: string },
+  ): Promise<void> {
+    const vcsProvider = createVcsProvider(
+      this.config.vcsProvider,
+      this.testerRunner,
+    );
+    const gates = createGatesFromConfig(
+      this.config.gates,
+      this.testerRunner,
+      vcsProvider,
+      this.config.vcsProvider,
+    );
+
+    const prNumber = ciResult.prUrl
+      ? parsePullRequestNumberFromUrl(ciResult.prUrl)
+      : undefined;
+
+    const gateContext: GateContext = {
+      phaseId: phase.id,
+      phaseName: phase.name,
+      phase,
+      cwd: this.executionCwd,
+      baseBranch: ciResult.baseBranch,
+      headBranch: ciResult.headBranch,
+      vcsProviderType: this.config.vcsProvider,
+      prUrl: ciResult.prUrl,
+      prNumber,
+    };
+
+    const totalGates = gates.length;
+    const eventContext = {
+      source: "PHASE_RUNNER" as const,
+      projectName: this.config.projectName,
+      phaseId: phase.id,
+      phaseName: phase.name,
+    };
+
+    const chainResult = await runGateChain(gates, gateContext, {
+      onGateStart: async (gate, index) => {
+        console.info(`Gate chain: starting gate "${gate.name}".`);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "gate-lifecycle",
+            type: "gate.activity",
+            payload: {
+              stage: "start",
+              gateName: gate.name,
+              gateIndex: index,
+              totalGates,
+              summary: `Starting gate "${gate.name}" (${index + 1}/${totalGates}).`,
+            },
+            context: eventContext,
+          }),
+        );
+      },
+      onGateResult: async (gate, result, index) => {
+        const stage = result.passed ? "pass" : "fail";
+        console.info(
+          `Gate chain: gate "${gate.name}" ${result.passed ? "PASSED" : "FAILED"}.`,
+        );
+        if (!result.passed) {
+          console.info(`Gate diagnostics: ${result.diagnostics}`);
+        }
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "gate-lifecycle",
+            type: "gate.activity",
+            payload: {
+              stage,
+              gateName: gate.name,
+              gateIndex: index,
+              totalGates,
+              summary: result.passed
+                ? `Gate "${gate.name}" passed (${index + 1}/${totalGates}).`
+                : `Gate "${gate.name}" failed (${index + 1}/${totalGates}): ${result.diagnostics}`,
+              diagnostics: result.passed ? undefined : result.diagnostics,
+              retryable: result.passed ? undefined : result.retryable,
+            },
+            context: eventContext,
+          }),
+        );
+      },
+    });
+
+    if (chainResult.passed) {
+      // Promote draft PR to ready if configured (mirrors legacy runCiValidationStep)
+      if (this.config.ciPullRequest.markReadyOnApproval && ciResult.prUrl) {
+        const prNumber = parsePullRequestNumberFromUrl(ciResult.prUrl);
+        await this.privilegedGit.markPullRequestReady({
+          prNumber,
+          cwd: this.executionCwd,
+        });
+        console.info(`Marked draft PR #${prNumber} as ready for review.`);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "ci-pr-lifecycle",
+            type: "pr.activity",
+            payload: {
+              stage: "ready-for-review",
+              summary: `Marked PR #${prNumber} as ready for review.`,
+              prNumber,
+              prUrl: ciResult.prUrl,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+      }
+
+      // For non-PR providers, terminal state is DONE not READY_FOR_REVIEW
+      const terminalStatus = ciResult.prUrl ? "READY_FOR_REVIEW" : "DONE";
+      await this.control.setPhaseStatus({
+        phaseId: phase.id,
+        status: terminalStatus,
+      });
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "terminal-outcome",
+          type: "terminal.outcome",
+          payload: {
+            outcome: "success",
+            summary: ciResult.prUrl
+              ? `Phase ${phase.name} passed all gates and is ready for review.`
+              : `Phase ${phase.name} passed all gates (${this.config.vcsProvider} provider, branch: ${ciResult.headBranch}).`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: phase.id,
+            phaseName: phase.name,
+          },
+        }),
+      );
+    } else {
+      const failedGate = chainResult.results.find((r) => !r.passed);
+      const diagnostics = failedGate?.diagnostics ?? "Unknown gate failure.";
+      const failureKind: PhaseFailureKind =
+        failedGate?.gate === "pr_ci" ? "REMOTE_CI" : "LOCAL_TESTER";
+      await this.control.setPhaseStatus({
+        phaseId: phase.id,
+        status: "CI_FAILED",
+        failureKind,
+        ciStatusContext: `Gate "${failedGate?.gate}" failed: ${diagnostics}`,
+      });
+      throw new Error(
+        `Gate chain failed at "${failedGate?.gate}": ${diagnostics}`,
+      );
+    }
   }
 
   private async runCiValidationStep(phase: Phase): Promise<void> {

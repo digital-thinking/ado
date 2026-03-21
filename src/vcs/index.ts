@@ -23,6 +23,14 @@ export type {
   PollCiStatusInput,
 } from "./github-manager";
 export { parsePullRequestNumberFromUrl } from "./github-manager";
+export { createVcsProvider } from "./create-vcs-provider";
+export { GitHubProvider } from "./github-provider";
+export { LocalProvider } from "./local-provider";
+export { NullProvider } from "./null-provider";
+export {
+  UnsupportedVcsProviderOperationError,
+  type VcsProvider,
+} from "./vcs-provider";
 
 export { WorktreeManager } from "./worktree-manager";
 export type {
