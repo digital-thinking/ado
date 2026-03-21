@@ -230,15 +230,16 @@ export const ExecutionLoopSettingsSchema = z
     gates: z.array(GateConfigSchema).default([]),
   })
   .transform((val) => {
+    let result = val;
     // Migration: ciEnabled: true without explicit vcsProvider → github
-    if (val.ciEnabled && val.vcsProvider === "null") {
-      return { ...val, vcsProvider: "github" as VcsProviderType };
+    if (result.ciEnabled && result.vcsProvider === "null") {
+      result = { ...result, vcsProvider: "github" as VcsProviderType };
     }
     // Migration: vcsProvider: github + empty gates → auto-add pr_ci gate
-    if (val.vcsProvider === "github" && val.gates.length === 0) {
-      return { ...val, gates: [{ type: "pr_ci" as const }] };
+    if (result.vcsProvider === "github" && result.gates.length === 0) {
+      result = { ...result, gates: [{ type: "pr_ci" as const }] };
     }
-    return val;
+    return result;
   });
 export type ExecutionLoopSettings = z.output<
   typeof ExecutionLoopSettingsSchema

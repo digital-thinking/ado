@@ -124,28 +124,19 @@ describe("P34-013 regression: legacy config migration", () => {
     expect(result.gates).toEqual([{ type: "command", command: "npm test" }]);
   });
 
-  test("ciEnabled: true migrates to github but does not chain-add pr_ci in same transform", () => {
-    // The transform runs once: ciEnabled triggers first branch (→ github),
-    // which returns immediately. A second parse would trigger the pr_ci auto-add.
+  test("ciEnabled: true migrates to github and adds pr_ci gate in single pass", () => {
     const result = ExecutionLoopSettingsSchema.parse({
       ciEnabled: true,
       gates: [],
     });
     expect(result.vcsProvider).toBe("github");
-    // gates remain empty because the first transform branch returned early
-    expect(result.gates).toEqual([]);
+    expect(result.gates).toEqual([{ type: "pr_ci" }]);
   });
 
-  test("re-parsing ciEnabled migration output adds pr_ci gate", () => {
-    // Simulate a two-pass scenario: first parse migrates ciEnabled,
-    // second parse (e.g., from persisted settings) adds pr_ci
-    const first = ExecutionLoopSettingsSchema.parse({ ciEnabled: true });
-    const second = ExecutionLoopSettingsSchema.parse({
-      ...first,
-      ciEnabled: false, // no longer needed after migration
-    });
-    expect(second.vcsProvider).toBe("github");
-    expect(second.gates).toEqual([{ type: "pr_ci" }]);
+  test("ciEnabled: true without explicit gates also adds pr_ci", () => {
+    const result = ExecutionLoopSettingsSchema.parse({ ciEnabled: true });
+    expect(result.vcsProvider).toBe("github");
+    expect(result.gates).toEqual([{ type: "pr_ci" }]);
   });
 
   test("vcsProvider: local does not trigger auto-migration", () => {

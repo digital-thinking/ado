@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { type Gate, type GateContext, type GateResult } from "./gate";
 
 export type CoverageGateConfig = {
@@ -29,7 +30,7 @@ export class CoverageGate implements Gate {
   async evaluate(context: GateContext): Promise<GateResult> {
     const reportPath = this.config.reportPath.startsWith("/")
       ? this.config.reportPath
-      : `${context.cwd}/${this.config.reportPath}`;
+      : join(context.cwd, this.config.reportPath);
 
     let content: string;
     try {

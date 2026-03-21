@@ -194,7 +194,7 @@ export async function runCiIntegration(
   const headBranch = await git.getCurrentBranch(input.cwd);
   let prUrl: string | undefined;
 
-  // Push branch through VcsProvider (no-op for NullProvider)
+  // Push branch through VcsProvider (real push for github/local; NullProvider never reaches here)
   await input.vcsProvider.pushBranch({
     branchName: headBranch,
     cwd: input.cwd,

@@ -423,9 +423,10 @@ function resolvePhaseIdForReference(
   throw new Error(`Phase not found: ${phaseReference}`);
 }
 
-// PR_CREATION and REMOTE_PUSH contracts removed — these are orchestrator
-// responsibilities handled deterministically in ci-integration.ts after the
-// execution loop, not agent task side-effects.
+// PR_CREATION and REMOTE_PUSH contracts still exist in the schema and
+// worker-prompts for backward compatibility, but are no longer auto-detected
+// from task descriptions here — these operations are now orchestrator
+// responsibilities handled deterministically in ci-integration.ts.
 const SIDE_EFFECT_CONTRACT_PATTERNS: ReadonlyArray<{
   contract: SideEffectContract;
   patterns: ReadonlyArray<RegExp>;

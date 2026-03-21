@@ -1978,17 +1978,21 @@ ${testerResult.fixTaskDescription}`.trim(),
   private async handleCiIntegration(phase: Phase): Promise<void> {
     this.setPhaseTimeoutStep("CI integration");
     await this.assertPhaseNotTimedOut();
+    const isGitHub = this.config.vcsProvider === "github";
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "CREATING_PR",
     });
+    const ciMessage = isGitHub
+      ? "Creating PR and running CI integration."
+      : `Pushing branch via ${this.config.vcsProvider} provider.`;
     await this.publishRuntimeEvent(
       createRuntimeEvent({
         family: "task-lifecycle",
         type: "task.lifecycle.phase-update",
         payload: {
           status: "CREATING_PR",
-          message: "Creating PR and running CI integration.",
+          message: ciMessage,
         },
         context: {
           source: "PHASE_RUNNER",
@@ -1999,7 +2003,9 @@ ${testerResult.fixTaskDescription}`.trim(),
       }),
     );
     console.info(
-      "Optional CI integration enabled. Pushing branch and creating PR via gh.",
+      isGitHub
+        ? "CI integration enabled. Pushing branch and creating PR."
+        : `CI integration enabled (${this.config.vcsProvider} provider). Pushing branch.`,
     );
     const commitTrailers = this.resolveCommitTrailersForPhase(phase);
 
@@ -2059,8 +2065,12 @@ ${testerResult.fixTaskDescription}`.trim(),
       throw new Error("CI integration did not produce a result.");
     }
 
-    // For providers without PR support (local/null), mark DONE after push
+    // For providers without PR support (local), run gates if configured, then mark DONE
     if (!ciResult.prUrl) {
+      if (this.config.gates.length > 0) {
+        await this.runPostIntegrationGateChain(phase, ciResult);
+        return;
+      }
       console.info(
         `CI integration completed (provider: ${this.config.vcsProvider}). Branch pushed: ${ciResult.headBranch}. No PR created.`,
       );
@@ -2212,9 +2222,39 @@ ${testerResult.fixTaskDescription}`.trim(),
     });
 
     if (chainResult.passed) {
+      // Promote draft PR to ready if configured (mirrors legacy runCiValidationStep)
+      if (this.config.ciPullRequest.markReadyOnApproval && ciResult.prUrl) {
+        const prNumber = parsePullRequestNumberFromUrl(ciResult.prUrl);
+        await this.privilegedGit.markPullRequestReady({
+          prNumber,
+          cwd: this.executionCwd,
+        });
+        console.info(`Marked draft PR #${prNumber} as ready for review.`);
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "ci-pr-lifecycle",
+            type: "pr.activity",
+            payload: {
+              stage: "ready-for-review",
+              summary: `Marked PR #${prNumber} as ready for review.`,
+              prNumber,
+              prUrl: ciResult.prUrl,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: phase.id,
+              phaseName: phase.name,
+            },
+          }),
+        );
+      }
+
+      // For non-PR providers, terminal state is DONE not READY_FOR_REVIEW
+      const terminalStatus = ciResult.prUrl ? "READY_FOR_REVIEW" : "DONE";
       await this.control.setPhaseStatus({
         phaseId: phase.id,
-        status: "READY_FOR_REVIEW",
+        status: terminalStatus,
       });
       await this.publishRuntimeEvent(
         createRuntimeEvent({
@@ -2222,7 +2262,9 @@ ${testerResult.fixTaskDescription}`.trim(),
           type: "terminal.outcome",
           payload: {
             outcome: "success",
-            summary: `Phase ${phase.name} passed all gates and is ready for review.`,
+            summary: ciResult.prUrl
+              ? `Phase ${phase.name} passed all gates and is ready for review.`
+              : `Phase ${phase.name} passed all gates (${this.config.vcsProvider} provider, branch: ${ciResult.headBranch}).`,
           },
           context: {
             source: "PHASE_RUNNER",
@@ -2235,10 +2277,12 @@ ${testerResult.fixTaskDescription}`.trim(),
     } else {
       const failedGate = chainResult.results.find((r) => !r.passed);
       const diagnostics = failedGate?.diagnostics ?? "Unknown gate failure.";
+      const failureKind: PhaseFailureKind =
+        failedGate?.gate === "pr_ci" ? "REMOTE_CI" : "LOCAL_TESTER";
       await this.control.setPhaseStatus({
         phaseId: phase.id,
         status: "CI_FAILED",
-        failureKind: "REMOTE_CI" as PhaseFailureKind,
+        failureKind,
         ciStatusContext: `Gate "${failedGate?.gate}" failed: ${diagnostics}`,
       });
       throw new Error(
