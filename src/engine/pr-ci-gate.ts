@@ -1,6 +1,6 @@
 import { type Gate, type GateContext, type GateResult } from "./gate";
 import type { VcsProvider } from "../vcs/vcs-provider";
-import type { CiPollTransition } from "../vcs/github-manager";
+import { CiPollingError, type CiPollTransition } from "../vcs/github-manager";
 
 export type PrCiGateConfig = {
   /** Poll interval in ms. Defaults to 15_000 (15 seconds). */
@@ -76,7 +76,7 @@ export class PrCiGate implements Gate {
         gate: this.name,
         passed: false,
         diagnostics: `CI polling failed: ${message}`,
-        retryable: true,
+        retryable: error instanceof CiPollingError ? error.retryable : true,
       };
     }
   }

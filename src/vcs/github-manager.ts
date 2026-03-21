@@ -1,4 +1,4 @@
-import type { ProcessRunner } from "../process";
+import { ProcessExecutionError, type ProcessRunner } from "../process";
 
 export type CreatePullRequestInput = {
   base: string;
@@ -79,11 +79,81 @@ export type CiPollTransition = {
   requiredTerminalObservations: number;
 };
 
+export class CiPollingError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = "CiPollingError";
+    this.retryable = retryable;
+  }
+}
+
 type StatusCheckRollupResponse = {
   statusCheckRollup?: Array<Record<string, unknown>>;
 };
 
 type IssuesListResponse = Array<Record<string, unknown>>;
+
+function firstNonEmptyLine(text: string): string | null {
+  for (const line of text.split(/\r?\n/)) {
+    const normalized = line.trim();
+    if (normalized) {
+      return normalized.replace(/^error:\s*/i, "");
+    }
+  }
+
+  return null;
+}
+
+function classifyCiPollingFailure(
+  prNumber: number,
+  error: unknown,
+): CiPollingError {
+  if (error instanceof CiPollingError) {
+    return error;
+  }
+
+  if (error instanceof ProcessExecutionError) {
+    const detail =
+      firstNonEmptyLine(error.result.stderr) ??
+      firstNonEmptyLine(error.result.stdout);
+    const normalizedDetail = detail ?? error.message;
+
+    if (
+      /not logged into any github hosts|authentication failed|gh auth login|token is required/i.test(
+        normalizedDetail,
+      )
+    ) {
+      return new CiPollingError(
+        `GitHub CLI authentication failed while polling CI for PR #${prNumber}. Run 'gh auth status' or 'gh auth login'.`,
+        false,
+      );
+    }
+
+    if (
+      /could not resolve to a pullrequest|no pull requests found|pull request not found|not found/i.test(
+        normalizedDetail,
+      )
+    ) {
+      return new CiPollingError(
+        `GitHub CLI could not access PR #${prNumber} while polling CI. Ensure the pull request exists and the current gh account can view it.`,
+        false,
+      );
+    }
+
+    return new CiPollingError(
+      `GitHub CLI failed while polling CI for PR #${prNumber}: ${normalizedDetail}`,
+      true,
+    );
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new CiPollingError(
+    `CI polling failed for PR #${prNumber}: ${message}`,
+    true,
+  );
+}
 
 function toUpperText(value: unknown): string {
   return typeof value === "string" ? value.toUpperCase() : "";
@@ -367,11 +437,16 @@ export class GitHubManager {
   }
 
   async getCiStatus(prNumber: number, cwd: string): Promise<CiStatusSummary> {
-    const result = await this.runner.run({
-      command: "gh",
-      args: ["pr", "view", String(prNumber), "--json", "statusCheckRollup"],
-      cwd,
-    });
+    let result;
+    try {
+      result = await this.runner.run({
+        command: "gh",
+        args: ["pr", "view", String(prNumber), "--json", "statusCheckRollup"],
+        cwd,
+      });
+    } catch (error) {
+      throw classifyCiPollingFailure(prNumber, error);
+    }
 
     let payload: StatusCheckRollupResponse;
     try {

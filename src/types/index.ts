@@ -204,6 +204,8 @@ export const ExecutionLoopSettingsSchema = z
     autoMode: z.boolean().default(false),
     countdownSeconds: z.number().int().min(0).max(3_600).default(10),
     maxTaskRetries: z.number().int().min(0).max(20).default(3),
+    defaultRace: z.number().int().min(1).default(1),
+    judgeAdapter: CLIAdapterIdSchema.default("CODEX_CLI"),
     phaseTimeoutMs: z.number().int().positive().default(21_600_000),
     testerCommand: z.string().min(1).nullable().default(null),
     testerArgs: z.array(z.string()).min(1).nullable().default(null),
@@ -304,6 +306,7 @@ export type ExceptionRecoverySettings = z.infer<
 export const ProjectExecutionSettingsSchema = z.object({
   autoMode: z.boolean(),
   defaultAssignee: CLIAdapterIdSchema,
+  defaultRace: z.number().int().min(1).optional(),
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
 });
@@ -362,6 +365,8 @@ export const CliSettingsSchema = z
       autoMode: false,
       countdownSeconds: 10,
       maxTaskRetries: 3,
+      defaultRace: 1,
+      judgeAdapter: "CODEX_CLI",
       phaseTimeoutMs: 21_600_000,
       testerCommand: null,
       testerArgs: null,
@@ -486,6 +491,13 @@ export const CliSettingsSchema = z
         path: ["executionLoop", "deliberation", "reviewerAdapter"],
       });
     }
+    if (!value.agents[value.executionLoop.judgeAdapter].enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `executionLoop.judgeAdapter '${value.executionLoop.judgeAdapter}' must be enabled in settings.agents.`,
+        path: ["executionLoop", "judgeAdapter"],
+      });
+    }
 
     for (const [taskType, adapterId] of Object.entries(
       value.agents.adapterAffinities ?? {},
@@ -526,6 +538,8 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   autoMode: z.boolean().optional(),
   countdownSeconds: z.number().int().min(0).max(3_600).optional(),
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
+  defaultRace: z.number().int().min(1).optional(),
+  judgeAdapter: CLIAdapterIdSchema.optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),
@@ -752,12 +766,42 @@ export type TaskCompletionVerification = z.infer<
   typeof TaskCompletionVerificationSchema
 >;
 
+export const TaskRaceBranchStatusSchema = z.enum([
+  "pending",
+  "fulfilled",
+  "rejected",
+  "picked",
+]);
+export type TaskRaceBranchStatus = z.infer<typeof TaskRaceBranchStatusSchema>;
+
+export const TaskRaceBranchSchema = z.object({
+  index: z.number().int().positive(),
+  branchName: z.string().min(1),
+  status: TaskRaceBranchStatusSchema,
+  error: z.string().min(1).optional(),
+});
+export type TaskRaceBranch = z.infer<typeof TaskRaceBranchSchema>;
+
+export const TaskRaceStateSchema = z.object({
+  status: z.enum(["running", "judged", "applied"]),
+  raceCount: z.number().int().positive(),
+  branches: z.array(TaskRaceBranchSchema),
+  judgeAdapter: CLIAdapterIdSchema.optional(),
+  pickedBranchIndex: z.number().int().positive().optional(),
+  reasoning: z.string().min(1).optional(),
+  commitCount: z.number().int().min(0).optional(),
+  updatedAt: z.string().datetime(),
+});
+export type TaskRaceState = z.infer<typeof TaskRaceStateSchema>;
+
 // 6. A Single Coding Task
 export const TaskSchema = z.object({
   id: z.string().uuid(),
   code: z.string().optional(),
   title: z.string(),
   description: z.string(),
+  race: z.number().int().min(1).optional(),
+  raceState: TaskRaceStateSchema.optional(),
   deliberate: z.boolean().optional(),
   taskType: TaskTypeSchema.optional(),
   resolvedAssignee: CLIAdapterIdSchema.optional(),

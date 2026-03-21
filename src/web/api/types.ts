@@ -32,6 +32,7 @@ export interface ApiDependencies {
     patch: {
       autoMode?: boolean;
       defaultAssignee?: CLIAdapterId;
+      defaultRace?: number;
       maxTaskRetries?: number;
       phaseTimeoutMs?: number;
     },

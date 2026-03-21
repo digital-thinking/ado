@@ -41,6 +41,7 @@ import {
   type PhaseStatus,
   type ProjectState,
   type RecoveryAttemptRecord,
+  type TaskRaceState,
   type SideEffectContract,
   type Task,
   type TaskType,
@@ -87,6 +88,7 @@ export type CreateTaskInput = {
   phaseId: string;
   title: string;
   description: string;
+  race?: number;
   assignee?: WorkerAssignee;
   taskType?: TaskType;
   dependencies?: string[];
@@ -98,6 +100,7 @@ export type UpdateTaskInput = {
   taskId: string;
   title: string;
   description: string;
+  race?: number | null;
   dependencies: string[];
 };
 
@@ -182,6 +185,41 @@ export type StartActiveTaskInput = {
   resume?: boolean;
   taskDescriptionOverride?: string;
   resultContextPrefix?: string;
+};
+
+export type PrepareTaskExecutionInput = StartTaskInput & {
+  projectName?: string;
+  cwd?: string;
+};
+
+export type PreparedTaskExecution = {
+  projectName: string;
+  phase: Phase;
+  task: Task;
+  taskForPrompt: Task;
+  rootDir: string;
+  resume: boolean;
+  startedFromStatus: Task["status"];
+};
+
+export type CompleteTaskExecutionInput = {
+  phaseId: string;
+  taskId: string;
+  status: "DONE" | "FAILED";
+  resultContext?: string;
+  errorLogs?: string;
+  errorCategory?: any;
+  adapterFailureKind?: any;
+  startedFromStatus: Task["status"];
+  completionVerification?: TaskCompletionVerification;
+  projectName?: string;
+};
+
+export type UpdateTaskRaceStateInput = {
+  phaseId: string;
+  taskId: string;
+  raceState?: TaskRaceState;
+  projectName?: string;
 };
 
 export type ResetTaskInput = {
@@ -658,6 +696,7 @@ export class ControlCenterService {
       id: randomUUID(),
       title,
       description,
+      race: input.race,
       taskType,
       assignee: input.assignee ?? "UNASSIGNED",
       dependencies: input.dependencies ?? [],
@@ -727,6 +766,12 @@ export class ControlCenterService {
     }
 
     const task = phase.tasks[taskIndex];
+    const race =
+      input.race === null
+        ? undefined
+        : input.race === undefined
+          ? task.race
+          : input.race;
     if (task.status === "IN_PROGRESS") {
       throw new Error("Cannot edit task while it is IN_PROGRESS.");
     }
@@ -749,6 +794,7 @@ export class ControlCenterService {
       ...task,
       title,
       description,
+      race,
       dependencies,
     });
 
@@ -1057,6 +1103,40 @@ export class ControlCenterService {
   async startTask(
     input: StartTaskInput & { projectName?: string },
   ): Promise<ProjectState> {
+    const prepared = await this.prepareTaskExecution(input);
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const assignee = CLIAdapterIdSchema.parse(input.assignee);
+    const runKey = taskExecutionKey(phaseId, taskId);
+    const prompt = buildWorkerPrompt({
+      archetype: "CODER",
+      projectName: prepared.projectName,
+      rootDir: prepared.rootDir,
+      phase: prepared.phase,
+      task: prepared.taskForPrompt,
+    });
+
+    const executionPromise = this.executeTaskRun({
+      phaseId,
+      taskId,
+      assignee,
+      prompt,
+      resume: prepared.resume,
+      startedFromStatus: prepared.startedFromStatus,
+      resultContextPrefix: input.resultContextPrefix,
+      projectName: input.projectName,
+      cwd: prepared.rootDir,
+    }).finally(() => {
+      this.runningTaskExecutions.delete(runKey);
+    });
+
+    this.runningTaskExecutions.set(runKey, executionPromise);
+    return (await this.getEngine(input.projectName)).readProjectState();
+  }
+
+  async prepareTaskExecution(
+    input: PrepareTaskExecutionInput,
+  ): Promise<PreparedTaskExecution> {
     const phaseId = input.phaseId.trim();
     const taskId = input.taskId.trim();
     const assignee = CLIAdapterIdSchema.parse(input.assignee);
@@ -1169,14 +1249,12 @@ export class ControlCenterService {
           description: taskDescriptionOverride,
         }
       : task;
-    const effectiveRootDir = phase.worktreePath?.trim() || state.rootDir;
-    const prompt = buildWorkerPrompt({
-      archetype: "CODER",
-      projectName: state.projectName,
-      rootDir: effectiveRootDir,
-      phase,
-      task: taskForPrompt,
-    });
+    const requestedCwd = input.cwd?.trim();
+    if (input.cwd !== undefined && !requestedCwd) {
+      throw new Error("cwd must not be empty when set.");
+    }
+    const effectiveRootDir =
+      requestedCwd || phase.worktreePath?.trim() || state.rootDir;
 
     const updatedTask = TaskSchema.parse({
       ...task,
@@ -1184,6 +1262,7 @@ export class ControlCenterService {
       resolvedAssignee,
       routingReason,
       status: "IN_PROGRESS",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       rateLimitRetryAt: undefined,
@@ -1208,22 +1287,15 @@ export class ControlCenterService {
       Boolean(input.resume) ||
       (task.status === "FAILED" && task.assignee === assignee);
 
-    const executionPromise = this.executeTaskRun({
-      phaseId,
-      taskId,
-      assignee,
-      prompt,
+    return {
+      projectName: state.projectName,
+      phase,
+      task,
+      taskForPrompt,
+      rootDir: effectiveRootDir,
       resume: shouldResume,
       startedFromStatus: task.status,
-      resultContextPrefix,
-      projectName: input.projectName,
-      cwd: effectiveRootDir,
-    }).finally(() => {
-      this.runningTaskExecutions.delete(runKey);
-    });
-
-    this.runningTaskExecutions.set(runKey, executionPromise);
-    return nextState;
+    };
   }
 
   async startTaskAndWait(
@@ -1270,6 +1342,69 @@ export class ControlCenterService {
       stderr: result.stderr,
       durationMs: result.durationMs,
     };
+  }
+
+  async completeTaskExecution(
+    input: CompleteTaskExecutionInput,
+  ): Promise<ProjectState> {
+    await this.updateTaskResult(
+      input.phaseId,
+      input.taskId,
+      input.status,
+      input.resultContext,
+      input.errorLogs,
+      input.errorCategory,
+      input.adapterFailureKind,
+      input.startedFromStatus,
+      input.completionVerification,
+      input.projectName,
+    );
+
+    return (await this.getEngine(input.projectName)).readProjectState();
+  }
+
+  async updateTaskRaceState(
+    input: UpdateTaskRaceStateInput,
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = TaskSchema.parse({
+      ...nextTasks[taskIndex],
+      raceState: input.raceState,
+    });
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
   }
 
   async importFromTasksMarkdown(
@@ -2065,6 +2200,7 @@ export class ControlCenterService {
         return TaskSchema.parse({
           ...task,
           status: "TODO",
+          raceState: undefined,
           resultContext: undefined,
           errorLogs: undefined,
           errorCategory: undefined,
@@ -2139,6 +2275,7 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       status: "TODO",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       errorCategory: undefined,
@@ -2267,6 +2404,7 @@ export class ControlCenterService {
       ...task,
       status: "TODO",
       assignee: "UNASSIGNED",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       errorCategory: undefined,
@@ -2404,6 +2542,7 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       status: "TODO",
+      raceState: undefined,
       resultContext: undefined,
       errorLogs: undefined,
       errorCategory: undefined,

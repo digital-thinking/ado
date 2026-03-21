@@ -13,9 +13,9 @@ export { GitHubManager } from "./github-manager";
 export type {
   CiCheck,
   CiCheckState,
+  CiPollTransition,
   CiStatusSummary,
   CreatePullRequestInput,
-  CiPollTransition,
   GitHubIssue,
   ListOpenIssuesInput,
   MarkPullRequestReadyInput,

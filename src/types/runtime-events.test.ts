@@ -387,6 +387,100 @@ describe("runtime event contract", () => {
     );
   });
 
+  test("creates and formats race lifecycle events", () => {
+    const startEvent = createRuntimeEvent({
+      family: "race-lifecycle",
+      type: "race:start",
+      payload: {
+        raceCount: 2,
+        baseBranchName: "phase-35-race-mode",
+        summary:
+          "Starting race mode for task #5 Wire race events with 2 branch(es).",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-35",
+        taskId: "task-5",
+        taskNumber: 5,
+      },
+    });
+    const branchEvent = createRuntimeEvent({
+      family: "race-lifecycle",
+      type: "race:branch",
+      payload: {
+        branchIndex: 2,
+        branchName: "phase-35-race-mode-race-task-5-2",
+        status: "fulfilled",
+        summary:
+          "Race branch 2/phase-35-race-mode-race-task-5-2 finished successfully.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-35",
+        taskId: "task-5",
+        taskNumber: 5,
+        adapterId: "CODEX_CLI",
+      },
+    });
+    const judgeEvent = createRuntimeEvent({
+      family: "race-lifecycle",
+      type: "race:judge",
+      payload: {
+        judgeAdapter: "CLAUDE_CLI",
+        pickedBranchIndex: 2,
+        branchName: "phase-35-race-mode-race-task-5-2",
+        summary:
+          "Race judge CLAUDE_CLI selected candidate 2 (phase-35-race-mode-race-task-5-2).",
+        reasoning: "Candidate 2 is the most coherent implementation.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-35",
+        taskId: "task-5",
+        taskNumber: 5,
+        adapterId: "CLAUDE_CLI",
+      },
+    });
+    const pickEvent = createRuntimeEvent({
+      family: "race-lifecycle",
+      type: "race:pick",
+      payload: {
+        branchIndex: 2,
+        branchName: "phase-35-race-mode-race-task-5-2",
+        commitCount: 2,
+        summary:
+          "Applied race winner candidate 2 (phase-35-race-mode-race-task-5-2) with 2 commits.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-35",
+        taskId: "task-5",
+        taskNumber: 5,
+      },
+    });
+
+    expect(RuntimeEventSchema.parse(startEvent).type).toBe("race:start");
+    expect(formatRuntimeEventForCli(branchEvent)).toContain(
+      "finished successfully",
+    );
+    expect(formatRuntimeEventForTelegram(judgeEvent)).toBe(
+      "Race: Race judge CLAUDE_CLI selected candidate 2 (phase-35-race-mode-race-task-5-2).",
+    );
+    expect(formatRuntimeEventForCli(pickEvent)).toContain(
+      "Applied race winner candidate 2",
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(startEvent, "important")).toBe(
+      false,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(branchEvent, "important")).toBe(
+      true,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(judgeEvent, "critical")).toBe(
+      false,
+    );
+    expect(createRuntimeEventNotificationKey(pickEvent)).toContain("race:pick");
+  });
+
   test("creates and formats gate activity events", () => {
     const startEvent = createRuntimeEvent({
       family: "gate-lifecycle",

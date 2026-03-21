@@ -68,10 +68,7 @@ import {
   saveCliSettings,
 } from "./settings";
 import {
-  isProcessRunning,
   parseWebPort,
-  readWebRuntimeRecord,
-  resolveWebRuntimeFilePath,
   serveWebControlCenter,
   startWebDaemon,
   stopWebDaemon,
@@ -166,6 +163,7 @@ function resolveProjectExecutionSettings(
 ): {
   autoMode: boolean;
   defaultAssignee: CLIAdapterId;
+  defaultRace: number;
   maxTaskRetries: number;
   phaseTimeoutMs: number;
 } {
@@ -176,6 +174,9 @@ function resolveProjectExecutionSettings(
     defaultAssignee:
       project?.executionSettings?.defaultAssignee ??
       settings.internalWork.assignee,
+    defaultRace:
+      project?.executionSettings?.defaultRace ??
+      settings.executionLoop.defaultRace,
     maxTaskRetries:
       project?.executionSettings?.maxTaskRetries ??
       settings.executionLoop.maxTaskRetries,
@@ -1657,24 +1658,12 @@ async function runPhaseRunCommand({
   const enabledAdapters = getAvailableAgents(settings);
   const telegram = resolveTelegramConfig(settings.telegram);
 
-  // Skip Telegram when the web server is already running — it owns the bot
-  // polling and starting a second listener causes a 409 conflict.
-  const webRuntimeFile = resolveWebRuntimeFilePath(projectRootDir);
-  const webRuntime = await readWebRuntimeRecord(webRuntimeFile);
-  const webServerRunning =
-    webRuntime !== null && isProcessRunning(webRuntime.pid);
-  if (webServerRunning) {
-    console.info(
-      "Web server is running — Telegram polling delegated to web server. Loop controls (/next, /stop) are available via Telegram.",
-    );
-  }
-
   let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
   const notifyTelegramEvent = createTelegramNotificationEvaluator({
     level: settings.telegram.notifications.level,
     suppressDuplicates: settings.telegram.notifications.suppressDuplicates,
   });
-  if (telegram.enabled && !webServerRunning) {
+  if (telegram.enabled) {
     telegramRuntime = createTelegramRuntime({
       token: telegram.token,
       ownerId: telegram.ownerId,
@@ -1722,7 +1711,9 @@ async function runPhaseRunCommand({
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+      defaultRace: projectExecutionSettings.defaultRace,
       maxTaskRetries: projectExecutionSettings.maxTaskRetries,
+      judgeAdapter: settings.executionLoop.judgeAdapter,
       phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
       ciEnabled: settings.executionLoop.ciEnabled,
       vcsProvider: settings.executionLoop.vcsProvider,

@@ -33,6 +33,8 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     autoMode: false,
     countdownSeconds: 10,
     maxTaskRetries: 3,
+    defaultRace: 1,
+    judgeAdapter: "CODEX_CLI",
     phaseTimeoutMs: 21_600_000,
     testerCommand: null,
     testerArgs: null,

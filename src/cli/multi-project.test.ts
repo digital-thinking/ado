@@ -57,6 +57,8 @@ const DEFAULT_LOOP_SETTINGS = {
   autoMode: false,
   countdownSeconds: 10,
   maxTaskRetries: 3,
+  defaultRace: 1,
+  judgeAdapter: "CODEX_CLI" as const,
   phaseTimeoutMs: 21600000,
   testerCommand: null,
   testerArgs: null,

@@ -12,6 +12,22 @@ export async function handleTasksApi(
   url: URL,
   deps: ApiDependencies,
 ): Promise<Response | null> {
+  const parseRaceValue = (
+    value: unknown,
+    allowNull: boolean,
+  ): number | null | undefined => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (allowNull && value === null) {
+      return null;
+    }
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw new Error("race must be a positive integer.");
+    }
+    return value;
+  };
+
   if (request.method === "POST" && url.pathname === "/api/tasks") {
     const body = await readJson(request);
     const dependenciesRaw = body.dependencies;
@@ -25,6 +41,7 @@ export async function handleTasksApi(
       phaseId: asString(body.phaseId) ?? "",
       title: asString(body.title) ?? "",
       description: asString(body.description) ?? "",
+      race: parseRaceValue(body.race, false) ?? undefined,
       assignee: asString(body.assignee) as
         | "UNASSIGNED"
         | "MOCK_CLI"
@@ -53,6 +70,7 @@ export async function handleTasksApi(
       taskId: decodeURIComponent(updateTaskMatch[1]),
       title: asString(body.title) ?? "",
       description: asString(body.description) ?? "",
+      race: parseRaceValue(body.race, true),
       dependencies,
       projectName: asString(body.projectName),
     });

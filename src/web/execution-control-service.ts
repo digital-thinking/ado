@@ -1,8 +1,13 @@
 import { ExecutionRunLock } from "../engine/execution-run-lock";
+import { PhaseLoopControl } from "../engine/phase-loop-control";
+import { PhaseRunner, type PhaseRunnerConfig } from "../engine/phase-runner";
 import { resolveActivePhaseStrict } from "../state/active-phase";
+import { loadAuthPolicy } from "../security/policy-loader";
+import { loadCliSettings, getAvailableAgents } from "../cli/settings";
 import type { AgentView } from "./agent-supervisor";
 import type { ControlCenterService } from "./control-center-service";
-import type { CLIAdapterId, ProjectState, Task } from "../types";
+import type { CLIAdapterId, CliAgentSettings } from "../types";
+import type { RuntimeEvent } from "../types/runtime-events";
 
 const STOP_SETTLE_POLL_MS = 1_000;
 const STOP_SETTLE_MAX_ATTEMPTS = 15;
@@ -28,7 +33,10 @@ export type ExecutionControlServiceInput = {
   };
   projectRootDir: string;
   projectName: string;
+  settingsFilePath: string;
+  agentSettings: CliAgentSettings;
   resolveDefaultAssignee: ResolveDefaultAssignee;
+  onRuntimeEvent?: (event: RuntimeEvent) => Promise<void> | void;
   sleep?: (ms: number) => Promise<void>;
 };
 
@@ -36,25 +44,26 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function pickNextAutoTask(tasks: Task[]): Task | undefined {
-  const ciFix = tasks.find((task) => task.status === "CI_FIX");
-  if (ciFix) {
-    return ciFix;
+export function resolveExecutionProjectRootDir(
+  fallbackProjectRootDir: string,
+  projectName: string,
+  settings: { projects: Array<{ name: string; rootDir: string }> },
+): string {
+  const fallback = fallbackProjectRootDir.trim();
+  if (!fallback) {
+    throw new Error("fallbackProjectRootDir must not be empty.");
   }
-  return tasks.find((task) => task.status === "TODO");
-}
 
-function resolveActivePhase(state: ProjectState) {
-  return resolveActivePhaseStrict(state);
-}
+  const normalizedProjectName = projectName.trim();
+  if (!normalizedProjectName) {
+    throw new Error("projectName must not be empty.");
+  }
 
-function resolveTask(
-  state: ProjectState,
-  phaseId: string,
-  taskId: string,
-): Task | undefined {
-  const phase = state.phases.find((candidate) => candidate.id === phaseId);
-  return phase?.tasks.find((candidate) => candidate.id === taskId);
+  const project = settings.projects.find((candidate) => {
+    return candidate.name === normalizedProjectName;
+  });
+  const projectRootDir = project?.rootDir?.trim();
+  return projectRootDir || fallback;
 }
 
 export class ExecutionControlService {
@@ -64,10 +73,16 @@ export class ExecutionControlService {
     kill: (id: string) => AgentView;
   };
   private readonly projectRootDir: string;
+  private readonly settingsFilePath: string;
+  private readonly agentSettings: CliAgentSettings;
   private readonly resolveDefaultAssignee: ResolveDefaultAssignee;
+  private readonly onRuntimeEvent: (
+    event: RuntimeEvent,
+  ) => Promise<void> | void;
   private readonly sleep: (ms: number) => Promise<void>;
   private status: AutoExecutionStatus;
   private runLock: ExecutionRunLock | null = null;
+  private loopControl: PhaseLoopControl | null = null;
 
   constructor(input: ExecutionControlServiceInput) {
     if (!input.projectRootDir.trim()) {
@@ -76,7 +91,10 @@ export class ExecutionControlService {
     this.control = input.control;
     this.agents = input.agents;
     this.projectRootDir = input.projectRootDir;
+    this.settingsFilePath = input.settingsFilePath;
+    this.agentSettings = input.agentSettings;
     this.resolveDefaultAssignee = input.resolveDefaultAssignee;
+    this.onRuntimeEvent = input.onRuntimeEvent ?? (() => {});
     this.sleep =
       input.sleep ??
       ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -116,12 +134,18 @@ export class ExecutionControlService {
     if (!projectName) {
       throw new Error("projectName must not be empty.");
     }
+    const settings = await loadCliSettings(this.settingsFilePath);
+    const projectRootDir = resolveExecutionProjectRootDir(
+      this.projectRootDir,
+      projectName,
+      settings,
+    );
 
     const lockState = await this.control.getState(projectName);
     const lockPhaseId =
       lockState.activePhaseIds[0]?.trim() || "no-active-phase";
     const runLock = new ExecutionRunLock({
-      projectRootDir: this.projectRootDir,
+      projectRootDir,
       projectName,
       phaseId: lockPhaseId,
       owner: "WEB_AUTO_MODE",
@@ -139,7 +163,7 @@ export class ExecutionControlService {
       message: `Auto mode running for project ${projectName}.`,
     });
 
-    void this.runAutoLoop(projectName).catch(async (error) => {
+    void this.runPhaseRunner(projectName).catch(async (error) => {
       const message = error instanceof Error ? error.message : String(error);
       this.setStatus({
         running: false,
@@ -181,9 +205,12 @@ export class ExecutionControlService {
     this.setStatus({
       ...this.status,
       stopRequested: true,
-      message:
-        "Stop requested. Stopping at a clean boundary and resetting active task.",
+      message: "Stop requested. Stopping at a clean boundary.",
     });
+
+    if (this.loopControl) {
+      this.loopControl.requestStop();
+    }
 
     await this.stopActiveTaskAndReset();
     return this.getStatus(projectName);
@@ -196,121 +223,119 @@ export class ExecutionControlService {
     };
   }
 
-  private async runAutoLoop(projectName: string): Promise<void> {
+  private async runPhaseRunner(projectName: string): Promise<void> {
+    const loopControl = new PhaseLoopControl();
+    this.loopControl = loopControl;
+
     try {
-      while (true) {
-        if (this.status.stopRequested) {
-          this.setStatus({
-            running: false,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: "Auto mode stopped.",
-          });
-          return;
-        }
+      const settings = await loadCliSettings(this.settingsFilePath);
+      const policy = await loadAuthPolicy(this.settingsFilePath);
 
-        const state = await this.control.getState(projectName);
-        const phase = resolveActivePhase(state);
+      const project = settings.projects.find((p) => p.name === projectName);
+      const projectExec = {
+        autoMode:
+          project?.executionSettings?.autoMode ??
+          settings.executionLoop.autoMode,
+        defaultAssignee:
+          project?.executionSettings?.defaultAssignee ??
+          settings.internalWork.assignee,
+        defaultRace:
+          project?.executionSettings?.defaultRace ??
+          settings.executionLoop.defaultRace,
+        maxTaskRetries:
+          project?.executionSettings?.maxTaskRetries ??
+          settings.executionLoop.maxTaskRetries,
+        phaseTimeoutMs:
+          project?.executionSettings?.phaseTimeoutMs ??
+          settings.executionLoop.phaseTimeoutMs,
+      };
 
-        const nextTask = pickNextAutoTask(phase.tasks);
-        if (!nextTask) {
-          this.setStatus({
-            running: false,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: "Auto mode finished. No TODO or CI_FIX tasks remain.",
-          });
-          return;
-        }
+      const enabledAdapters = getAvailableAgents(settings);
+      const state = await this.control.getState(projectName);
+      const activePhase = resolveActivePhaseStrict(state);
 
-        const defaultAssignee = await this.resolveDefaultAssignee(projectName);
-        const assignee: CLIAdapterId =
-          nextTask.assignee !== "UNASSIGNED"
-            ? (nextTask.assignee as CLIAdapterId)
-            : defaultAssignee;
+      const projectRootDir = resolveExecutionProjectRootDir(
+        this.projectRootDir,
+        projectName,
+        settings,
+      );
 
-        this.setStatus({
-          running: true,
-          stopRequested: this.status.stopRequested,
-          projectName,
-          phaseId: phase.id,
-          taskId: nextTask.id,
-          taskTitle: nextTask.title,
-          message: `Running task '${nextTask.title}' with ${assignee}.`,
-        });
+      const config: PhaseRunnerConfig = {
+        mode: "AUTO",
+        countdownSeconds: settings.executionLoop.countdownSeconds,
+        activeAssignee: projectExec.defaultAssignee,
+        enabledAdapters,
+        adapterAffinities: settings.agents.adapterAffinities,
+        adapterCircuitBreakers: {
+          CODEX_CLI: settings.agents.CODEX_CLI.circuitBreaker,
+          CLAUDE_CLI: settings.agents.CLAUDE_CLI.circuitBreaker,
+          GEMINI_CLI: settings.agents.GEMINI_CLI.circuitBreaker,
+          MOCK_CLI: settings.agents.MOCK_CLI.circuitBreaker,
+        },
+        maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
+        testerCommand: settings.executionLoop.testerCommand,
+        testerArgs: settings.executionLoop.testerArgs,
+        testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+        defaultRace: projectExec.defaultRace,
+        maxTaskRetries: projectExec.maxTaskRetries,
+        judgeAdapter: settings.executionLoop.judgeAdapter,
+        phaseTimeoutMs: projectExec.phaseTimeoutMs,
+        ciEnabled: settings.executionLoop.ciEnabled,
+        vcsProvider: settings.executionLoop.vcsProvider,
+        gates: settings.executionLoop.gates,
+        ciBaseBranch: settings.executionLoop.ciBaseBranch,
+        ciPullRequest: settings.executionLoop.pullRequest,
+        validationMaxRetries: settings.executionLoop.validationMaxRetries,
+        ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
+        ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
+        deliberation: {
+          reviewerAdapter: settings.executionLoop.deliberation.reviewerAdapter,
+          maxRefinePasses: settings.executionLoop.deliberation.maxRefinePasses,
+        },
+        projectRootDir,
+        worktrees: settings.worktrees,
+        phaseId: activePhase.id,
+        projectName,
+        policy,
+        role: "admin",
+      };
 
-        const updatedState = await this.control.startTaskAndWait({
-          projectName,
-          phaseId: phase.id,
-          taskId: nextTask.id,
-          assignee,
-        });
-        const resultTask = resolveTask(updatedState, phase.id, nextTask.id);
-        if (!resultTask) {
-          throw new Error(
-            "Active task disappeared while auto mode was running.",
-          );
-        }
+      const runner = new PhaseRunner(
+        this.control,
+        config,
+        loopControl,
+        async (event) => {
+          // Update status from runtime events for UI visibility
+          if (
+            event.type === "task.lifecycle.phase-update" &&
+            "status" in event.payload
+          ) {
+            this.setStatus({
+              ...this.status,
+              phaseId: event.phaseId,
+              message: String(
+                (event.payload as { message?: string }).message ?? event.type,
+              ),
+            });
+          }
+          // Forward to external listeners (Telegram, logging, etc.)
+          await this.onRuntimeEvent(event);
+        },
+      );
 
-        if (this.status.stopRequested) {
-          this.setStatus({
-            running: false,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: "Auto mode stopped. Reset to the last completed task.",
-          });
-          return;
-        }
+      await runner.run();
 
-        if (resultTask.status === "DONE") {
-          this.setStatus({
-            running: true,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: `Completed task '${resultTask.title}'. Continuing...`,
-          });
-          continue;
-        }
-
-        if (resultTask.status === "FAILED") {
-          this.setStatus({
-            running: false,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: `Auto mode stopped because task '${resultTask.title}' failed.`,
-          });
-          return;
-        }
-
-        if (resultTask.status === "DEAD_LETTER") {
-          this.setStatus({
-            running: false,
-            stopRequested: false,
-            projectName,
-            phaseId: undefined,
-            taskId: undefined,
-            taskTitle: undefined,
-            message: `Auto mode stopped because task '${resultTask.title}' is DEAD_LETTER. Reset it to TODO after manual remediation.`,
-          });
-          return;
-        }
-      }
+      this.setStatus({
+        running: false,
+        stopRequested: false,
+        projectName,
+        phaseId: undefined,
+        taskId: undefined,
+        taskTitle: undefined,
+        message: "Auto mode finished. Phase execution completed.",
+      });
     } finally {
+      this.loopControl = null;
       if (this.status.running && this.status.projectName === projectName) {
         this.setStatus({
           ...this.status,
@@ -356,27 +381,21 @@ export class ExecutionControlService {
       this.agents.kill(runningAgent.id);
     }
 
-    let settledTask: Task | undefined;
     for (let attempt = 0; attempt < STOP_SETTLE_MAX_ATTEMPTS; attempt += 1) {
       const state = await this.control.getState(projectName);
-      const task = resolveTask(state, phaseId, taskId);
+      const phase = state.phases.find((p) => p.id === phaseId);
+      const task = phase?.tasks.find((t) => t.id === taskId);
       if (task && task.status !== "IN_PROGRESS") {
-        settledTask = task;
+        if (task.status === "FAILED") {
+          await this.control.resetTaskToTodo({
+            projectName,
+            phaseId,
+            taskId,
+          });
+        }
         break;
       }
       await this.sleep(STOP_SETTLE_POLL_MS);
-    }
-
-    if (!settledTask) {
-      throw new Error("Failed to stop active task cleanly within timeout.");
-    }
-
-    if (settledTask.status === "FAILED") {
-      await this.control.resetTaskToTodo({
-        projectName,
-        phaseId,
-        taskId,
-      });
     }
   }
 }

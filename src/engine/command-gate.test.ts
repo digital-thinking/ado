@@ -6,6 +6,7 @@ import type {
   ProcessRunResult,
   ProcessRunner,
 } from "../process";
+import { ProcessExecutionError } from "../process";
 
 const baseContext: GateContext = {
   phaseId: "phase-1",
@@ -100,6 +101,30 @@ describe("CommandGate", () => {
     expect(result.passed).toBe(false);
     expect(result.retryable).toBe(true);
     expect(result.diagnostics).toContain("ECONNRESET");
+  });
+
+  test("treats process exit failures as non-retryable and surfaces output", async () => {
+    const gate = new CommandGate(
+      { command: "npm", args: ["test"] },
+      throwingRunner(
+        new ProcessExecutionError("Command failed", {
+          command: "npm",
+          args: ["test"],
+          cwd: "/tmp/project",
+          exitCode: 1,
+          signal: null,
+          stdout: "Checking...\n",
+          stderr: "3 tests failed\n",
+          durationMs: 10,
+        }),
+      ),
+    );
+    const result = await gate.evaluate(baseContext);
+
+    expect(result.passed).toBe(false);
+    expect(result.retryable).toBe(false);
+    expect(result.diagnostics).toContain("Checking...");
+    expect(result.diagnostics).toContain("3 tests failed");
   });
 
   test("passes cwd from context", async () => {

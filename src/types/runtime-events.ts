@@ -240,6 +240,51 @@ export const GateActivityEventSchema = RuntimeEventBaseSchema.extend({
   }),
 });
 
+export const RaceStartEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("race-lifecycle"),
+  type: z.literal("race:start"),
+  payload: z.object({
+    raceCount: z.number().int().positive(),
+    baseBranchName: z.string().min(1),
+    summary: z.string().min(1),
+  }),
+});
+
+export const RaceBranchEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("race-lifecycle"),
+  type: z.literal("race:branch"),
+  payload: z.object({
+    branchIndex: z.number().int().positive(),
+    branchName: z.string().min(1),
+    status: z.enum(["fulfilled", "rejected"]),
+    summary: z.string().min(1),
+    error: z.string().min(1).optional(),
+  }),
+});
+
+export const RaceJudgeEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("race-lifecycle"),
+  type: z.literal("race:judge"),
+  payload: z.object({
+    judgeAdapter: CLIAdapterIdSchema,
+    pickedBranchIndex: z.number().int().positive(),
+    branchName: z.string().min(1),
+    summary: z.string().min(1),
+    reasoning: z.string().min(1),
+  }),
+});
+
+export const RacePickEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("race-lifecycle"),
+  type: z.literal("race:pick"),
+  payload: z.object({
+    branchIndex: z.number().int().positive(),
+    branchName: z.string().min(1),
+    commitCount: z.number().int().min(0),
+    summary: z.string().min(1),
+  }),
+});
+
 export const TerminalOutcomeEventSchema = RuntimeEventBaseSchema.extend({
   family: z.literal("terminal-outcome"),
   type: z.literal("terminal.outcome"),
@@ -265,6 +310,10 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   PrActivityEventSchema,
   CiActivityEventSchema,
   GateActivityEventSchema,
+  RaceStartEventSchema,
+  RaceBranchEventSchema,
+  RaceJudgeEventSchema,
+  RacePickEventSchema,
   TerminalOutcomeEventSchema,
 ]);
 export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
@@ -365,6 +414,11 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
       return `CI: ${event.payload.summary}`;
     case "gate.activity":
       return `Gate: ${event.payload.summary}`;
+    case "race:start":
+    case "race:branch":
+    case "race:judge":
+    case "race:pick":
+      return `Race: ${event.payload.summary}`;
     case "terminal.outcome":
       return `Outcome: ${event.payload.summary}`;
     case "adapter.output":
@@ -392,6 +446,11 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
     case "recovery.activity":
       return event.payload.summary;
     case "gate.activity":
+      return event.payload.summary;
+    case "race:start":
+    case "race:branch":
+    case "race:judge":
+    case "race:pick":
       return event.payload.summary;
     case "terminal.outcome":
       return event.payload.summary;
@@ -442,6 +501,9 @@ export function shouldNotifyRuntimeEventForTelegram(
     if (event.type === "gate.activity" && event.payload.stage === "start") {
       return false;
     }
+    if (event.type === "race:start") {
+      return false;
+    }
     if (event.type === "adapter.output") {
       return false;
     }
@@ -483,6 +545,11 @@ export function shouldNotifyRuntimeEventForTelegram(
       );
     case "gate.activity":
       return event.payload.stage === "fail";
+    case "race:start":
+    case "race:branch":
+    case "race:judge":
+    case "race:pick":
+      return false;
     case "adapter.circuit":
       return true;
     default:
@@ -591,6 +658,45 @@ export function createRuntimeEventNotificationKey(event: RuntimeEvent): string {
         event.agentId ?? "",
         event.payload.stream,
         event.payload.line,
+      ].join("|");
+    case "race:start":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.raceCount,
+        event.payload.baseBranchName,
+      ].join("|");
+    case "race:branch":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.branchIndex,
+        event.payload.branchName,
+        event.payload.status,
+      ].join("|");
+    case "race:judge":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.judgeAdapter,
+        event.payload.pickedBranchIndex,
+        event.payload.branchName,
+      ].join("|");
+    case "race:pick":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.branchIndex,
+        event.payload.branchName,
+        event.payload.commitCount,
       ].join("|");
     case "gate.activity":
       return [

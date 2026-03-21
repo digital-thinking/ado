@@ -25,6 +25,8 @@ type TestState = {
       id: string;
       title: string;
       description: string;
+      race?: number;
+      raceState?: Record<string, unknown>;
       status: string;
       assignee: string;
       dependencies?: string[];
@@ -56,6 +58,7 @@ describe("web app api", () => {
     const runtimeConfig = {
       defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
       autoMode: false,
+      defaultRace: 1,
       maxTaskRetries: 3,
       phaseTimeoutMs: 21_600_000,
     };
@@ -96,6 +99,7 @@ describe("web app api", () => {
             id: "task-1",
             title: input.title,
             description: input.description,
+            race: input.race,
             status: "TODO",
             assignee: input.assignee ?? "UNASSIGNED",
             dependencies: input.dependencies ?? [],
@@ -115,7 +119,19 @@ describe("web app api", () => {
           }
           task.title = input.title;
           task.description = input.description;
+          task.race =
+            input.race === undefined ? task.race : (input.race ?? undefined);
           task.dependencies = input.dependencies;
+          return state as never;
+        },
+        updateTaskRaceState: async (input: any) => {
+          const phase = state.phases.find((item) => item.id === input.phaseId);
+          const task = phase?.tasks.find((item) => item.id === input.taskId);
+          if (task) {
+            task.raceState =
+              (input.raceState as Record<string, unknown> | undefined) ??
+              undefined;
+          }
           return state as never;
         },
         setActivePhase: async (
@@ -372,6 +388,7 @@ describe("web app api", () => {
           phaseId: "phase-1",
           title: "Build page",
           description: "Implement dashboard",
+          race: 3,
         }),
       }),
     );
@@ -383,6 +400,7 @@ describe("web app api", () => {
     const statePayload = (await stateResponse.json()) as TestState;
     expect(statePayload.phases).toHaveLength(1);
     expect(statePayload.phases[0].tasks).toHaveLength(1);
+    expect(statePayload.phases[0].tasks[0].race).toBe(3);
 
     const updateTaskResponse = await app.fetch(
       new Request("http://localhost/api/tasks/task-1", {
@@ -392,6 +410,7 @@ describe("web app api", () => {
           phaseId: "phase-1",
           title: "Build page v2",
           description: "Implement dashboard and editing",
+          race: null,
           dependencies: [],
         }),
       }),
@@ -402,6 +421,7 @@ describe("web app api", () => {
     expect(updatedState.phases[0].tasks[0].description).toBe(
       "Implement dashboard and editing",
     );
+    expect(updatedState.phases[0].tasks[0].race).toBeUndefined();
 
     const runtimeConfigResponse = await app.fetch(
       new Request("http://localhost/api/runtime-config"),
@@ -410,6 +430,7 @@ describe("web app api", () => {
     const runtimeConfigPayload = await runtimeConfigResponse.json();
     expect(runtimeConfigPayload.defaultInternalWorkAssignee).toBe("CODEX_CLI");
     expect(runtimeConfigPayload.autoMode).toBe(false);
+    expect(runtimeConfigPayload.defaultRace).toBe(1);
     expect(runtimeConfigPayload.maxTaskRetries).toBe(3);
     expect(runtimeConfigPayload.phaseTimeoutMs).toBe(21_600_000);
 
@@ -429,6 +450,7 @@ describe("web app api", () => {
       "GEMINI_CLI",
     );
     expect(runtimeConfigUpdatePayload.autoMode).toBe(true);
+    expect(runtimeConfigUpdatePayload.defaultRace).toBe(1);
     expect(runtimeConfigUpdatePayload.maxTaskRetries).toBe(3);
     expect(runtimeConfigUpdatePayload.phaseTimeoutMs).toBe(21_600_000);
 
@@ -580,6 +602,7 @@ describe("multi-project api", () => {
     executionSettings: {
       autoMode: false,
       defaultAssignee: "CODEX_CLI" as const,
+      defaultRace: 1,
       maxTaskRetries: 3,
       phaseTimeoutMs: 21_600_000,
     },
@@ -607,6 +630,7 @@ describe("multi-project api", () => {
         patch: {
           autoMode?: boolean;
           defaultAssignee?: CLIAdapterId;
+          defaultRace?: number;
           maxTaskRetries?: number;
           phaseTimeoutMs?: number;
         },
@@ -618,6 +642,7 @@ describe("multi-project api", () => {
     const runtimeConfig = {
       defaultInternalWorkAssignee: "CODEX_CLI" as CLIAdapterId,
       autoMode: false,
+      defaultRace: 1,
       maxTaskRetries: 3,
       phaseTimeoutMs: 21_600_000,
     };
@@ -626,6 +651,7 @@ describe("multi-project api", () => {
       internalWork: { assignee: "MOCK_CLI" },
       executionLoop: {
         autoMode: false,
+        defaultRace: 1,
         maxTaskRetries: 3,
         phaseTimeoutMs: 21_600_000,
       },
@@ -651,6 +677,7 @@ describe("multi-project api", () => {
         createPhase: async (_input: unknown) => ({}) as never,
         createTask: async (_input: unknown) => ({}) as never,
         updateTask: async (_input: unknown) => ({}) as never,
+        updateTaskRaceState: async (_input: unknown) => ({}) as never,
         setActivePhase: async (_input: unknown) => ({}) as never,
         startTask: async (_input: unknown) => ({}) as never,
         resetTaskToTodo: async (_input: unknown) => ({}) as never,
@@ -785,6 +812,7 @@ describe("multi-project api", () => {
     const capturedPatches: Array<{
       autoMode?: boolean;
       defaultAssignee?: CLIAdapterId;
+      defaultRace?: number;
       maxTaskRetries?: number;
       phaseTimeoutMs?: number;
     }> = [];
@@ -797,6 +825,7 @@ describe("multi-project api", () => {
           executionSettings: {
             autoMode: true,
             defaultAssignee: "CLAUDE_CLI",
+            defaultRace: 4,
             maxTaskRetries: 5,
             phaseTimeoutMs: 42_000,
           },
@@ -811,6 +840,7 @@ describe("multi-project api", () => {
         body: JSON.stringify({
           autoMode: true,
           defaultAssignee: "CLAUDE_CLI",
+          defaultRace: 4,
           maxTaskRetries: 5,
           phaseTimeoutMs: 42_000,
         }),
@@ -821,11 +851,13 @@ describe("multi-project api", () => {
     expect(payload.name).toBe("alpha");
     expect(payload.executionSettings?.autoMode).toBe(true);
     expect(payload.executionSettings?.defaultAssignee).toBe("CLAUDE_CLI");
+    expect(payload.executionSettings?.defaultRace).toBe(4);
     expect(payload.executionSettings?.maxTaskRetries).toBe(5);
     expect(payload.executionSettings?.phaseTimeoutMs).toBe(42_000);
     expect(capturedPatches).toHaveLength(1);
     expect(capturedPatches[0]?.autoMode).toBe(true);
     expect(capturedPatches[0]?.defaultAssignee).toBe("CLAUDE_CLI");
+    expect(capturedPatches[0]?.defaultRace).toBe(4);
     expect(capturedPatches[0]?.maxTaskRetries).toBe(5);
     expect(capturedPatches[0]?.phaseTimeoutMs).toBe(42_000);
   });
@@ -1027,6 +1059,7 @@ describe("project tabs frontend (P12-006)", () => {
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
         updateTask: async () => ({}) as never,
+        updateTaskRaceState: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
@@ -1052,12 +1085,14 @@ describe("project tabs frontend (P12-006)", () => {
       getRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        defaultRace: 1,
         maxTaskRetries: 3,
         phaseTimeoutMs: 21_600_000,
       }),
       updateRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        defaultRace: 1,
         maxTaskRetries: 3,
         phaseTimeoutMs: 21_600_000,
       }),
@@ -1154,6 +1189,15 @@ describe("project tabs frontend (P12-006)", () => {
     expect(html).toContain("tab-settings");
     expect(html).toContain('id="settingsContent"');
   });
+
+  test("HTML exposes race controls for defaults and task overrides", async () => {
+    const html = await getHtml();
+    expect(html).toContain('id="runtimeDefaultRace"');
+    expect(html).toContain('id="globalDefaultRace"');
+    expect(html).toContain('id="taskRace"');
+    expect(html).toContain("task-edit-race");
+    expect(html).toContain("Judge reasoning");
+  });
 });
 
 describe("agent top bar frontend (P12-007)", () => {
@@ -1165,6 +1209,7 @@ describe("agent top bar frontend (P12-007)", () => {
         createPhase: async () => ({}) as never,
         createTask: async () => ({}) as never,
         updateTask: async () => ({}) as never,
+        updateTaskRaceState: async () => ({}) as never,
         setActivePhase: async () => ({}) as never,
         startTask: async () => ({}) as never,
         resetTaskToTodo: async () => ({}) as never,
@@ -1190,12 +1235,14 @@ describe("agent top bar frontend (P12-007)", () => {
       getRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        defaultRace: 1,
         maxTaskRetries: 3,
         phaseTimeoutMs: 21_600_000,
       }),
       updateRuntimeConfig: async () => ({
         defaultInternalWorkAssignee: "MOCK_CLI" as CLIAdapterId,
         autoMode: false,
+        defaultRace: 1,
         maxTaskRetries: 3,
         phaseTimeoutMs: 21_600_000,
       }),

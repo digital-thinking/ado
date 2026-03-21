@@ -86,6 +86,43 @@ describe("web server runtime", () => {
     }
   });
 
+  test("starts server even when Telegram is enabled in settings", async () => {
+    const settingsFilePath = join(sandboxDir, "settings.json");
+    await Bun.write(
+      settingsFilePath,
+      JSON.stringify(
+        {
+          telegram: {
+            enabled: true,
+            botToken: "test-token",
+            ownerId: 123456,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const runtime = await startWebControlCenter({
+      cwd: sandboxDir,
+      stateFilePath,
+      settingsFilePath,
+      projectName: "IxADO",
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      agentSettings: defaultAgentSettings,
+      webLogFilePath: join(sandboxDir, ".ixado", "web.log"),
+      port: 0,
+    });
+
+    try {
+      const response = await fetch(`${runtime.url}/api/state`);
+      expect(response.status).toBe(200);
+    } finally {
+      runtime.stop();
+    }
+  });
+
   test("startup reconciles stale RUNNING agent when linked task is terminal", async () => {
     const originalGlobal = process.env.IXADO_GLOBAL_CONFIG_FILE;
     const globalConfigPath = join(sandboxDir, "global-config.json");

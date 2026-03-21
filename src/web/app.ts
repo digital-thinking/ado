@@ -25,6 +25,7 @@ import type {
   CliSettingsOverride,
   ProjectRecord,
   ProjectState,
+  TaskRaceState,
 } from "../types";
 import { handleApi } from "./api";
 import { text } from "./api/utils";
@@ -50,6 +51,12 @@ export type ControlCenterControl = {
   updateTask(
     input: UpdateTaskInput & { projectName?: string },
   ): ReturnType<ControlCenterService["updateTask"]>;
+  updateTaskRaceState(input: {
+    phaseId: string;
+    taskId: string;
+    raceState?: TaskRaceState;
+    projectName?: string;
+  }): ReturnType<ControlCenterService["updateTaskRaceState"]>;
   setActivePhase(
     input: SetActivePhaseInput & { projectName?: string },
   ): ReturnType<ControlCenterService["setActivePhase"]>;
@@ -87,6 +94,7 @@ export type ControlCenterControl = {
 export type RuntimeConfig = {
   defaultInternalWorkAssignee: CLIAdapterId;
   autoMode: boolean;
+  defaultRace: number;
   maxTaskRetries: number;
   phaseTimeoutMs: number;
 };
@@ -118,6 +126,7 @@ export type WebAppDependencies = {
     patch: {
       autoMode?: boolean;
       defaultAssignee?: CLIAdapterId;
+      defaultRace?: number;
       maxTaskRetries?: number;
       phaseTimeoutMs?: number;
     },

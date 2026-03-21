@@ -142,6 +142,7 @@ export async function startWebControlCenter(
   let runtimeConfig = {
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     autoMode: input.defaultAutoMode,
+    defaultRace: settings.executionLoop.defaultRace,
     maxTaskRetries: settings.executionLoop.maxTaskRetries,
     phaseTimeoutMs: settings.executionLoop.phaseTimeoutMs,
   };
@@ -371,6 +372,7 @@ export async function startWebControlCenter(
     },
   );
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
+
   const execution = new ExecutionControlService({
     control,
     agents: {
@@ -379,6 +381,8 @@ export async function startWebControlCenter(
     },
     projectRootDir: input.cwd,
     projectName: input.projectName,
+    settingsFilePath: input.settingsFilePath,
+    agentSettings: input.agentSettings,
     resolveDefaultAssignee: async (projectName) => {
       const currentSettings = await loadCliSettings(input.settingsFilePath);
       const project = currentSettings.projects.find(
@@ -396,6 +400,7 @@ export async function startWebControlCenter(
       createPhase: (input) => control.createPhase(input),
       createTask: (input) => control.createTask(input),
       updateTask: (input) => control.updateTask(input),
+      updateTaskRaceState: (input) => control.updateTaskRaceState(input),
       setActivePhase: (input) => control.setActivePhase(input),
       startTask: (input) => control.startTask(input),
       resetTaskToTodo: (input) => control.resetTaskToTodo(input),
@@ -553,7 +558,18 @@ export async function startWebControlCenter(
         },
       };
 
-      return saveCliSettings(input.settingsFilePath, merged);
+      const saved = await saveCliSettings(input.settingsFilePath, merged);
+
+      // Keep in-memory runtimeConfig in sync with persisted settings
+      runtimeConfig = {
+        defaultInternalWorkAssignee: saved.internalWork.assignee,
+        autoMode: saved.executionLoop.autoMode,
+        defaultRace: saved.executionLoop.defaultRace,
+        maxTaskRetries: saved.executionLoop.maxTaskRetries,
+        phaseTimeoutMs: saved.executionLoop.phaseTimeoutMs,
+      };
+
+      return saved;
     },
     execution: {
       getStatus: async (projectName) => execution.getStatus(projectName),
@@ -590,6 +606,7 @@ export async function startWebControlCenter(
       runtimeConfig = {
         defaultInternalWorkAssignee: saved.internalWork.assignee,
         autoMode: saved.executionLoop.autoMode,
+        defaultRace: saved.executionLoop.defaultRace,
         maxTaskRetries: saved.executionLoop.maxTaskRetries,
         phaseTimeoutMs: saved.executionLoop.phaseTimeoutMs,
       };
