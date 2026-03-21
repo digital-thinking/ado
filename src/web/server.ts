@@ -380,6 +380,8 @@ export async function startWebControlCenter(
     },
     projectRootDir: input.cwd,
     projectName: input.projectName,
+    settingsFilePath: input.settingsFilePath,
+    agentSettings: input.agentSettings,
     resolveDefaultAssignee: async (projectName) => {
       const currentSettings = await loadCliSettings(input.settingsFilePath);
       const project = currentSettings.projects.find(
