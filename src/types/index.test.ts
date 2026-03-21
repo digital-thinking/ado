@@ -57,6 +57,7 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.autoMode).toBe(false);
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
     expect(parsed.executionLoop.maxTaskRetries).toBe(3);
+    expect(parsed.executionLoop.defaultRace).toBe(1);
     expect(parsed.executionLoop.phaseTimeoutMs).toBe(21_600_000);
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
@@ -204,6 +205,17 @@ describe("type contracts", () => {
     expect(parsedTask.deliberate).toBe(true);
   });
 
+  test("supports optional race count on tasks", () => {
+    const parsedTask = TaskSchema.parse({
+      id: "67676767-6767-4676-8676-676767676767",
+      title: "Race this task",
+      description: "Run multiple implementations in parallel",
+      race: 3,
+    });
+
+    expect(parsedTask.race).toBe(3);
+  });
+
   test("rejects invalid task type classification", () => {
     expect(() => TaskTypeSchema.parse("refactor")).toThrow();
     expect(() =>
@@ -281,6 +293,17 @@ describe("type contracts", () => {
     });
 
     expect(parsed.executionLoop.phaseTimeoutMs).toBe(42_000);
+  });
+
+  test("supports default race config overrides", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      executionLoop: {
+        defaultRace: 4,
+      },
+    });
+
+    expect(parsed.executionLoop.defaultRace).toBe(4);
   });
 
   test("accepts TIMED_OUT as a persisted phase status", () => {

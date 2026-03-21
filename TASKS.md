@@ -161,7 +161,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 
 ### Phase 35: Race Mode — Multi-Try Task Execution with AI Judge
 
-- [ ] `P35-001` Add optional `race: number` property to `TaskSchema` and `defaultRace: number` (default 1) to phase config in `CliSettingsSchema`. Deps: none.
+- [x] `P35-001` Add optional `race: number` property to `TaskSchema` and `defaultRace: number` (default 1) to phase config in `CliSettingsSchema`. Deps: none.
 - [ ] `P35-002` Implement `RaceOrchestrator` in `src/engine/`: uses `WorktreeManager` to provision N parallel worktree branches under `.ixado/worktrees/<phase-id>/race-<task-id>-<n>/`, dispatches the same task to each, and collects results. Deps: `P35-001`.
 - [ ] `P35-003` Implement judge adapter prompt: build a structured prompt with all branch diffs and outputs; parse response for `PICK <N>` verdict and reasoning text. Configurable `judgeAdapter` in phase settings. Deps: `P35-002`.
 - [ ] `P35-004` Wire `RaceOrchestrator` into `PhaseRunner`: when `race > 1`, fan out to N branches; after all complete, run judge; merge/cherry-pick winner; prune loser worktrees. Fall back to single execution when `race` is unset or 1. Deps: `P35-002`, `P35-003`.
