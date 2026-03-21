@@ -79,7 +79,8 @@ describe("P21-005 Snapshot Tests", () => {
         },
         {
           name: "reset",
-          description: "Reset FAILED task to TODO and hard-reset repo",
+          description:
+            "Reset FAILED/DEAD_LETTER/stale IN_PROGRESS task to TODO and hard-reset repo",
           usage: "reset <taskNumber>",
         },
       ],
@@ -134,6 +135,16 @@ describe("P21-005 Snapshot Tests", () => {
           name: "task-retries",
           description: "Set execution-loop max task retries",
           usage: "task-retries <maxRetries:0-20>",
+        },
+        {
+          name: "race",
+          description: "Set default race count",
+          usage: "race <count>",
+        },
+        {
+          name: "worktrees",
+          description: "Enable/disable managed worktrees",
+          usage: "worktrees <on|off>",
         },
         {
           name: "usage",

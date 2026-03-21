@@ -97,7 +97,7 @@ describe("P21-005 global help text", () => {
       "Start active-phase task",
       "Retry FAILED task with same assignee/session",
       "Show logs/result for task in active phase",
-      "Reset FAILED task to TODO and hard-reset repo",
+      "Reset FAILED/DEAD_LETTER/stale IN_PROGRESS task to TODO and hard-reset repo",
       "Create phase and set it active",
       "Set active phase",
       "Run TODO/CI_FIX tasks in active phase sequentially",
@@ -192,7 +192,9 @@ describe("P21-005 per-group help text", () => {
     expect(out).toContain("Start active-phase task");
     expect(out).toContain("Retry FAILED task with same assignee/session");
     expect(out).toContain("Show logs/result for task in active phase");
-    expect(out).toContain("Reset FAILED task to TODO and hard-reset repo");
+    expect(out).toContain(
+      "Reset FAILED/DEAD_LETTER/stale IN_PROGRESS task to TODO and hard-reset repo",
+    );
   });
 
   test("ixado phase help: header and all subcommand usages", async () => {
@@ -578,6 +580,32 @@ describe("P21-005 config command outcome summaries", () => {
     );
   });
 
+  test("config race 2 updates the default race count", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-race-2-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["config", "race", "2"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Default race count set to 2.");
+    expect(result.stdout).toContain(
+      "Next:    Run 'ixado phase run' to use race count 2.",
+    );
+  });
+
+  test("config worktrees on enables managed worktrees", async () => {
+    const sandbox = await TestSandbox.create("ixado-p21-005-worktrees-on-");
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["config", "worktrees", "on"], sandbox);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Managed worktrees enabled.");
+    expect(result.stdout).toContain(
+      "Next:    Run 'ixado phase run' to apply the updated worktree setting.",
+    );
+  });
+
   test("config outcome lines use 'Next:' label with 4-space padding (9-char field)", async () => {
     // "Next:    " is 9 chars (5 for "Next:" + 4 spaces), matching "Status:  " (7+2).
     const sandbox = await TestSandbox.create("ixado-p21-005-next-label-");
@@ -837,6 +865,8 @@ describe("P21-005 config show output structure", () => {
     expect(out).toContain("Exception recovery max attempts: ");
     expect(out).toContain("Execution loop max task retries: ");
     expect(out).toContain("Execution loop phase timeout: ");
+    expect(out).toContain("Default race count: ");
+    expect(out).toContain("Managed worktrees: ");
     expect(out).toContain("Codexbar usage telemetry: ");
   });
 
@@ -854,6 +884,8 @@ describe("P21-005 config show output structure", () => {
     expect(out).toContain("Exception recovery max attempts: 1");
     expect(out).toContain("Execution loop max task retries: 3");
     expect(out).toContain("Execution loop phase timeout: 21600000 ms");
+    expect(out).toContain("Default race count: 1");
+    expect(out).toContain("Managed worktrees: OFF");
     expect(out).toContain("Codexbar usage telemetry: ON");
   });
 

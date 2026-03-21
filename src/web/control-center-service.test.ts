@@ -611,6 +611,42 @@ describe("ControlCenterService", () => {
     expect(task.errorLogs).toContain("adapter failed");
   });
 
+  test("transitions a planning phase to CODING when a task starts", async () => {
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => ({
+        command: "codex",
+        args: ["run"],
+        stdout: "done",
+        stderr: "",
+        durationMs: 5,
+      }),
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Planning",
+      branchName: "phase-planning",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Kick off coding",
+      description: "Start the first task",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const finished = await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CODEX_CLI",
+    });
+
+    expect(finished.phases[0].status).toBe("CODING");
+    expect(finished.phases[0].tasks[0].status).toBe("DONE");
+  });
+
   test("appends truncation marker to errorLogs when error message exceeds storage limit", async () => {
     const oversizedMessage = "x".repeat(5_000);
     const serviceWithRunner = new ControlCenterService({
@@ -1514,6 +1550,48 @@ describe("ControlCenterService", () => {
       status: "DEAD_LETTER",
     });
     const taskId = withTask.phases[0].tasks[0].id;
+
+    const afterReset = await serviceWithRunner.resetTaskToTodo({
+      phaseId,
+      taskId,
+    });
+
+    expect(resetCalled).toBe(1);
+    expect(afterReset.phases[0].tasks[0].status).toBe("TODO");
+    expect(afterReset.phases[0].tasks[0].assignee).toBe("UNASSIGNED");
+  });
+
+  test("resetTaskToTodo also supports stale IN_PROGRESS tasks", async () => {
+    let resetCalled = 0;
+    const stateEngine = new StateEngine(stateFilePath);
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine,
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      repositoryResetRunner: async () => {
+        resetCalled += 1;
+      },
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Reset Stale",
+      branchName: "phase-reset-stale",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Reset stale task",
+      description: "Task stuck in progress after a crash",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    const state = await stateEngine.readProjectState();
+    state.phases[0].tasks[0] = {
+      ...state.phases[0].tasks[0],
+      status: "IN_PROGRESS",
+      assignee: "CODEX_CLI",
+    } as any;
+    await stateEngine.writeProjectState(state);
 
     const afterReset = await serviceWithRunner.resetTaskToTodo({
       phaseId,

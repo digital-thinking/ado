@@ -56,13 +56,14 @@ export class CommandRegistry {
       });
     }
 
-    await this.executeCommand(command, args.slice(1), args);
+    await this.executeCommand(command, args.slice(1), args, [command.name]);
   }
 
   private async executeCommand(
     command: CommandDefinition,
     remainingArgs: string[],
     fullArgs: string[],
+    path: string[],
   ): Promise<void> {
     const subcommandName = remainingArgs[0];
 
@@ -71,7 +72,7 @@ export class CommandRegistry {
       subcommandName === "--help" ||
       subcommandName === "-h"
     ) {
-      this.printCommandHelp(command);
+      this.printCommandHelp(command, path);
       return;
     }
 
@@ -80,7 +81,12 @@ export class CommandRegistry {
         (s) => s.name === subcommandName,
       );
       if (subcommand) {
-        await this.executeCommand(subcommand, remainingArgs.slice(1), fullArgs);
+        await this.executeCommand(
+          subcommand,
+          remainingArgs.slice(1),
+          fullArgs,
+          [...path, subcommand.name],
+        );
         return;
       }
     }
@@ -91,7 +97,7 @@ export class CommandRegistry {
     }
 
     if (command.subcommands) {
-      this.printCommandHelp(command);
+      this.printCommandHelp(command, path);
       return;
     }
 
@@ -134,14 +140,16 @@ export class CommandRegistry {
     console.info("Run 'ixado <command> help' for subcommand details.");
   }
 
-  private printCommandHelp(command: CommandDefinition): void {
+  private printCommandHelp(command: CommandDefinition, path: string[]): void {
     const label = command.name.charAt(0).toUpperCase() + command.name.slice(1);
     console.info(`${label} commands:`);
     console.info("");
+    const usagePrefix =
+      `ixado ${path.filter((segment) => segment !== "").join(" ")}`.trim();
     if (command.subcommands) {
       // Collect rows so column width can be computed dynamically.
       const rows = command.subcommands.map((sub) => ({
-        usage: `ixado ${command.name} ${sub.usage || sub.name}`,
+        usage: `${usagePrefix} ${sub.usage || sub.name}`,
         description: sub.description,
       }));
       const colWidth = Math.max(...rows.map((r) => r.usage.length)) + 2;
@@ -149,7 +157,13 @@ export class CommandRegistry {
         console.info(`  ${row.usage.padEnd(colWidth)} ${row.description}`);
       }
     } else {
-      const usage = `ixado ${command.usage || command.name}`;
+      const leafPrefix = `ixado ${path
+        .slice(0, Math.max(0, path.length - 1))
+        .filter((segment) => segment !== "")
+        .join(" ")}`.trim();
+      const usage = command.usage
+        ? `${leafPrefix} ${command.usage}`.trim()
+        : usagePrefix;
       console.info(`  ${usage}  ${command.description}`);
     }
   }

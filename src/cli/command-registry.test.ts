@@ -141,6 +141,15 @@ describe("CommandRegistry", () => {
     expect(infoOutput[headerIdx + 1]).toBe("");
   });
 
+  test("nested subcommand help keeps the full command path in usage", async () => {
+    const registry = new CommandRegistry(testCommands);
+    await registry.run(["task", "create", "help"]);
+    const output = infoOutput.join("\n");
+    expect(output).toContain("Create commands:");
+    expect(output).toContain("ixado task create <title>");
+    expect(output).not.toContain("ixado create <title>");
+  });
+
   test("throws ValidationError on unknown command", async () => {
     const registry = new CommandRegistry(testCommands);
     await expect(registry.run(["unknown"])).rejects.toThrow(ValidationError);

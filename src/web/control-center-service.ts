@@ -803,6 +803,7 @@ export class ControlCenterService {
     nextTasks[taskIndex] = updatedTask;
     nextPhases[phaseIndex] = {
       ...phase,
+      status: phase.status === "PLANNING" ? "CODING" : phase.status,
       tasks: nextTasks,
     };
 
@@ -2161,9 +2162,13 @@ export class ControlCenterService {
       status === "DONE" &&
       phase.status === "CI_FAILED" &&
       isRecoveringFixTaskStatus(startedFromStatus);
+    const nextPhaseStatus =
+      shouldRecoverFromCiFailed || phase.status === "PLANNING"
+        ? "CODING"
+        : phase.status;
     nextPhases[phaseIndex] = PhaseSchema.parse({
       ...phase,
-      status: shouldRecoverFromCiFailed ? "CODING" : phase.status,
+      status: nextPhaseStatus,
       ciStatusContext: shouldRecoverFromCiFailed
         ? undefined
         : phase.ciStatusContext,
@@ -2392,9 +2397,13 @@ export class ControlCenterService {
       throw new Error(`Task not found: ${taskId}`);
     }
     const task = phase.tasks[taskIndex];
-    if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
+    if (
+      task.status !== "FAILED" &&
+      task.status !== "DEAD_LETTER" &&
+      task.status !== "IN_PROGRESS"
+    ) {
       throw new Error(
-        `Task must be FAILED or DEAD_LETTER before reset. Current status: ${task.status}`,
+        `Task must be FAILED, DEAD_LETTER, or stale IN_PROGRESS before reset. Current status: ${task.status}`,
       );
     }
 

@@ -45,11 +45,7 @@ import {
   type TaskType,
   type WorkerAssignee,
 } from "../types";
-import {
-  createTelegramNotificationEvaluator,
-  formatRuntimeEventForCli,
-  formatRuntimeEventForTelegram,
-} from "../types/runtime-events";
+import { formatRuntimeEventForCli } from "../types/runtime-events";
 import { AgentSupervisor, ControlCenterService, type AgentView } from "../web";
 import { loadAuthPolicy } from "../security/policy-loader";
 import { GitHubManager, GitManager, WorktreeManager } from "../vcs";
@@ -1588,11 +1584,15 @@ async function runTaskResetCommand({
     taskNumber,
   );
 
-  if (task.status !== "FAILED" && task.status !== "DEAD_LETTER") {
+  if (
+    task.status !== "FAILED" &&
+    task.status !== "DEAD_LETTER" &&
+    task.status !== "IN_PROGRESS"
+  ) {
     throw new ValidationError(
-      `Task #${taskNumber} is not in FAILED/DEAD_LETTER status (current: ${task.status}).`,
+      `Task #${taskNumber} is not in FAILED/DEAD_LETTER/IN_PROGRESS status (current: ${task.status}).`,
       {
-        hint: "Only failed or dead-letter tasks can be reset.",
+        hint: "Only failed, dead-letter, or stale in-progress tasks can be reset.",
       },
     );
   }
@@ -1656,42 +1656,6 @@ async function runPhaseRunCommand({
   const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
   const enabledAdapters = getAvailableAgents(settings);
-  const telegram = resolveTelegramConfig(settings.telegram);
-
-  let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
-  const notifyTelegramEvent = createTelegramNotificationEvaluator({
-    level: settings.telegram.notifications.level,
-    suppressDuplicates: settings.telegram.notifications.suppressDuplicates,
-  });
-  if (telegram.enabled) {
-    telegramRuntime = createTelegramRuntime({
-      token: telegram.token,
-      ownerId: telegram.ownerId,
-      readState: () => control.getState(),
-      listAgents: () => [],
-      availableAssignees: getAvailableAgents(settings),
-      defaultAssignee: activeAssignee,
-      startTask: async (input) =>
-        control.startActiveTaskAndWait({
-          taskNumber: input.taskNumber,
-          assignee: input.assignee,
-        }),
-      setActivePhase: async (input) =>
-        control.setActivePhase({
-          phaseId: input.phaseId,
-        }),
-      requestNextLoop: () =>
-        loopControl.requestNext()
-          ? "Execution loop advance requested."
-          : "Execution loop is already stopped.",
-      requestStopLoop: () => {
-        loopControl.requestStop();
-        return "Execution loop stop requested.";
-      },
-    });
-    await telegramRuntime.start();
-    console.info("Telegram loop controls enabled: /next and /stop.");
-  }
 
   const runner = new PhaseRunner(
     control,
@@ -1737,9 +1701,6 @@ async function runPhaseRunCommand({
     loopControl,
     async (event) => {
       console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
-      if (telegramRuntime && notifyTelegramEvent(event)) {
-        await telegramRuntime.notifyOwner(formatRuntimeEventForTelegram(event));
-      }
     },
   );
 
@@ -1759,7 +1720,6 @@ async function runPhaseRunCommand({
     await runner.run();
   } finally {
     await runLock.release();
-    telegramRuntime?.stop();
   }
 }
 
@@ -2188,6 +2148,21 @@ function parseConfigPhaseTimeoutMs(rawValue: string): number {
   return phaseTimeoutMs;
 }
 
+function parseConfigDefaultRace(rawValue: string): number {
+  const defaultRace = Number(rawValue.trim());
+  if (!Number.isInteger(defaultRace) || defaultRace <= 0) {
+    throw new ValidationError(
+      `Invalid default race count: '${rawValue}'. Expected a positive integer.`,
+      {
+        usage: "ixado config race <count>",
+        hint: "Use 1 for single execution, or a higher integer for race mode.",
+      },
+    );
+  }
+
+  return defaultRace;
+}
+
 function parseConfigMaxTaskRetries(rawValue: string): number {
   const maxTaskRetries = Number(rawValue.trim());
   if (
@@ -2235,6 +2210,10 @@ async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   );
   console.info(
     `Execution loop phase timeout: ${settings.executionLoop.phaseTimeoutMs} ms`,
+  );
+  console.info(`Default race count: ${projectExecutionSettings.defaultRace}`);
+  console.info(
+    `Managed worktrees: ${settings.worktrees.enabled ? "ON" : "OFF"}`,
   );
   console.info(
     `Codexbar usage telemetry: ${settings.usage.codexbarEnabled ? "ON" : "OFF"}`,
@@ -2456,6 +2435,96 @@ async function runConfigTaskRetriesCommand({
   );
 }
 
+async function runConfigRaceCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
+  if (!rawValue) {
+    throw new ValidationError("Missing required argument: <count>.", {
+      usage: "ixado config race <count>",
+      hint: "Use 1 for single execution, or a higher integer for race mode.",
+    });
+  }
+
+  const defaultRace = parseConfigDefaultRace(rawValue);
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const targetProjectIndex = resolveConfigTargetProjectIndex(settings);
+  const projects = settings.projects.map((project, index) =>
+    index !== targetProjectIndex
+      ? project
+      : {
+          ...project,
+          executionSettings: {
+            ...(project.executionSettings ?? {}),
+            autoMode:
+              project.executionSettings?.autoMode ??
+              settings.executionLoop.autoMode,
+            defaultAssignee:
+              project.executionSettings?.defaultAssignee ??
+              settings.internalWork.assignee,
+            defaultRace,
+          },
+        },
+  );
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    executionLoop: {
+      ...settings.executionLoop,
+      defaultRace,
+    },
+    projects,
+  });
+  const resolvedDefaultRace =
+    targetProjectIndex === undefined
+      ? saved.executionLoop.defaultRace
+      : (saved.projects[targetProjectIndex]?.executionSettings?.defaultRace ??
+        saved.executionLoop.defaultRace);
+
+  console.info(`Default race count set to ${resolvedDefaultRace}.`);
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to use race count ${resolvedDefaultRace}.`,
+  );
+}
+
+async function runConfigWorktreesCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
+  if (!rawValue) {
+    throw new ValidationError("Missing required argument: <on|off>.", {
+      usage: "ixado config worktrees <on|off>",
+      hint: "Use 'on' to enable managed worktrees or 'off' to disable them.",
+    });
+  }
+
+  const enabled = parseConfigToggle(
+    rawValue,
+    "ixado config worktrees <on|off>",
+    "Use 'on' to enable managed worktrees or 'off' to disable them.",
+  );
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    worktrees: {
+      ...settings.worktrees,
+      enabled,
+    },
+  });
+
+  console.info(
+    `Managed worktrees ${saved.worktrees.enabled ? "enabled" : "disabled"}.`,
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated worktree setting.`,
+  );
+}
+
 async function runConfigPhaseTimeoutCommand({
   args,
 }: CommandActionContext): Promise<void> {
@@ -2573,7 +2642,8 @@ async function runCli(args: string[]): Promise<void> {
         },
         {
           name: "reset",
-          description: "Reset FAILED task to TODO and hard-reset repo",
+          description:
+            "Reset FAILED/DEAD_LETTER/stale IN_PROGRESS task to TODO and hard-reset repo",
           usage: "reset <taskNumber>",
           action: runTaskResetCommand,
         },
@@ -2634,6 +2704,12 @@ async function runCli(args: string[]): Promise<void> {
           action: runConfigRecoveryCommand,
         },
         {
+          name: "race",
+          description: "Set default race count",
+          usage: "race <count>",
+          action: runConfigRaceCommand,
+        },
+        {
           name: "task-retries",
           description: "Set execution-loop max task retries",
           usage: "task-retries <maxRetries:0-20>",
@@ -2650,6 +2726,12 @@ async function runCli(args: string[]): Promise<void> {
           description: "Enable/disable codexbar usage telemetry",
           usage: "usage <on|off>",
           action: runConfigUsageCommand,
+        },
+        {
+          name: "worktrees",
+          description: "Enable/disable managed worktrees",
+          usage: "worktrees <on|off>",
+          action: runConfigWorktreesCommand,
         },
       ],
     },
