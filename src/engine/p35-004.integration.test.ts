@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { PhaseRunner, type PhaseRunnerConfig } from "./phase-runner";
 import { DEFAULT_AUTH_POLICY } from "../security/policy";
 import type { ProcessRunner } from "../process";
+import type { RuntimeEvent } from "../types/runtime-events";
 import type { ControlCenterService } from "../web";
 
 function createBaseConfig(): PhaseRunnerConfig {
@@ -146,6 +147,8 @@ describe("P35-004 integration coverage", () => {
       }),
     } as unknown as ControlCenterService;
 
+    const runtimeEvents: RuntimeEvent[] = [];
+
     const runner: ProcessRunner = {
       run: mock(async (input: any) => {
         if (input.command !== "git") {
@@ -226,7 +229,9 @@ describe("P35-004 integration coverage", () => {
         },
       },
       undefined,
-      undefined,
+      async (event) => {
+        runtimeEvents.push(event);
+      },
       runner,
     );
 
@@ -279,6 +284,62 @@ describe("P35-004 integration coverage", () => {
             call.args[3] === phaseWorktreePath),
       ),
     ).toHaveLength(3);
+
+    const raceStartIndex = runtimeEvents.findIndex(
+      (event) => event.type === "race:start",
+    );
+    const raceJudgeIndex = runtimeEvents.findIndex(
+      (event) => event.type === "race:judge",
+    );
+    const racePickIndex = runtimeEvents.findIndex(
+      (event) => event.type === "race:pick",
+    );
+    const raceBranchEvents = runtimeEvents.filter(
+      (event) => event.type === "race:branch",
+    );
+
+    expect(raceStartIndex).toBeGreaterThanOrEqual(0);
+    expect(raceJudgeIndex).toBeGreaterThan(raceStartIndex);
+    expect(racePickIndex).toBeGreaterThan(raceJudgeIndex);
+    expect(raceBranchEvents).toHaveLength(2);
+    expect(
+      raceBranchEvents.every(
+        (event) =>
+          event.type === "race:branch" && event.payload.status === "fulfilled",
+      ),
+    ).toBe(true);
+    expect(
+      raceBranchEvents.some(
+        (event) =>
+          event.type === "race:branch" &&
+          event.payload.branchName === raceBranch1,
+      ),
+    ).toBe(true);
+    expect(
+      raceBranchEvents.some(
+        (event) =>
+          event.type === "race:branch" &&
+          event.payload.branchName === raceBranch2,
+      ),
+    ).toBe(true);
+
+    const judgeEvent = runtimeEvents[raceJudgeIndex];
+    expect(judgeEvent?.type).toBe("race:judge");
+    if (judgeEvent?.type === "race:judge") {
+      expect(judgeEvent.payload.judgeAdapter).toBe("CLAUDE_CLI");
+      expect(judgeEvent.payload.pickedBranchIndex).toBe(2);
+      expect(judgeEvent.payload.reasoning).toBe(
+        "Candidate 2 is the most coherent implementation.",
+      );
+    }
+
+    const pickEvent = runtimeEvents[racePickIndex];
+    expect(pickEvent?.type).toBe("race:pick");
+    if (pickEvent?.type === "race:pick") {
+      expect(pickEvent.payload.branchIndex).toBe(2);
+      expect(pickEvent.payload.branchName).toBe(raceBranch2);
+      expect(pickEvent.payload.commitCount).toBe(2);
+    }
   });
 
   test("falls back to the single-run path when race is 1", async () => {

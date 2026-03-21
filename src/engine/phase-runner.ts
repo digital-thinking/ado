@@ -1467,20 +1467,66 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       console.info(
         `Execution loop: running ${taskLabel} in race mode with ${input.raceCount} branches.`,
       );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "race-lifecycle",
+          type: "race:start",
+          payload: {
+            raceCount: input.raceCount,
+            baseBranchName: input.phase.branchName,
+            summary: `Starting race mode for task #${input.taskNumber} ${input.task.title} with ${input.raceCount} branch(es).`,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: input.phase.id,
+            phaseName: input.phase.name,
+            taskId: input.task.id,
+            taskTitle: input.task.title,
+            taskNumber: input.taskNumber,
+            adapterId: input.assignee,
+          },
+        }),
+      );
       const raceExecution = await orchestrator.run<RaceBranchExecutionOutput>({
         phaseId: input.phase.id,
         taskId: input.task.id,
         raceCount: input.raceCount,
         baseBranchName: input.phase.branchName,
         fromRef: input.phase.branchName,
-        dispatch: async (branch) =>
-          this.runRaceBranch({
-            phase: input.phase,
-            task: prepared.taskForPrompt,
-            assignee: input.assignee,
-            branch,
-            resume: prepared.resume,
-          }),
+        dispatch: async (branch) => {
+          try {
+            const result = await this.runRaceBranch({
+              phase: input.phase,
+              task: prepared.taskForPrompt,
+              assignee: input.assignee,
+              branch,
+              resume: prepared.resume,
+            });
+            await this.publishRaceBranchEvent({
+              phase: input.phase,
+              task: input.task,
+              taskNumber: input.taskNumber,
+              assignee: input.assignee,
+              branch,
+              status: "fulfilled",
+            });
+            return result;
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            await this.publishRaceBranchEvent({
+              phase: input.phase,
+              task: input.task,
+              taskNumber: input.taskNumber,
+              assignee: input.assignee,
+              branch,
+              status: "rejected",
+              error: message,
+            });
+            throw error;
+          }
+        },
       });
       branchResults = raceExecution.branches;
 
@@ -1491,7 +1537,22 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         implementerAssignee: input.assignee,
         branches: branchResults,
       });
-      await this.applyRaceWinner(judgedWinner.winner);
+      await this.publishRaceJudgeEvent({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        judgeAssignee: judgedWinner.judgeAssignee,
+        winner: judgedWinner.winner,
+        reasoning: judgedWinner.reasoning,
+      });
+      const commitCount = await this.applyRaceWinner(judgedWinner.winner);
+      await this.publishRacePickEvent({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        winner: judgedWinner.winner,
+        commitCount,
+      });
       await orchestrator.teardownBranches(branchResults);
       branchResults = [];
 
@@ -1590,6 +1651,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     winner: RaceBranchResult<RaceBranchExecutionOutput> & {
       status: "fulfilled";
     };
+    judgeAssignee: CLIAdapterId;
     reasoning: string;
   }> {
     const fulfilledCount = input.branches.filter(
@@ -1648,6 +1710,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
 
     return {
       winner,
+      judgeAssignee,
       reasoning: verdict.reasoning,
     };
   }
@@ -1704,14 +1767,14 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     winner: RaceBranchResult<RaceBranchExecutionOutput> & {
       status: "fulfilled";
     },
-  ): Promise<void> {
+  ): Promise<number> {
     const commitRange = `${winner.fromRef}..${winner.branchName}`;
     const commits = await this.listCommitsInRange(
       commitRange,
       this.executionCwd,
     );
     if (commits.length === 0) {
-      return;
+      return 0;
     }
 
     await this.git.ensureCleanWorkingTree(this.executionCwd);
@@ -1720,6 +1783,116 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       args: ["cherry-pick", ...commits],
       cwd: this.executionCwd,
     });
+    return commits.length;
+  }
+
+  private async publishRaceBranchEvent(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    assignee: CLIAdapterId;
+    branch: RaceBranch;
+    status: "fulfilled" | "rejected";
+    error?: string;
+  }): Promise<void> {
+    const summary =
+      input.status === "fulfilled"
+        ? `Race branch ${input.branch.index}/${input.branch.branchName} finished successfully.`
+        : `Race branch ${input.branch.index}/${input.branch.branchName} failed: ${input.error ?? "unknown error"}`;
+
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "race-lifecycle",
+        type: "race:branch",
+        payload: {
+          branchIndex: input.branch.index,
+          branchName: input.branch.branchName,
+          status: input.status,
+          summary,
+          error: input.error,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: input.phase.id,
+          phaseName: input.phase.name,
+          taskId: input.task.id,
+          taskTitle: input.task.title,
+          taskNumber: input.taskNumber,
+          adapterId: input.assignee,
+        },
+      }),
+    );
+  }
+
+  private async publishRaceJudgeEvent(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    judgeAssignee: CLIAdapterId;
+    winner: RaceBranchResult<RaceBranchExecutionOutput> & {
+      status: "fulfilled";
+    };
+    reasoning: string;
+  }): Promise<void> {
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "race-lifecycle",
+        type: "race:judge",
+        payload: {
+          judgeAdapter: input.judgeAssignee,
+          pickedBranchIndex: input.winner.index,
+          branchName: input.winner.branchName,
+          summary: `Race judge ${input.judgeAssignee} selected candidate ${input.winner.index} (${input.winner.branchName}).`,
+          reasoning: input.reasoning,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: input.phase.id,
+          phaseName: input.phase.name,
+          taskId: input.task.id,
+          taskTitle: input.task.title,
+          taskNumber: input.taskNumber,
+          adapterId: input.judgeAssignee,
+        },
+      }),
+    );
+  }
+
+  private async publishRacePickEvent(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    winner: RaceBranchResult<RaceBranchExecutionOutput> & {
+      status: "fulfilled";
+    };
+    commitCount: number;
+  }): Promise<void> {
+    const commitSummary =
+      input.commitCount === 1 ? "1 commit" : `${input.commitCount} commits`;
+
+    await this.publishRuntimeEvent(
+      createRuntimeEvent({
+        family: "race-lifecycle",
+        type: "race:pick",
+        payload: {
+          branchIndex: input.winner.index,
+          branchName: input.winner.branchName,
+          commitCount: input.commitCount,
+          summary: `Applied race winner candidate ${input.winner.index} (${input.winner.branchName}) with ${commitSummary}.`,
+        },
+        context: {
+          source: "PHASE_RUNNER",
+          projectName: this.config.projectName,
+          phaseId: input.phase.id,
+          phaseName: input.phase.name,
+          taskId: input.task.id,
+          taskTitle: input.task.title,
+          taskNumber: input.taskNumber,
+        },
+      }),
+    );
   }
 
   private async listCommitsInRange(
