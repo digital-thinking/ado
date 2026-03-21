@@ -142,6 +142,8 @@ export async function startWebControlCenter(
   let runtimeConfig = {
     defaultInternalWorkAssignee: input.defaultInternalWorkAssignee,
     autoMode: input.defaultAutoMode,
+    maxTaskRetries: settings.executionLoop.maxTaskRetries,
+    phaseTimeoutMs: settings.executionLoop.phaseTimeoutMs,
   };
 
   // 1. Define placeholders for cross-dependencies.
@@ -588,6 +590,8 @@ export async function startWebControlCenter(
       runtimeConfig = {
         defaultInternalWorkAssignee: saved.internalWork.assignee,
         autoMode: saved.executionLoop.autoMode,
+        maxTaskRetries: saved.executionLoop.maxTaskRetries,
+        phaseTimeoutMs: saved.executionLoop.phaseTimeoutMs,
       };
       return runtimeConfig;
     },

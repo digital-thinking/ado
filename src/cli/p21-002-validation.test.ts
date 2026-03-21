@@ -480,6 +480,42 @@ describe("P21-002 CLI argument validation", () => {
     expect(result.stderr).toContain("  Hint:");
   });
 
+  test("config task-retries: missing arg exits 1 with Usage + hint", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p21-config-task-retries-miss-",
+    );
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["config", "task-retries"], sandbox);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Error: Missing required argument: <maxRetries:0-20>.",
+    );
+    expect(result.stderr).toContain(
+      "  Usage: ixado config task-retries <maxRetries:0-20>",
+    );
+    expect(result.stderr).toContain("  Hint:");
+  });
+
+  test("config task-retries: out-of-range value exits 1 with Usage + hint", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p21-config-task-retries-bad-",
+    );
+    sandboxes.push(sandbox);
+
+    const result = runIxado(["config", "task-retries", "99"], sandbox);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Error: Invalid task retry limit: '99'. Expected an integer from 0 to 20.",
+    );
+    expect(result.stderr).toContain(
+      "  Usage: ixado config task-retries <maxRetries:0-20>",
+    );
+    expect(result.stderr).toContain("  Hint:");
+  });
+
   // ── web commands ─────────────────────────────────────────────────────────
 
   test("web start: invalid port exits 1 with Error + hint", async () => {

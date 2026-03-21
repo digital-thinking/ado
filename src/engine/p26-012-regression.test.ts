@@ -163,6 +163,11 @@ describe("P26-001 – failure-kind lifecycle regression", () => {
 // ---------------------------------------------------------------------------
 
 describe("P26-002 – CI_FIX guardrail schema defaults and bounds", () => {
+  test("phaseTimeoutMs defaults to 21600000", () => {
+    const settings = ExecutionLoopSettingsSchema.parse({});
+    expect(settings.phaseTimeoutMs).toBe(21_600_000);
+  });
+
   test("ciFixMaxFanOut defaults to 10", () => {
     const settings = ExecutionLoopSettingsSchema.parse({});
     expect(settings.ciFixMaxFanOut).toBe(10);

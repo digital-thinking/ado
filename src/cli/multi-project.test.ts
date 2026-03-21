@@ -56,6 +56,8 @@ const DEFAULT_AGENT_SETTINGS = {
 const DEFAULT_LOOP_SETTINGS = {
   autoMode: false,
   countdownSeconds: 10,
+  maxTaskRetries: 3,
+  phaseTimeoutMs: 21600000,
   testerCommand: null,
   testerArgs: null,
   testerTimeoutMs: 600000,
@@ -295,6 +297,8 @@ describe("multi-project management", () => {
             executionSettings: {
               autoMode: false,
               defaultAssignee: "GEMINI_CLI",
+              maxTaskRetries: 4,
+              phaseTimeoutMs: 42_000,
             },
           },
         ],
@@ -306,6 +310,8 @@ describe("multi-project management", () => {
     expect(loaded.projects[0]?.executionSettings).toEqual({
       autoMode: false,
       defaultAssignee: "GEMINI_CLI",
+      maxTaskRetries: 4,
+      phaseTimeoutMs: 42_000,
     });
   });
 });

@@ -167,6 +167,8 @@ const PullRequestAutomationSettingsOverrideSchema = z
 export const ExecutionLoopSettingsSchema = z.object({
   autoMode: z.boolean().default(false),
   countdownSeconds: z.number().int().min(0).max(3_600).default(10),
+  maxTaskRetries: z.number().int().min(0).max(20).default(3),
+  phaseTimeoutMs: z.number().int().positive().default(21_600_000),
   testerCommand: z.string().min(1).nullable().default(null),
   testerArgs: z.array(z.string()).min(1).nullable().default(null),
   testerTimeoutMs: z.number().int().positive().default(600_000),
@@ -249,6 +251,8 @@ export type ExceptionRecoverySettings = z.infer<
 export const ProjectExecutionSettingsSchema = z.object({
   autoMode: z.boolean(),
   defaultAssignee: CLIAdapterIdSchema,
+  maxTaskRetries: z.number().int().min(0).max(20).optional(),
+  phaseTimeoutMs: z.number().int().positive().optional(),
 });
 export type ProjectExecutionSettings = z.infer<
   typeof ProjectExecutionSettingsSchema
@@ -304,6 +308,8 @@ export const CliSettingsSchema = z
     executionLoop: ExecutionLoopSettingsSchema.default({
       autoMode: false,
       countdownSeconds: 10,
+      maxTaskRetries: 3,
+      phaseTimeoutMs: 21_600_000,
       testerCommand: null,
       testerArgs: null,
       testerTimeoutMs: 600_000,
@@ -464,6 +470,8 @@ const CliAgentSettingsOverrideSchema = z.object({
 const ExecutionLoopSettingsOverrideSchema = z.object({
   autoMode: z.boolean().optional(),
   countdownSeconds: z.number().int().min(0).max(3_600).optional(),
+  maxTaskRetries: z.number().int().min(0).max(20).optional(),
+  phaseTimeoutMs: z.number().int().positive().optional(),
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),
   testerTimeoutMs: z.number().int().positive().optional(),
@@ -617,6 +625,7 @@ export const AdapterFailureKindSchema = z.enum([
   "auth",
   "network",
   "missing-binary",
+  "rate_limited",
   "timeout",
   "unknown",
 ]);
@@ -703,6 +712,8 @@ export const TaskSchema = z.object({
   errorLogs: z.string().optional(),
   errorCategory: ExceptionCategorySchema.optional(),
   adapterFailureKind: AdapterFailureKindSchema.optional(),
+  rateLimitRetryCount: z.number().int().min(0).optional(),
+  rateLimitRetryAt: z.string().datetime().optional(),
   completionVerification: TaskCompletionVerificationSchema.optional(),
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });
@@ -716,6 +727,7 @@ export const PhaseStatusSchema = z.enum([
   "CREATING_PR", // All tasks done, pushing to remote and opening PR
   "AWAITING_CI", // Polling GitHub Actions
   "CI_FAILED", // CI returned errors, triggering the fix loop
+  "TIMED_OUT", // Phase exceeded the configured execution timeout
   "READY_FOR_REVIEW", // Green CI, awaiting human
   "DONE",
 ]);
@@ -730,7 +742,7 @@ export const PhaseSchema = z.object({
   status: PhaseStatusSchema.default("PLANNING"),
   tasks: z.array(TaskSchema),
   prUrl: z.string().url().optional(),
-  ciStatusContext: z.string().optional(), // Stores the GH CLI output if CI fails
+  ciStatusContext: z.string().optional(), // Stores terminal failure diagnostics
   failureKind: PhaseFailureKindSchema.optional(), // Why the phase entered CI_FAILED
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
 });

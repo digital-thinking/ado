@@ -1089,6 +1089,31 @@ describe("ControlCenterService", () => {
     expect(recovered.phases[0].ciStatusContext).toBeUndefined();
   });
 
+  test("preserves timeout diagnostics while TIMED_OUT and clears them on recovery", async () => {
+    const created = await service.createPhase({
+      name: "Phase Timeout",
+      branchName: "phase-timeout",
+    });
+    const phaseId = created.phases[0].id;
+
+    const timedOut = await service.setPhaseStatus({
+      phaseId,
+      status: "TIMED_OUT",
+      ciStatusContext: "Phase exceeded timeout budget.",
+    });
+    expect(timedOut.phases[0].status).toBe("TIMED_OUT");
+    expect(timedOut.phases[0].ciStatusContext).toBe(
+      "Phase exceeded timeout budget.",
+    );
+
+    const recovered = await service.setPhaseStatus({
+      phaseId,
+      status: "CODING",
+    });
+    expect(recovered.phases[0].status).toBe("CODING");
+    expect(recovered.phases[0].ciStatusContext).toBeUndefined();
+  });
+
   // P26-001: failureKind semantics
   test("setPhaseStatus persists failureKind when transitioning to CI_FAILED", async () => {
     const created = await service.createPhase({
@@ -1716,6 +1741,8 @@ describe("ControlCenterService", () => {
     expect(afterReset.phases[0].tasks[0].status).toBe("TODO");
     expect(afterReset.phases[0].tasks[0].assignee).toBe("UNASSIGNED");
     expect(afterReset.phases[0].tasks[0].errorLogs).toBeUndefined();
+    expect(afterReset.phases[0].tasks[0].rateLimitRetryCount).toBeUndefined();
+    expect(afterReset.phases[0].tasks[0].rateLimitRetryAt).toBeUndefined();
   });
 
   test("resetTaskToTodo also supports DEAD_LETTER tasks", async () => {
@@ -1750,6 +1777,66 @@ describe("ControlCenterService", () => {
     expect(resetCalled).toBe(1);
     expect(afterReset.phases[0].tasks[0].status).toBe("TODO");
     expect(afterReset.phases[0].tasks[0].assignee).toBe("UNASSIGNED");
+  });
+
+  test("requeueRateLimitedTask transitions FAILED rate-limited task back to TODO with retry metadata", async () => {
+    const stateEngine = new StateEngine(stateFilePath);
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine,
+      tasksMarkdownFilePath: tasksMarkdownPath,
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Rate Limit",
+      branchName: "phase-rate-limit",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Rate limited task",
+      description: "Task to requeue",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+    const state = await stateEngine.readProjectState();
+    const failedState = await stateEngine.writeProjectState({
+      ...state,
+      phases: state.phases.map((phase) =>
+        phase.id !== phaseId
+          ? phase
+          : {
+              ...phase,
+              tasks: phase.tasks.map((task) =>
+                task.id !== taskId
+                  ? task
+                  : {
+                      ...task,
+                      status: "FAILED",
+                      errorCategory: "AGENT_FAILURE",
+                      adapterFailureKind: "rate_limited",
+                      errorLogs: "HTTP 429 retry after 30 seconds",
+                    },
+              ),
+            },
+      ),
+    });
+    expect(failedState.phases[0].tasks[0].adapterFailureKind).toBe(
+      "rate_limited",
+    );
+
+    const retryAt = "2026-03-20T10:00:30.000Z";
+    const updated = await serviceWithRunner.requeueRateLimitedTask({
+      phaseId,
+      taskId,
+      retryCount: 1,
+      retryAt,
+    });
+
+    expect(updated.phases[0].tasks[0].status).toBe("TODO");
+    expect(updated.phases[0].tasks[0].rateLimitRetryCount).toBe(1);
+    expect(updated.phases[0].tasks[0].rateLimitRetryAt).toBe(retryAt);
+    expect(updated.phases[0].tasks[0].errorLogs).toBeUndefined();
+    expect(updated.phases[0].tasks[0].adapterFailureKind).toBeUndefined();
   });
 
   test("markTaskDeadLetter transitions FAILED task to DEAD_LETTER with reason", async () => {

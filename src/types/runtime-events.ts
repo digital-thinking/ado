@@ -98,6 +98,31 @@ export const TaskLifecycleFinishEventSchema = RuntimeEventBaseSchema.extend({
   }),
 });
 
+export const TaskRateLimitRetryEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("task-resilience"),
+  type: z.literal("task:rate_limit_retry"),
+  payload: z.object({
+    retryCount: z.number().int().positive(),
+    maxRetries: z.number().int().min(0),
+    retryDelayMs: z.number().int().min(0),
+    retryAt: z.string().datetime(),
+    summary: z.string().min(1),
+  }),
+});
+
+export const PhaseTimeoutEventSchema = RuntimeEventBaseSchema.extend({
+  family: z.literal("phase-resilience"),
+  type: z.literal("phase:timeout"),
+  payload: z.object({
+    timeoutMs: z.number().int().positive(),
+    elapsedMs: z.number().int().positive(),
+    startedAt: z.string().datetime(),
+    deadlineAt: z.string().datetime(),
+    currentStep: z.string().min(1),
+    summary: z.string().min(1),
+  }),
+});
+
 export const AdapterOutputEventSchema = RuntimeEventBaseSchema.extend({
   family: z.literal("adapter-output"),
   type: z.literal("adapter.output"),
@@ -217,6 +242,8 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   TaskLifecycleProgressEventSchema,
   TaskLifecyclePhaseUpdateEventSchema,
   TaskLifecycleFinishEventSchema,
+  TaskRateLimitRetryEventSchema,
+  PhaseTimeoutEventSchema,
   AdapterOutputEventSchema,
   AdapterCircuitEventSchema,
   TesterActivityEventSchema,
@@ -309,6 +336,10 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
       ]
         .filter((line): line is string => Boolean(line))
         .join("\n");
+    case "task:rate_limit_retry":
+      return `Task retry: ${event.payload.summary}`;
+    case "phase:timeout":
+      return `Phase timeout: ${event.payload.summary}`;
     case "tester.activity":
       return `Tester: ${event.payload.summary}`;
     case "recovery.activity":
@@ -335,6 +366,8 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
     case "task.lifecycle.phase-update":
     case "task.lifecycle.finish":
       return event.payload.message ?? event.type;
+    case "task:rate_limit_retry":
+    case "phase:timeout":
     case "pr.activity":
     case "ci.activity":
       return event.payload.summary;
@@ -396,6 +429,8 @@ export function shouldNotifyRuntimeEventForTelegram(
   switch (event.type) {
     case "terminal.outcome":
       return true;
+    case "phase:timeout":
+      return true;
     case "task.lifecycle.phase-update":
       return (
         event.payload.status === "CREATING_PR" ||
@@ -407,6 +442,8 @@ export function shouldNotifyRuntimeEventForTelegram(
         event.payload.status === "FAILED" ||
         event.payload.status === "DEAD_LETTER"
       );
+    case "task:rate_limit_retry":
+      return false;
     case "tester.activity":
       return event.payload.stage === "failed";
     case "recovery.activity":
@@ -461,6 +498,23 @@ export function createRuntimeEventNotificationKey(event: RuntimeEvent): string {
         event.taskId ?? "",
         event.taskNumber ?? "",
         event.payload.status,
+      ].join("|");
+    case "task:rate_limit_retry":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.taskId ?? "",
+        event.taskNumber ?? "",
+        event.payload.retryCount,
+        event.payload.retryAt,
+      ].join("|");
+    case "phase:timeout":
+      return [
+        event.type,
+        event.phaseId ?? "",
+        event.payload.timeoutMs,
+        event.payload.deadlineAt,
+        event.payload.currentStep,
       ].join("|");
     case "tester.activity":
       return [

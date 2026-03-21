@@ -50,7 +50,12 @@ export function isRecoverableException(exception: ExceptionMetadata): boolean {
   }
 
   const kind = exception.adapterFailureKind ?? "unknown";
-  return kind === "network" || kind === "timeout" || kind === "unknown";
+  return (
+    kind === "network" ||
+    kind === "rate_limited" ||
+    kind === "timeout" ||
+    kind === "unknown"
+  );
 }
 
 export function validateRecoveryActions(actionsTaken: string[]): void {

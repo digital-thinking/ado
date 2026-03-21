@@ -163,7 +163,12 @@ async function resolveProjectRootDir(): Promise<string> {
 function resolveProjectExecutionSettings(
   settings: Awaited<ReturnType<typeof loadCliSettings>>,
   projectName: string,
-): { autoMode: boolean; defaultAssignee: CLIAdapterId } {
+): {
+  autoMode: boolean;
+  defaultAssignee: CLIAdapterId;
+  maxTaskRetries: number;
+  phaseTimeoutMs: number;
+} {
   const project = settings.projects.find((p) => p.name === projectName);
   return {
     autoMode:
@@ -171,6 +176,12 @@ function resolveProjectExecutionSettings(
     defaultAssignee:
       project?.executionSettings?.defaultAssignee ??
       settings.internalWork.assignee,
+    maxTaskRetries:
+      project?.executionSettings?.maxTaskRetries ??
+      settings.executionLoop.maxTaskRetries,
+    phaseTimeoutMs:
+      project?.executionSettings?.phaseTimeoutMs ??
+      settings.executionLoop.phaseTimeoutMs,
   };
 }
 
@@ -1711,6 +1722,8 @@ async function runPhaseRunCommand({
       testerCommand: settings.executionLoop.testerCommand,
       testerArgs: settings.executionLoop.testerArgs,
       testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+      maxTaskRetries: projectExecutionSettings.maxTaskRetries,
+      phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
       ciEnabled: settings.executionLoop.ciEnabled,
       ciBaseBranch: settings.executionLoop.ciBaseBranch,
       ciPullRequest: settings.executionLoop.pullRequest,
@@ -2167,6 +2180,40 @@ function parseConfigRecoveryMaxAttempts(rawValue: string): number {
   return maxAttempts;
 }
 
+function parseConfigPhaseTimeoutMs(rawValue: string): number {
+  const phaseTimeoutMs = Number(rawValue.trim());
+  if (!Number.isInteger(phaseTimeoutMs) || phaseTimeoutMs <= 0) {
+    throw new ValidationError(
+      `Invalid phase timeout: '${rawValue}'. Expected a positive integer (milliseconds).`,
+      {
+        usage: "ixado config phase-timeout <ms>",
+        hint: "Example: 21600000 for 6 hours. Use a positive integer in milliseconds.",
+      },
+    );
+  }
+
+  return phaseTimeoutMs;
+}
+
+function parseConfigMaxTaskRetries(rawValue: string): number {
+  const maxTaskRetries = Number(rawValue.trim());
+  if (
+    !Number.isInteger(maxTaskRetries) ||
+    maxTaskRetries < 0 ||
+    maxTaskRetries > 20
+  ) {
+    throw new ValidationError(
+      `Invalid task retry limit: '${rawValue}'. Expected an integer from 0 to 20.`,
+      {
+        usage: "ixado config task-retries <maxRetries:0-20>",
+        hint: "Use 0 to disable task retries, or a value from 1-20 for the retry limit.",
+      },
+    );
+  }
+
+  return maxTaskRetries;
+}
+
 function getSettingsPrecedenceMessage(settingsFilePath: string): string {
   return `Scope: global defaults (${settingsFilePath}).`;
 }
@@ -2189,6 +2236,12 @@ async function runConfigShowCommand(_ctx: CommandActionContext): Promise<void> {
   );
   console.info(
     `Exception recovery max attempts: ${settings.exceptionRecovery.maxAttempts}`,
+  );
+  console.info(
+    `Execution loop max task retries: ${settings.executionLoop.maxTaskRetries}`,
+  );
+  console.info(
+    `Execution loop phase timeout: ${settings.executionLoop.phaseTimeoutMs} ms`,
   );
   console.info(
     `Codexbar usage telemetry: ${settings.usage.codexbarEnabled ? "ON" : "OFF"}`,
@@ -2216,6 +2269,7 @@ async function runConfigModeCommand({
       : {
           ...project,
           executionSettings: {
+            ...(project.executionSettings ?? {}),
             autoMode,
             defaultAssignee:
               project.executionSettings?.defaultAssignee ??
@@ -2282,6 +2336,7 @@ async function runConfigAssigneeCommand({
       : {
           ...project,
           executionSettings: {
+            ...(project.executionSettings ?? {}),
             autoMode:
               project.executionSettings?.autoMode ??
               settings.executionLoop.autoMode,
@@ -2373,6 +2428,70 @@ async function runConfigRecoveryCommand({
   console.info(getSettingsPrecedenceMessage(settingsFilePath));
   console.info(
     `Next:    Run 'ixado phase run' to apply the updated recovery limit.`,
+  );
+}
+
+async function runConfigTaskRetriesCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
+  if (!rawValue) {
+    throw new ValidationError("Missing required argument: <maxRetries:0-20>.", {
+      usage: "ixado config task-retries <maxRetries:0-20>",
+      hint: "Use 0 to disable task retries, or a value from 1-20 for the retry limit.",
+    });
+  }
+
+  const maxTaskRetries = parseConfigMaxTaskRetries(rawValue);
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    executionLoop: {
+      ...settings.executionLoop,
+      maxTaskRetries,
+    },
+  });
+
+  console.info(
+    `Execution loop max task retries set to ${saved.executionLoop.maxTaskRetries}.`,
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated task retry limit.`,
+  );
+}
+
+async function runConfigPhaseTimeoutCommand({
+  args,
+}: CommandActionContext): Promise<void> {
+  const rawValue = args[0]?.trim() ?? "";
+  if (!rawValue) {
+    throw new ValidationError("Missing required argument: <ms>.", {
+      usage: "ixado config phase-timeout <ms>",
+      hint: "Example: 21600000 for 6 hours. Use a positive integer in milliseconds.",
+    });
+  }
+
+  const phaseTimeoutMs = parseConfigPhaseTimeoutMs(rawValue);
+  const settingsFilePath = resolveGlobalSettingsFilePath();
+  const settings = await loadCliSettings(settingsFilePath);
+  const saved = await saveCliSettings(settingsFilePath, {
+    ...settings,
+    executionLoop: {
+      ...settings.executionLoop,
+      phaseTimeoutMs,
+    },
+  });
+
+  console.info(
+    `Execution loop phase timeout set to ${saved.executionLoop.phaseTimeoutMs} ms.`,
+  );
+  console.info(`Settings saved to ${settingsFilePath}.`);
+  console.info(getSettingsPrecedenceMessage(settingsFilePath));
+  console.info(
+    `Next:    Run 'ixado phase run' to apply the updated phase timeout.`,
   );
 }
 
@@ -2520,6 +2639,18 @@ async function runCli(args: string[]): Promise<void> {
           description: "Set exception recovery max attempts",
           usage: "recovery <maxAttempts:0-10>",
           action: runConfigRecoveryCommand,
+        },
+        {
+          name: "task-retries",
+          description: "Set execution-loop max task retries",
+          usage: "task-retries <maxRetries:0-20>",
+          action: runConfigTaskRetriesCommand,
+        },
+        {
+          name: "phase-timeout",
+          description: "Set execution-loop phase timeout (milliseconds)",
+          usage: "phase-timeout <ms>",
+          action: runConfigPhaseTimeoutCommand,
         },
         {
           name: "usage",

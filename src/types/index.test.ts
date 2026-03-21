@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  AdapterFailureKindSchema,
   CliSettingsSchema,
   CLIAdapterSchema,
   ExceptionRecoveryResultSchema,
@@ -22,6 +23,7 @@ describe("type contracts", () => {
     expect(TaskStatusSchema.parse("CI_FIX")).toBe("CI_FIX");
     expect(TaskStatusSchema.parse("DEAD_LETTER")).toBe("DEAD_LETTER");
     expect(WorkerArchetypeSchema.parse("REVIEWER")).toBe("REVIEWER");
+    expect(AdapterFailureKindSchema.parse("rate_limited")).toBe("rate_limited");
   });
 
   test("validates CLI adapter shape", () => {
@@ -54,6 +56,8 @@ describe("type contracts", () => {
     expect(parsed.internalWork.assignee).toBe("CODEX_CLI");
     expect(parsed.executionLoop.autoMode).toBe(false);
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
+    expect(parsed.executionLoop.maxTaskRetries).toBe(3);
+    expect(parsed.executionLoop.phaseTimeoutMs).toBe(21_600_000);
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
     expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);
@@ -125,6 +129,22 @@ describe("type contracts", () => {
       },
     });
     expect(parsed.result.status).toBe("unfixable");
+  });
+
+  test("accepts task rate-limit retry metadata", () => {
+    const parsed = TaskSchema.parse({
+      id: "33333333-3333-4333-8333-333333333333",
+      title: "Rate limited task",
+      description: "retry later",
+      status: "TODO",
+      assignee: "CODEX_CLI",
+      dependencies: [],
+      rateLimitRetryCount: 2,
+      rateLimitRetryAt: "2026-03-20T10:02:00.000Z",
+    });
+
+    expect(parsed.rateLimitRetryCount).toBe(2);
+    expect(parsed.rateLimitRetryAt).toBe("2026-03-20T10:02:00.000Z");
   });
 
   test("supports task completion verification context for side effects", () => {
@@ -224,6 +244,8 @@ describe("type contracts", () => {
           executionSettings: {
             autoMode: true,
             defaultAssignee: "CLAUDE_CLI",
+            maxTaskRetries: 5,
+            phaseTimeoutMs: 42_000,
           },
         },
       ],
@@ -232,6 +254,8 @@ describe("type contracts", () => {
     expect(parsed.projects[0]?.executionSettings).toEqual({
       autoMode: true,
       defaultAssignee: "CLAUDE_CLI",
+      maxTaskRetries: 5,
+      phaseTimeoutMs: 42_000,
     });
   });
 
@@ -246,6 +270,31 @@ describe("type contracts", () => {
 
     expect(parsed.worktrees.enabled).toBe(true);
     expect(parsed.worktrees.baseDir).toBe("/tmp/ixado-worktrees");
+  });
+
+  test("supports phase timeout config overrides", () => {
+    const parsed = CliSettingsSchema.parse({
+      telegram: { enabled: false },
+      executionLoop: {
+        phaseTimeoutMs: 42_000,
+      },
+    });
+
+    expect(parsed.executionLoop.phaseTimeoutMs).toBe(42_000);
+  });
+
+  test("accepts TIMED_OUT as a persisted phase status", () => {
+    const parsed = PhaseSchema.parse({
+      id: "99999999-9999-4999-8999-999999999999",
+      name: "Timed out phase",
+      branchName: "phase-timeout",
+      status: "TIMED_OUT",
+      ciStatusContext: "Phase exceeded timeout budget.",
+      tasks: [],
+    });
+
+    expect(parsed.status).toBe("TIMED_OUT");
+    expect(parsed.ciStatusContext).toBe("Phase exceeded timeout budget.");
   });
 
   test("rejects internal work assignee if disabled", () => {

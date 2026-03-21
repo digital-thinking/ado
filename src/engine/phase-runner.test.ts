@@ -1,6 +1,8 @@
 import { describe, expect, test, mock } from "bun:test";
 import {
   PhaseRunner,
+  computeRateLimitBackoffMs,
+  getNextTaskAvailabilityDelayMs,
   pickNextTask,
   resolvePhaseExecutionGate,
   type PhaseRunnerConfig,
@@ -19,6 +21,7 @@ describe("PhaseRunner", () => {
     testerCommand: "npm",
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
+    maxTaskRetries: 3,
     ciEnabled: false,
     ciBaseBranch: "main",
     ciPullRequest: {
@@ -1570,6 +1573,343 @@ describe("PhaseRunner", () => {
     ).toBe(true);
   });
 
+  test("P33-003: re-queues rate-limited tasks with exponential backoff and resumes after delay", async () => {
+    const phaseId = "88111111-1111-4111-8111-111111111111";
+    const taskId = "88222222-2222-4222-8222-222222222222";
+    const initialNowMs = Date.parse("2026-03-20T10:00:00.000Z");
+    let nowMs = initialNowMs;
+    const sleepCalls: number[] = [];
+    const runtimeEvents: any[] = [];
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 33",
+          branchName: "phase-33-rate-limit-backoff",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "P33-003",
+              description: "rate-limit backoff",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    let executionCount = 0;
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        executionCount += 1;
+        const task = mockState.phases[0].tasks[0] as any;
+        if (executionCount === 1) {
+          task.status = "FAILED";
+          task.errorCategory = "AGENT_FAILURE";
+          task.adapterFailureKind = "rate_limited";
+          task.errorLogs = "HTTP 429 retry after 30 seconds";
+          return mockState;
+        }
+
+        task.status = "DONE";
+        task.resultContext = "completed after retry";
+        task.rateLimitRetryCount = undefined;
+        task.rateLimitRetryAt = undefined;
+        return mockState;
+      }),
+      requeueRateLimitedTask: mock(
+        async (input: {
+          phaseId: string;
+          taskId: string;
+          retryCount: number;
+          retryAt: string;
+        }) => {
+          expect(input.phaseId).toBe(phaseId);
+          expect(input.taskId).toBe(taskId);
+          expect(input.retryCount).toBe(1);
+          expect(input.retryAt).toBe(
+            new Date(initialNowMs + computeRateLimitBackoffMs(1)).toISOString(),
+          );
+          const task = mockState.phases[0].tasks[0] as any;
+          task.status = "TODO";
+          task.rateLimitRetryCount = input.retryCount;
+          task.rateLimitRetryAt = input.retryAt;
+          task.errorLogs = undefined;
+          task.errorCategory = undefined;
+          task.adapterFailureKind = undefined;
+          return mockState;
+        },
+      ),
+      markTaskDeadLetter: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "task output",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return {
+            exitCode: 0,
+            stdout: "phase-33-rate-limit-backoff",
+            stderr: "",
+          };
+        }
+        if (input.args.includes("test")) {
+          return { exitCode: 0, stdout: "tests passed", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        now: () => nowMs,
+        sleep: async (ms) => {
+          sleepCalls.push(ms);
+          nowMs += ms;
+        },
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push(event);
+      },
+      mockRunner,
+    );
+    await runner.run();
+
+    expect(mockControl.requeueRateLimitedTask).toHaveBeenCalledTimes(1);
+    expect(mockControl.startActiveTaskAndWait).toHaveBeenCalledTimes(2);
+    expect(sleepCalls.reduce((sum, value) => sum + value, 0)).toBe(30_000);
+    expect((mockState.phases[0].tasks[0] as any).status).toBe("DONE");
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task:rate_limit_retry" &&
+          event.payload.retryCount === 1 &&
+          event.payload.retryDelayMs === computeRateLimitBackoffMs(1),
+      ),
+    ).toBe(true);
+  });
+
+  test("P33-003: dead-letters rate-limited task after maxTaskRetries are exhausted", async () => {
+    const phaseId = "88333333-3333-4333-8333-333333333333";
+    const taskId = "88444444-4444-4444-8444-444444444444";
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 33",
+          branchName: "phase-33-rate-limit-dead-letter",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "P33-003 exhausted",
+              description: "rate-limit dead-letter",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              rateLimitRetryCount: 1,
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async () => {
+        const task = mockState.phases[0].tasks[0] as any;
+        task.status = "FAILED";
+        task.errorCategory = "AGENT_FAILURE";
+        task.adapterFailureKind = "rate_limited";
+        task.errorLogs = "HTTP 429 too many requests";
+        return mockState;
+      }),
+      requeueRateLimitedTask: mock(async () => mockState),
+      markTaskDeadLetter: mock(
+        async (input: { phaseId: string; taskId: string; reason: string }) => {
+          expect(input.phaseId).toBe(phaseId);
+          expect(input.taskId).toBe(taskId);
+          expect(input.reason).toContain("rate-limit retries");
+          const task = mockState.phases[0].tasks[0] as any;
+          task.status = "DEAD_LETTER";
+          task.resultContext = input.reason;
+          return mockState;
+        },
+      ),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return {
+            exitCode: 0,
+            stdout: "phase-33-rate-limit-dead-letter",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        maxTaskRetries: 1,
+      },
+      undefined,
+      undefined,
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((candidate) => candidate);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Rate-limit retries exhausted");
+    expect(mockControl.requeueRateLimitedTask).not.toHaveBeenCalled();
+    expect(mockControl.markTaskDeadLetter).toHaveBeenCalledTimes(1);
+    expect((mockState.phases[0].tasks[0] as any).status).toBe("DEAD_LETTER");
+  });
+
+  test("P33-005: marks the phase TIMED_OUT when deferred execution exceeds phaseTimeoutMs", async () => {
+    const phaseId = "88555555-5555-4555-8555-555555555555";
+    const taskId = "88666666-6666-4666-8666-666666666666";
+    let nowMs = Date.parse("2026-03-20T12:00:00.000Z");
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 33 timeout",
+          branchName: "phase-33-timeout",
+          status: "PLANNING",
+          ciStatusContext: undefined as string | undefined,
+          tasks: [
+            {
+              id: taskId,
+              title: "P33-005 delayed task",
+              description: "wait for retry window",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+              rateLimitRetryAt: new Date(nowMs + 60_000).toISOString(),
+            },
+          ],
+        },
+      ],
+    };
+
+    const runtimeEvents: any[] = [];
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = mockState.phases[0] as any;
+        phase.status = input.status;
+        phase.ciStatusContext = input.ciStatusContext;
+        return mockState;
+      }),
+      startActiveTaskAndWait: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return { exitCode: 0, stdout: "phase-33-timeout", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        phaseTimeoutMs: 5_000,
+        now: () => nowMs,
+        sleep: async (ms) => {
+          nowMs += ms;
+        },
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push(event);
+      },
+      mockRunner,
+    );
+
+    const error = await runner.run().catch((candidate) => candidate);
+    expect(error).toBeInstanceOf(Error);
+    expect((mockState.phases[0] as any).status).toBe("TIMED_OUT");
+    expect((mockState.phases[0] as any).ciStatusContext).toContain(
+      "configured limit: 5000ms",
+    );
+    expect((mockState.phases[0] as any).ciStatusContext).toContain(
+      "Current step: waiting 60s for deferred task availability.",
+    );
+    expect(mockControl.startActiveTaskAndWait).not.toHaveBeenCalled();
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "phase:timeout" &&
+          event.payload.timeoutMs === 5_000 &&
+          event.payload.currentStep ===
+            "waiting 60s for deferred task availability",
+      ),
+    ).toBe(true);
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task.lifecycle.phase-update" &&
+          event.payload.status === "TIMED_OUT",
+      ),
+    ).toBe(true);
+  });
+
   test("P19-003: each task uses its own persisted assignee instead of global default", async () => {
     const phaseId = "a0000000-0000-4000-8000-000000000001";
     const task1Id = "b0000000-0000-4000-8000-000000000001";
@@ -2727,12 +3067,16 @@ describe("pickNextTask", () => {
       { status: "DONE" },
       { status: "IN_PROGRESS" },
       { status: "DONE" },
-    ];
+    ] as const;
     expect(pickNextTask(tasks)).toBe(-1);
   });
 
   test("selects the first TODO when only TODO tasks are present", () => {
-    const tasks = [{ status: "DONE" }, { status: "TODO" }, { status: "TODO" }];
+    const tasks = [
+      { status: "DONE" },
+      { status: "TODO" },
+      { status: "TODO" },
+    ] as const;
     // Earliest TODO is at index 1
     expect(pickNextTask(tasks)).toBe(1);
   });
@@ -2742,7 +3086,7 @@ describe("pickNextTask", () => {
       { status: "DONE" },
       { status: "CI_FIX" },
       { status: "CI_FIX" },
-    ];
+    ] as const;
     // Earliest CI_FIX is at index 1
     expect(pickNextTask(tasks)).toBe(1);
   });
@@ -2754,7 +3098,7 @@ describe("pickNextTask", () => {
       { status: "TODO" }, // index 1
       { status: "TODO" }, // index 2
       { status: "CI_FIX" }, // index 3 — lower position but higher priority
-    ];
+    ] as const;
     expect(pickNextTask(tasks)).toBe(3);
   });
 
@@ -2764,7 +3108,7 @@ describe("pickNextTask", () => {
       { status: "TODO" },
       { status: "TODO" },
       { status: "CI_FIX" }, // appended at the end by tester workflow
-    ];
+    ] as const;
     expect(pickNextTask(tasks)).toBe(3);
   });
 
@@ -2774,7 +3118,7 @@ describe("pickNextTask", () => {
       { status: "CI_FIX" }, // index 1 — earliest
       { status: "TODO" },
       { status: "CI_FIX" }, // index 3
-    ];
+    ] as const;
     expect(pickNextTask(tasks)).toBe(1);
   });
 
@@ -2784,8 +3128,37 @@ describe("pickNextTask", () => {
       { status: "DONE" }, // was CI_FIX, now DONE
       { status: "TODO" }, // index 2 — earliest remaining TODO
       { status: "TODO" },
-    ];
+    ] as const;
     expect(pickNextTask(tasks)).toBe(2);
+  });
+
+  test("skips deferred TODO tasks in favor of later ready TODO tasks", () => {
+    const nowMs = Date.parse("2026-03-20T10:00:00.000Z");
+    const tasks = [
+      {
+        status: "TODO",
+        rateLimitRetryAt: "2026-03-20T10:00:30.000Z",
+      },
+      { status: "DONE" },
+      { status: "TODO" },
+    ] as const;
+
+    expect(pickNextTask(tasks, nowMs)).toBe(2);
+    expect(getNextTaskAvailabilityDelayMs(tasks, nowMs)).toBe(30_000);
+  });
+
+  test("blocks TODO execution while a CI_FIX task is deferred", () => {
+    const nowMs = Date.parse("2026-03-20T10:00:00.000Z");
+    const tasks = [
+      {
+        status: "CI_FIX",
+        rateLimitRetryAt: "2026-03-20T10:01:00.000Z",
+      },
+      { status: "TODO" },
+    ] as const;
+
+    expect(pickNextTask(tasks, nowMs)).toBe(-1);
+    expect(getNextTaskAvailabilityDelayMs(tasks, nowMs)).toBe(60_000);
   });
 });
 

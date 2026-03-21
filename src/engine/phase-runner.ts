@@ -58,35 +58,12 @@ import {
 } from "../types";
 import { createRuntimeEvent, type RuntimeEvent } from "../types/runtime-events";
 
-/**
- * Picks the index of the next task to execute, applying explicit priority rules
- * for deterministic, stable ordering across TODO and CI_FIX task sets.
- *
- * Selection rules (highest priority first):
- *   1. CI_FIX tasks — must be resolved before new work so the repository
- *      stays in a passing state after every tester run.
- *   2. TODO tasks   — normal forward-progress work.
- *
- * Within each priority tier the task with the lowest array index is chosen,
- * providing stable ordering across state reloads and consistent task numbering.
- *
- * Returns the index of the selected task, or -1 when no actionable task exists.
- */
-export function pickNextTask(tasks: readonly { status: string }[]): number {
-  // Priority 1: resolve CI_FIX tasks before advancing to new work.
-  const ciFixIndex = tasks.findIndex((task) => task.status === "CI_FIX");
-  if (ciFixIndex >= 0) {
-    return ciFixIndex;
-  }
-  // Priority 2: fall back to the earliest pending TODO task.
-  return tasks.findIndex((task) => task.status === "TODO");
-}
-
 const TERMINAL_PHASE_STATUSES = [
   "DONE",
   "AWAITING_CI",
   "READY_FOR_REVIEW",
   "CI_FAILED",
+  "TIMED_OUT",
 ] as const;
 
 const ACTIONABLE_TASK_STATUSES = ["TODO", "CI_FIX"] as const;
@@ -94,6 +71,108 @@ const DEFAULT_ADAPTER_BREAKER_CONFIG: AdapterCircuitBreakerConfig = {
   failureThreshold: 3,
   cooldownMs: 300_000,
 };
+export const RATE_LIMIT_INITIAL_BACKOFF_MS = 30_000;
+export const RATE_LIMIT_MAX_BACKOFF_MS = 300_000;
+
+function isActionableTaskStatus(status: string): boolean {
+  return ACTIONABLE_TASK_STATUSES.some((candidate) => candidate === status);
+}
+
+function resolveRetryAtMs(task: Pick<Task, "rateLimitRetryAt">): number | null {
+  if (!task.rateLimitRetryAt) {
+    return null;
+  }
+
+  const retryAtMs = Date.parse(task.rateLimitRetryAt);
+  return Number.isNaN(retryAtMs) ? null : retryAtMs;
+}
+
+function isTaskReadyForExecution(
+  task: Pick<Task, "status" | "rateLimitRetryAt">,
+  nowMs: number,
+): boolean {
+  if (!isActionableTaskStatus(task.status)) {
+    return false;
+  }
+
+  const retryAtMs = resolveRetryAtMs(task);
+  return retryAtMs === null || retryAtMs <= nowMs;
+}
+
+function resolveBlockedTaskDelayMs(
+  tasks: readonly Pick<Task, "status" | "rateLimitRetryAt">[],
+  status: (typeof ACTIONABLE_TASK_STATUSES)[number],
+  nowMs: number,
+): number | null {
+  const blockedRetryAtMs = tasks
+    .filter((task) => task.status === status)
+    .map(resolveRetryAtMs)
+    .filter((retryAtMs): retryAtMs is number => retryAtMs !== null)
+    .filter((retryAtMs) => retryAtMs > nowMs);
+
+  if (blockedRetryAtMs.length === 0) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(...blockedRetryAtMs) - nowMs);
+}
+
+/**
+ * Picks the index of the next task to execute, applying explicit priority rules
+ * for deterministic, stable ordering across TODO and CI_FIX task sets.
+ *
+ * Selection rules (highest priority first):
+ *   1. Ready CI_FIX tasks — must be resolved before new work so the repository
+ *      stays in a passing state after every tester run.
+ *   2. Ready TODO tasks   — normal forward-progress work.
+ *
+ * A deferred CI_FIX task blocks TODO execution until its rate-limit backoff
+ * expires. Deferred TODO tasks are skipped in favor of later ready TODO tasks.
+ *
+ * Returns the index of the selected task, or -1 when no actionable task is
+ * currently ready to execute.
+ */
+export function pickNextTask(
+  tasks: readonly Pick<Task, "status" | "rateLimitRetryAt">[],
+  nowMs: number = Date.now(),
+): number {
+  const ciFixIndex = tasks.findIndex(
+    (task) => task.status === "CI_FIX" && isTaskReadyForExecution(task, nowMs),
+  );
+  if (ciFixIndex >= 0) {
+    return ciFixIndex;
+  }
+  if (tasks.some((task) => task.status === "CI_FIX")) {
+    return -1;
+  }
+
+  return tasks.findIndex(
+    (task) => task.status === "TODO" && isTaskReadyForExecution(task, nowMs),
+  );
+}
+
+export function getNextTaskAvailabilityDelayMs(
+  tasks: readonly Pick<Task, "status" | "rateLimitRetryAt">[],
+  nowMs: number = Date.now(),
+): number | null {
+  const ciFixDelayMs = resolveBlockedTaskDelayMs(tasks, "CI_FIX", nowMs);
+  if (ciFixDelayMs !== null) {
+    return ciFixDelayMs;
+  }
+
+  return resolveBlockedTaskDelayMs(tasks, "TODO", nowMs);
+}
+
+export function computeRateLimitBackoffMs(retryCount: number): number {
+  if (!Number.isInteger(retryCount) || retryCount <= 0) {
+    throw new Error("retryCount must be a positive integer.");
+  }
+
+  return Math.min(
+    RATE_LIMIT_MAX_BACKOFF_MS,
+    RATE_LIMIT_INITIAL_BACKOFF_MS * 2 ** (retryCount - 1),
+  );
+}
 
 export type PhaseExecutionGate = "OPEN" | "RESUMABLE" | "CLOSED";
 
@@ -126,6 +205,8 @@ export type PhaseRunnerConfig = {
   testerCommand: string | null;
   testerArgs: string[] | null;
   testerTimeoutMs: number;
+  maxTaskRetries?: number;
+  phaseTimeoutMs?: number;
   ciEnabled: boolean;
   ciBaseBranch: string;
   ciPullRequest: PullRequestAutomationSettings;
@@ -145,6 +226,8 @@ export type PhaseRunnerConfig = {
   projectName: string;
   policy: AuthPolicy;
   role: Role | null;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 type RecoveryExhaustionReason = "failed" | "unfixable";
@@ -158,6 +241,23 @@ class RecoveryAttemptsExhaustedError extends Error {
     this.name = "RecoveryAttemptsExhaustedError";
   }
 }
+
+class PhaseTimedOutError extends Error {
+  constructor(readonly diagnostics: string) {
+    super(diagnostics);
+    this.name = "PhaseTimedOutError";
+  }
+}
+
+type PhaseTimeoutWatchdog = {
+  phaseId: string;
+  phaseName: string;
+  startedAtMs: number;
+  timeoutMs: number;
+  deadlineMs: number;
+  currentStep: string;
+  tripped: boolean;
+};
 
 export class PhaseRunner {
   private git: GitManager;
@@ -173,6 +273,7 @@ export class PhaseRunner {
         assignee: CLIAdapterId;
       }
     | undefined;
+  private phaseTimeoutWatchdog: PhaseTimeoutWatchdog | undefined;
 
   constructor(
     private control: ControlCenterService,
@@ -199,6 +300,179 @@ export class PhaseRunner {
         : null;
     this.executionCwd = config.projectRootDir;
     this.enabledAdapters = this.resolveEnabledAdapters();
+  }
+
+  private nowMs(): number {
+    return this.config.now ? this.config.now() : Date.now();
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (ms <= 0) {
+      return;
+    }
+
+    if (this.config.sleep) {
+      await this.config.sleep(ms);
+      return;
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  private startPhaseTimeoutWatchdog(phase: Phase): void {
+    const timeoutMs = this.config.phaseTimeoutMs;
+    if (!timeoutMs) {
+      this.phaseTimeoutWatchdog = undefined;
+      return;
+    }
+
+    const startedAtMs = this.nowMs();
+    this.phaseTimeoutWatchdog = {
+      phaseId: phase.id,
+      phaseName: phase.name,
+      startedAtMs,
+      timeoutMs,
+      deadlineMs: startedAtMs + timeoutMs,
+      currentStep: "phase initialization",
+      tripped: false,
+    };
+  }
+
+  private setPhaseTimeoutStep(step: string): void {
+    if (!this.phaseTimeoutWatchdog) {
+      return;
+    }
+
+    this.phaseTimeoutWatchdog.currentStep = step;
+  }
+
+  private getRemainingPhaseTimeoutMs(): number | null {
+    if (!this.phaseTimeoutWatchdog) {
+      return null;
+    }
+
+    return this.phaseTimeoutWatchdog.deadlineMs - this.nowMs();
+  }
+
+  private async assertPhaseNotTimedOut(): Promise<void> {
+    const watchdog = this.phaseTimeoutWatchdog;
+    if (!watchdog) {
+      return;
+    }
+
+    if (this.nowMs() < watchdog.deadlineMs) {
+      return;
+    }
+
+    const elapsedMs = Math.max(
+      watchdog.timeoutMs,
+      this.nowMs() - watchdog.startedAtMs,
+    );
+    const startedAt = new Date(watchdog.startedAtMs).toISOString();
+    const deadlineAt = new Date(watchdog.deadlineMs).toISOString();
+    const diagnostics =
+      `Phase "${watchdog.phaseName}" timed out after ${elapsedMs}ms ` +
+      `(configured limit: ${watchdog.timeoutMs}ms). ` +
+      `Started at ${startedAt}; deadline was ${deadlineAt}. ` +
+      `Current step: ${watchdog.currentStep}.`;
+
+    if (!watchdog.tripped) {
+      watchdog.tripped = true;
+      this.loopControl.requestStop();
+      await this.control.setPhaseStatus({
+        phaseId: watchdog.phaseId,
+        status: "TIMED_OUT",
+        ciStatusContext: diagnostics,
+      });
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "phase-resilience",
+          type: "phase:timeout",
+          payload: {
+            timeoutMs: watchdog.timeoutMs,
+            elapsedMs,
+            startedAt,
+            deadlineAt,
+            currentStep: watchdog.currentStep,
+            summary: diagnostics,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: watchdog.phaseId,
+            phaseName: watchdog.phaseName,
+          },
+        }),
+      );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "task-lifecycle",
+          type: "task.lifecycle.phase-update",
+          payload: {
+            status: "TIMED_OUT",
+            message: diagnostics,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: watchdog.phaseId,
+            phaseName: watchdog.phaseName,
+          },
+        }),
+      );
+      await this.publishRuntimeEvent(
+        createRuntimeEvent({
+          family: "terminal-outcome",
+          type: "terminal.outcome",
+          payload: {
+            outcome: "failure",
+            summary: diagnostics,
+          },
+          context: {
+            source: "PHASE_RUNNER",
+            projectName: this.config.projectName,
+            phaseId: watchdog.phaseId,
+            phaseName: watchdog.phaseName,
+          },
+        }),
+      );
+    }
+
+    throw new PhaseTimedOutError(diagnostics);
+  }
+
+  private getMaxTaskRetries(): number {
+    return Math.max(0, this.config.maxTaskRetries ?? 3);
+  }
+
+  private async waitForDeferredTask(delayMs: number): Promise<boolean> {
+    await this.assertPhaseNotTimedOut();
+    if (delayMs <= 0) {
+      return !this.loopControl.isStopRequested();
+    }
+
+    console.info(
+      `Execution loop: waiting ${Math.ceil(delayMs / 1000)}s for rate-limit backoff to expire.`,
+    );
+
+    let remainingMs = delayMs;
+    while (remainingMs > 0) {
+      if (this.loopControl.isStopRequested()) {
+        return false;
+      }
+
+      const remainingTimeoutMs = this.getRemainingPhaseTimeoutMs();
+      const sleepMs = Math.min(
+        remainingMs,
+        1_000,
+        remainingTimeoutMs === null ? 1_000 : Math.max(0, remainingTimeoutMs),
+      );
+      await this.sleep(sleepMs);
+      await this.assertPhaseNotTimedOut();
+      remainingMs -= sleepMs;
+    }
+
+    return !this.loopControl.isStopRequested();
   }
 
   async run(): Promise<void> {
@@ -228,6 +502,8 @@ export class PhaseRunner {
       const state = await this.control.getState();
       const phase = this.resolveActivePhase(state);
       activePhaseId = phase.id;
+      this.startPhaseTimeoutWatchdog(phase);
+      await this.assertPhaseNotTimedOut();
 
       // Preflight: validate phase metadata and status before any git work.
       // Identical gate in both AUTO and MANUAL modes — deterministic execution
@@ -236,12 +512,17 @@ export class PhaseRunner {
       await this.checkBranchBasePreconditions(phase);
 
       await this.prepareBranch(phase);
+      await this.assertPhaseNotTimedOut();
       const completedPhase = await this.executionLoop(phase, rl);
+      await this.assertPhaseNotTimedOut();
 
       if (completedPhase && this.config.ciEnabled) {
+        this.setPhaseTimeoutStep("CI integration");
         await this.handleCiIntegration(completedPhase);
         shouldTeardownOnSuccess = true;
       } else if (completedPhase) {
+        this.setPhaseTimeoutStep("final phase completion");
+        await this.assertPhaseNotTimedOut();
         await this.control.setPhaseStatus({
           phaseId: completedPhase.id,
           status: "DONE",
@@ -455,6 +736,8 @@ export class PhaseRunner {
   }
 
   private async prepareBranch(phase: Phase): Promise<void> {
+    this.setPhaseTimeoutStep("branch preparation");
+    await this.assertPhaseNotTimedOut();
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "BRANCHING",
@@ -495,6 +778,7 @@ export class PhaseRunner {
 
     while (true) {
       try {
+        await this.assertPhaseNotTimedOut();
         if (this.worktreeManager) {
           if (!worktreePath) {
             worktreePath = await this.worktreeManager.provision({
@@ -540,6 +824,9 @@ export class PhaseRunner {
         }
         break;
       } catch (error) {
+        if (error instanceof PhaseTimedOutError) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         const category = (error as any).category;
         try {
@@ -573,6 +860,8 @@ Recovery: ${recoveryMessage}`,
       }
     }
 
+    this.setPhaseTimeoutStep("coding");
+    await this.assertPhaseNotTimedOut();
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "CODING",
@@ -603,6 +892,8 @@ Recovery: ${recoveryMessage}`,
     let resumeSession = false;
 
     while (true) {
+      this.setPhaseTimeoutStep("execution loop");
+      await this.assertPhaseNotTimedOut();
       if (this.loopControl.isStopRequested()) {
         console.info("Execution loop stopped.");
         return undefined;
@@ -610,9 +901,28 @@ Recovery: ${recoveryMessage}`,
 
       const state = await this.control.getState();
       const currentPhase = this.resolveActivePhase(state);
-      const nextTaskIndex = pickNextTask(currentPhase.tasks);
+      const nowMs = this.nowMs();
+      const nextTaskIndex = pickNextTask(currentPhase.tasks, nowMs);
 
       if (nextTaskIndex < 0) {
+        const nextDelayMs = getNextTaskAvailabilityDelayMs(
+          currentPhase.tasks,
+          nowMs,
+        );
+        if (nextDelayMs !== null) {
+          this.setPhaseTimeoutStep(
+            `waiting ${Math.ceil(nextDelayMs / 1000)}s for deferred task availability`,
+          );
+          const shouldContinue = await this.waitForDeferredTask(nextDelayMs);
+          if (!shouldContinue) {
+            console.info(
+              "Execution loop stopped while waiting for retry backoff.",
+            );
+            return undefined;
+          }
+          continue;
+        }
+
         console.info(
           `Execution loop finished. No TODO or CI_FIX tasks in active phase ${currentPhase.name}.`,
         );
@@ -624,16 +934,19 @@ Recovery: ${recoveryMessage}`,
       const nextTaskLabel = `task #${nextTaskNumber} ${nextTask.title}`;
 
       if (iteration > 0) {
+        this.setPhaseTimeoutStep(`advance gate before ${nextTaskLabel}`);
+        await this.assertPhaseNotTimedOut();
         const abortController = new AbortController();
-        const decision =
+        const advancePromise =
           this.config.mode === "AUTO"
-            ? await waitForAutoAdvanceGate({
+            ? waitForAutoAdvanceGate({
                 loopControl: this.loopControl,
                 countdownSeconds: this.config.countdownSeconds,
                 nextTaskLabel,
                 onInfo: (line) => console.info(line),
+                sleep: async (ms) => this.sleep(ms),
               })
-            : await waitForManualAdvanceGate({
+            : waitForManualAdvanceGate({
                 loopControl: this.loopControl,
                 nextTaskLabel,
                 askLocal: async () =>
@@ -651,6 +964,29 @@ Recovery: ${recoveryMessage}`,
                 cancelLocal: () => abortController.abort(),
                 onInfo: (line) => console.info(line),
               });
+        const remainingMs = this.getRemainingPhaseTimeoutMs();
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise =
+          remainingMs === null
+            ? new Promise<never>(() => {})
+            : new Promise<never>((_resolve, reject) => {
+                timeoutHandle = setTimeout(
+                  () => {
+                    this.loopControl.requestStop();
+                    abortController.abort();
+                    void this.assertPhaseNotTimedOut().catch(reject);
+                  },
+                  Math.max(0, remainingMs),
+                );
+              });
+        let decision: "NEXT" | "STOP";
+        try {
+          decision = await Promise.race([advancePromise, timeoutPromise]);
+        } finally {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+        }
 
         if (decision === "STOP") {
           this.loopControl.requestStop();
@@ -660,18 +996,31 @@ Recovery: ${recoveryMessage}`,
       }
 
       iteration += 1;
+      this.setPhaseTimeoutStep(`running ${nextTaskLabel}`);
       await this.runTaskStep(
         currentPhase,
         nextTask,
         nextTaskNumber,
         resumeSession,
       );
+      await this.assertPhaseNotTimedOut();
 
       const updatedState = await this.control.getState();
       const updatedPhase = this.resolveActivePhase(updatedState);
       const resultTask = updatedPhase.tasks[nextTaskNumber - 1];
 
+      if (!resultTask) {
+        throw new Error(`Task #${nextTaskNumber} not found after execution.`);
+      }
+
+      if (resultTask.status === "TODO") {
+        resumeSession = true;
+        continue;
+      }
+
+      this.setPhaseTimeoutStep(`tester after ${nextTaskLabel}`);
       await this.runTesterStep(updatedPhase, resultTask, nextTaskNumber);
+      await this.assertPhaseNotTimedOut();
 
       resumeSession = true;
     }
@@ -737,6 +1086,10 @@ Recovery: ${recoveryMessage}`,
     const maxTaskRunCount = Math.max(1, this.config.maxRecoveryAttempts + 1);
 
     while (taskRunCount < maxTaskRunCount) {
+      this.setPhaseTimeoutStep(
+        `running task #${taskNumber} ${task.title} with ${effectiveAssignee}`,
+      );
+      await this.assertPhaseNotTimedOut();
       taskRunCount += 1;
       if (taskRunCount > 1) {
         effectiveAssignee = await this.resolveDispatchAssignee({
@@ -755,6 +1108,7 @@ Recovery: ${recoveryMessage}`,
         taskDescriptionOverride,
         resultContextPrefix,
       });
+      await this.assertPhaseNotTimedOut();
       const updatedPhase = this.resolveActivePhase(updatedState);
       const resultTask = updatedPhase.tasks[taskNumber - 1];
 
@@ -813,6 +1167,110 @@ Recovery: ${recoveryMessage}`,
         `Execution failed for task #${taskNumber} ${resultTask.title}.`;
       if (resultTask.errorLogs) {
         console.info(`Failure details: ${resultTask.errorLogs}`);
+      }
+
+      if (resultTask.adapterFailureKind === "rate_limited") {
+        const nextRetryCount = (resultTask.rateLimitRetryCount ?? 0) + 1;
+        const maxTaskRetries = this.getMaxTaskRetries();
+
+        if (nextRetryCount > maxTaskRetries) {
+          const deadLetterHint =
+            maxTaskRetries === 0
+              ? `Task moved to DEAD_LETTER after rate-limit retry budget 0 prevented automatic retry. Remediate manually, then reset with 'ixado task reset ${taskNumber}'.`
+              : `Task moved to DEAD_LETTER after ${maxTaskRetries} rate-limit retries were exhausted. Remediate manually, then reset with 'ixado task reset ${taskNumber}'.`;
+          await this.control.markTaskDeadLetter({
+            phaseId: updatedPhase.id,
+            taskId: resultTask.id,
+            reason: deadLetterHint,
+          });
+          await this.publishRuntimeEvent(
+            createRuntimeEvent({
+              family: "task-lifecycle",
+              type: "task.lifecycle.finish",
+              payload: {
+                status: "DEAD_LETTER",
+                message: `${nextTaskLabel} moved to DEAD_LETTER after rate-limit retries were exhausted.`,
+              },
+              context: {
+                source: "PHASE_RUNNER",
+                projectName: this.config.projectName,
+                phaseId: updatedPhase.id,
+                phaseName: updatedPhase.name,
+                taskId: resultTask.id,
+                taskTitle: resultTask.title,
+                taskNumber,
+                adapterId: effectiveAssignee,
+              },
+            }),
+          );
+          await this.control.setPhaseStatus({
+            phaseId: updatedPhase.id,
+            status: "CI_FAILED",
+            failureKind: "AGENT_FAILURE" as PhaseFailureKind,
+            ciStatusContext: `${failureMessage}\n${deadLetterHint}`,
+          });
+          throw new Error(
+            `Rate-limit retries exhausted for task #${taskNumber} after ${maxTaskRetries} retries.`,
+          );
+        }
+
+        const retryDelayMs = computeRateLimitBackoffMs(nextRetryCount);
+        const retryAt = new Date(this.nowMs() + retryDelayMs).toISOString();
+        const retrySummary =
+          `${nextTaskLabel} hit a rate limit; re-queued for retry ${nextRetryCount}/${maxTaskRetries} ` +
+          `in ${Math.ceil(retryDelayMs / 1000)}s.`;
+        await this.control.requeueRateLimitedTask({
+          phaseId: updatedPhase.id,
+          taskId: resultTask.id,
+          retryCount: nextRetryCount,
+          retryAt,
+        });
+        console.info(
+          `Execution loop: re-queued ${nextTaskLabel} after rate limit; retry ${nextRetryCount}/${maxTaskRetries} scheduled in ${Math.ceil(retryDelayMs / 1000)}s.`,
+        );
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "task-resilience",
+            type: "task:rate_limit_retry",
+            payload: {
+              retryCount: nextRetryCount,
+              maxRetries: maxTaskRetries,
+              retryDelayMs,
+              retryAt,
+              summary: retrySummary,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: updatedPhase.id,
+              phaseName: updatedPhase.name,
+              taskId: resultTask.id,
+              taskTitle: resultTask.title,
+              taskNumber,
+              adapterId: effectiveAssignee,
+            },
+          }),
+        );
+        await this.publishRuntimeEvent(
+          createRuntimeEvent({
+            family: "task-lifecycle",
+            type: "task.lifecycle.progress",
+            payload: {
+              message: retrySummary,
+            },
+            context: {
+              source: "PHASE_RUNNER",
+              projectName: this.config.projectName,
+              phaseId: updatedPhase.id,
+              phaseName: updatedPhase.name,
+              taskId: resultTask.id,
+              taskTitle: resultTask.title,
+              taskNumber,
+              adapterId: effectiveAssignee,
+            },
+          }),
+        );
+        return;
       }
 
       try {
@@ -1240,6 +1698,10 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     task: Task,
     taskNumber: number,
   ): Promise<void> {
+    this.setPhaseTimeoutStep(
+      `running tester after task #${taskNumber} ${task.title}`,
+    );
+    await this.assertPhaseNotTimedOut();
     await this.publishRuntimeEvent(
       createRuntimeEvent({
         family: "tester-recovery",
@@ -1322,6 +1784,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         });
       },
     });
+    await this.assertPhaseNotTimedOut();
 
     if (testerResult.status === "SKIPPED") {
       console.warn(testerResult.reason);
@@ -1484,6 +1947,8 @@ ${testerResult.fixTaskDescription}`.trim(),
   }
 
   private async handleCiIntegration(phase: Phase): Promise<void> {
+    this.setPhaseTimeoutStep("CI integration");
+    await this.assertPhaseNotTimedOut();
     await this.control.setPhaseStatus({
       phaseId: phase.id,
       status: "CREATING_PR",
@@ -1516,6 +1981,7 @@ ${testerResult.fixTaskDescription}`.trim(),
       ciAttempt += 1
     ) {
       try {
+        this.setPhaseTimeoutStep(`CI integration attempt ${ciAttempt}`);
         ciResult = await runCiIntegration({
           phaseId: phase.id,
           phaseName: phase.name,
@@ -1531,8 +1997,12 @@ ${testerResult.fixTaskDescription}`.trim(),
             await this.control.setPhasePrUrl(input);
           },
         });
+        await this.assertPhaseNotTimedOut();
         break;
       } catch (error) {
+        if (error instanceof PhaseTimedOutError) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         const category = (error as any).category;
         if (ciAttempt > this.config.maxRecoveryAttempts) {

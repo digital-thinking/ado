@@ -196,6 +196,13 @@ export type MarkTaskDeadLetterInput = {
   reason: string;
 };
 
+export type RequeueRateLimitedTaskInput = {
+  phaseId: string;
+  taskId: string;
+  retryCount: number;
+  retryAt: string;
+};
+
 export type ActivePhaseTaskItem = {
   number: number;
   title: string;
@@ -878,10 +885,11 @@ export class ControlCenterService {
 
     const phase = state.phases[phaseIndex];
     const normalizedContext = input.ciStatusContext?.trim();
-    const ciStatusContext =
-      status === "CI_FAILED"
-        ? normalizedContext || phase.ciStatusContext
-        : undefined;
+    const preservesDiagnostics =
+      status === "CI_FAILED" || status === "TIMED_OUT";
+    const ciStatusContext = preservesDiagnostics
+      ? normalizedContext || phase.ciStatusContext
+      : undefined;
     const rawFailureKind = input.failureKind
       ? PhaseFailureKindSchema.parse(input.failureKind)
       : undefined;
@@ -1195,6 +1203,7 @@ export class ControlCenterService {
       status: "IN_PROGRESS",
       resultContext: undefined,
       errorLogs: undefined,
+      rateLimitRetryAt: undefined,
       completionVerification: undefined,
     });
 
@@ -2210,6 +2219,13 @@ export class ControlCenterService {
         status === "FAILED"
           ? (adapterFailureKind ?? (currentTask as any).adapterFailureKind)
           : undefined,
+      rateLimitRetryCount:
+        status === "DONE"
+          ? undefined
+          : adapterFailureKind === "rate_limited"
+            ? currentTask.rateLimitRetryCount
+            : undefined,
+      rateLimitRetryAt: undefined,
       completionVerification: normalizedCompletionVerification,
     });
 
@@ -2263,6 +2279,8 @@ export class ControlCenterService {
           errorLogs: undefined,
           errorCategory: undefined,
           adapterFailureKind: undefined,
+          rateLimitRetryCount: undefined,
+          rateLimitRetryAt: undefined,
           completionVerification: undefined,
         });
       });
@@ -2335,6 +2353,8 @@ export class ControlCenterService {
       errorLogs: undefined,
       errorCategory: undefined,
       adapterFailureKind: undefined,
+      rateLimitRetryCount: undefined,
+      rateLimitRetryAt: undefined,
       completionVerification: undefined,
     });
 
@@ -2393,6 +2413,7 @@ export class ControlCenterService {
       status: "FAILED",
       resultContext: undefined,
       errorLogs: truncateForState(reason),
+      rateLimitRetryAt: undefined,
       completionVerification: undefined,
     });
 
@@ -2460,6 +2481,8 @@ export class ControlCenterService {
       errorLogs: undefined,
       errorCategory: undefined,
       adapterFailureKind: undefined,
+      rateLimitRetryCount: undefined,
+      rateLimitRetryAt: undefined,
       completionVerification: undefined,
     });
 
@@ -2523,7 +2546,81 @@ export class ControlCenterService {
     const updatedTask = TaskSchema.parse({
       ...task,
       status: "DEAD_LETTER",
+      rateLimitRetryAt: undefined,
       resultContext: reason,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async requeueRateLimitedTask(
+    input: RequeueRateLimitedTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    const retryCount = Number(input.retryCount);
+    const retryAt = input.retryAt.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    if (!Number.isInteger(retryCount) || retryCount <= 0) {
+      throw new Error("retryCount must be a positive integer.");
+    }
+    if (!retryAt) {
+      throw new Error("retryAt must not be empty.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "FAILED") {
+      throw new Error(
+        `Task must be FAILED before rate-limit requeue. Current status: ${task.status}`,
+      );
+    }
+    if (task.adapterFailureKind !== "rate_limited") {
+      throw new Error(
+        `Task must have adapterFailureKind=rate_limited before requeue. Current kind: ${task.adapterFailureKind ?? "unknown"}`,
+      );
+    }
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "TODO",
+      resultContext: undefined,
+      errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      completionVerification: undefined,
+      rateLimitRetryCount: retryCount,
+      rateLimitRetryAt: retryAt,
     });
 
     const nextPhases = [...state.phases];

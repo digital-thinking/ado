@@ -26,13 +26,24 @@ export async function handleProjectsApi(
   if (request.method === "PATCH" && projectSettingsMatch) {
     const name = decodeURIComponent(projectSettingsMatch[1]);
     const body = await readJson(request);
-    const patch: { autoMode?: boolean; defaultAssignee?: CLIAdapterId } = {};
+    const patch: {
+      autoMode?: boolean;
+      defaultAssignee?: CLIAdapterId;
+      maxTaskRetries?: number;
+      phaseTimeoutMs?: number;
+    } = {};
     if (typeof body.autoMode === "boolean") {
       patch.autoMode = body.autoMode;
     }
     const rawAssignee = asInternalAdapterAssignee(body.defaultAssignee);
     if (rawAssignee !== undefined) {
       patch.defaultAssignee = rawAssignee;
+    }
+    if (typeof body.maxTaskRetries === "number") {
+      patch.maxTaskRetries = body.maxTaskRetries;
+    }
+    if (typeof body.phaseTimeoutMs === "number") {
+      patch.phaseTimeoutMs = body.phaseTimeoutMs;
     }
     return json(await deps.updateProjectSettings(name, patch));
   }

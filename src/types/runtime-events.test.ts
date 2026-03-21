@@ -79,6 +79,58 @@ describe("runtime event contract", () => {
     );
   });
 
+  test("formats rate-limit retry and phase timeout events", () => {
+    const retryEvent = createRuntimeEvent({
+      family: "task-resilience",
+      type: "task:rate_limit_retry",
+      payload: {
+        retryCount: 1,
+        maxRetries: 3,
+        retryDelayMs: 30_000,
+        retryAt: "2026-03-20T10:00:30.000Z",
+        summary: "Task #7 hit a rate limit; re-queued for retry 1/3 in 30s.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-7",
+        taskNumber: 7,
+        taskTitle: "Retry me",
+      },
+    });
+    const timeoutEvent = createRuntimeEvent({
+      family: "phase-resilience",
+      type: "phase:timeout",
+      payload: {
+        timeoutMs: 5_000,
+        elapsedMs: 5_200,
+        startedAt: "2026-03-20T10:00:00.000Z",
+        deadlineAt: "2026-03-20T10:00:05.000Z",
+        currentStep: "waiting 60s for deferred task availability.",
+        summary:
+          'Phase "Phase 33" timed out after 5200ms (configured limit: 5000ms).',
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-33",
+        phaseName: "Phase 33",
+      },
+    });
+
+    expect(formatRuntimeEventForCli(retryEvent)).toBe(
+      "Task #7 hit a rate limit; re-queued for retry 1/3 in 30s.",
+    );
+    expect(formatRuntimeEventForTelegram(retryEvent)).toBe(
+      "Task retry: Task #7 hit a rate limit; re-queued for retry 1/3 in 30s.",
+    );
+    expect(formatRuntimeEventForCli(timeoutEvent)).toBe(
+      'Phase "Phase 33" timed out after 5200ms (configured limit: 5000ms).',
+    );
+    expect(formatRuntimeEventForTelegram(timeoutEvent)).toBe(
+      'Phase timeout: Phase "Phase 33" timed out after 5200ms (configured limit: 5000ms).',
+    );
+  });
+
   test("formats adapter circuit transition events for CLI and Telegram", () => {
     const event = createRuntimeEvent({
       family: "adapter-circuit",
@@ -236,6 +288,57 @@ describe("runtime event contract", () => {
     expect(shouldNotifyRuntimeEventForTelegram(event, "critical")).toBe(false);
   });
 
+  test("delivers retry and timeout events at the intended Telegram levels", () => {
+    const retryEvent = createRuntimeEvent({
+      family: "task-resilience",
+      type: "task:rate_limit_retry",
+      payload: {
+        retryCount: 1,
+        maxRetries: 3,
+        retryDelayMs: 30_000,
+        retryAt: "2026-03-20T10:00:30.000Z",
+        summary: "Task #7 hit a rate limit; re-queued for retry 1/3 in 30s.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-7",
+      },
+    });
+    const timeoutEvent = createRuntimeEvent({
+      family: "phase-resilience",
+      type: "phase:timeout",
+      payload: {
+        timeoutMs: 5_000,
+        elapsedMs: 5_200,
+        startedAt: "2026-03-20T10:00:00.000Z",
+        deadlineAt: "2026-03-20T10:00:05.000Z",
+        currentStep: "waiting 60s for deferred task availability.",
+        summary:
+          'Phase "Phase 33" timed out after 5200ms (configured limit: 5000ms).',
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-33",
+      },
+    });
+
+    expect(shouldNotifyRuntimeEventForTelegram(retryEvent, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(retryEvent, "important")).toBe(
+      true,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(retryEvent, "critical")).toBe(
+      false,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(timeoutEvent, "all")).toBe(true);
+    expect(shouldNotifyRuntimeEventForTelegram(timeoutEvent, "important")).toBe(
+      true,
+    );
+    expect(shouldNotifyRuntimeEventForTelegram(timeoutEvent, "critical")).toBe(
+      true,
+    );
+  });
+
   test("notifies DEAD_LETTER task completion at critical Telegram level", () => {
     const event = createRuntimeEvent({
       family: "task-lifecycle",
@@ -307,6 +410,58 @@ describe("runtime event contract", () => {
 
     expect(createRuntimeEventNotificationKey(event)).toBe(
       createRuntimeEventNotificationKey(duplicateEvent),
+    );
+
+    const retryEvent = createRuntimeEvent({
+      family: "task-resilience",
+      type: "task:rate_limit_retry",
+      payload: {
+        retryCount: 2,
+        maxRetries: 3,
+        retryDelayMs: 60_000,
+        retryAt: "2026-03-20T10:01:00.000Z",
+        summary: "Task #7 hit a rate limit; re-queued for retry 2/3 in 60s.",
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-1",
+        taskId: "task-7",
+        taskNumber: 7,
+      },
+    });
+    const duplicateRetryEvent = RuntimeEventSchema.parse({
+      ...retryEvent,
+      eventId: "11111111-1111-4111-8111-111111111111",
+      occurredAt: "2026-03-20T10:00:31.000Z",
+    });
+    expect(createRuntimeEventNotificationKey(retryEvent)).toBe(
+      createRuntimeEventNotificationKey(duplicateRetryEvent),
+    );
+
+    const timeoutEvent = createRuntimeEvent({
+      family: "phase-resilience",
+      type: "phase:timeout",
+      payload: {
+        timeoutMs: 5_000,
+        elapsedMs: 5_200,
+        startedAt: "2026-03-20T10:00:00.000Z",
+        deadlineAt: "2026-03-20T10:00:05.000Z",
+        currentStep: "waiting 60s for deferred task availability.",
+        summary:
+          'Phase "Phase 33" timed out after 5200ms (configured limit: 5000ms).',
+      },
+      context: {
+        source: "PHASE_RUNNER",
+        phaseId: "phase-33",
+      },
+    });
+    const duplicateTimeoutEvent = RuntimeEventSchema.parse({
+      ...timeoutEvent,
+      eventId: "22222222-2222-4222-8222-222222222222",
+      occurredAt: "2026-03-20T10:00:06.000Z",
+    });
+    expect(createRuntimeEventNotificationKey(timeoutEvent)).toBe(
+      createRuntimeEventNotificationKey(duplicateTimeoutEvent),
     );
 
     const evaluator = createTelegramNotificationEvaluator({

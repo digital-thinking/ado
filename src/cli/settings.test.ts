@@ -59,6 +59,8 @@ const DEFAULT_AGENT_SETTINGS = {
 const DEFAULT_LOOP_SETTINGS = {
   autoMode: false,
   countdownSeconds: 10,
+  maxTaskRetries: 3,
+  phaseTimeoutMs: 21600000,
   testerCommand: null,
   testerArgs: null,
   testerTimeoutMs: 600000,

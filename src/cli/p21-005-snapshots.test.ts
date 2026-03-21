@@ -131,6 +131,11 @@ describe("P21-005 Snapshot Tests", () => {
           usage: "recovery <maxAttempts:0-10>",
         },
         {
+          name: "task-retries",
+          description: "Set execution-loop max task retries",
+          usage: "task-retries <maxRetries:0-20>",
+        },
+        {
           name: "usage",
           description: "Enable/disable codexbar usage telemetry",
           usage: "usage <on|off>",
