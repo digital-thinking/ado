@@ -774,9 +774,9 @@ export function controlCenterHtml(params: {
         raceState && raceState.judgeAdapter && raceState.pickedBranchIndex
           ? '<div class="small">Judge: <span class="mono">' +
             escapeHtml(raceState.judgeAdapter) +
-            "</span> picked <span class=\"mono\">#" +
+            '</span> picked <span class="mono">#' +
             escapeHtml(String(raceState.pickedBranchIndex)) +
-            "</span></div>"
+            '</span></div>'
           : "";
       const reasoningSummary =
         raceState && typeof raceState.reasoning === "string" && raceState.reasoning.trim()
