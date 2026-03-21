@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { GitHubManager, parsePullRequestNumberFromUrl } from "./github-manager";
+import { ProcessExecutionError } from "../process";
+import {
+  GitHubManager,
+  CiPollingError,
+  parsePullRequestNumberFromUrl,
+} from "./github-manager";
 import { MockProcessRunner } from "./test-utils";
 
 describe("GitHubManager", () => {
@@ -254,6 +259,60 @@ describe("GitHubManager", () => {
         detailsUrl: "https://ci.example/lint",
       },
     ]);
+  });
+
+  test("surfaces gh authentication failures with actionable CI polling message", async () => {
+    const runner = new MockProcessRunner([
+      new ProcessExecutionError(
+        "Command failed with exit code 1: gh pr view 38 --json statusCheckRollup",
+        {
+          command: "gh",
+          args: ["pr", "view", "38", "--json", "statusCheckRollup"],
+          cwd: "C:/repo",
+          exitCode: 1,
+          signal: null,
+          stdout: "",
+          stderr:
+            "error: not logged into any GitHub hosts. Run gh auth login\n",
+          durationMs: 1,
+        },
+      ),
+    ]);
+    const manager = new GitHubManager(runner);
+
+    try {
+      await manager.getCiStatus(38, "C:/repo");
+      throw new Error("Expected getCiStatus to throw.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CiPollingError);
+      expect((error as CiPollingError).retryable).toBe(false);
+      expect((error as Error).message).toBe(
+        "GitHub CLI authentication failed while polling CI for PR #38. Run 'gh auth status' or 'gh auth login'.",
+      );
+    }
+  });
+
+  test("surfaces gh stderr for generic CI polling failures", async () => {
+    const runner = new MockProcessRunner([
+      new ProcessExecutionError(
+        "Command failed with exit code 1: gh pr view 38 --json statusCheckRollup",
+        {
+          command: "gh",
+          args: ["pr", "view", "38", "--json", "statusCheckRollup"],
+          cwd: "C:/repo",
+          exitCode: 1,
+          signal: null,
+          stdout: "",
+          stderr: "GraphQL: API rate limit exceeded\n",
+          durationMs: 1,
+        },
+      ),
+    ]);
+    const manager = new GitHubManager(runner);
+
+    await expect(manager.getCiStatus(38, "C:/repo")).rejects.toThrow(
+      "GitHub CLI failed while polling CI for PR #38: GraphQL: API rate limit exceeded",
+    );
   });
 
   test("polls until CI reaches terminal success state", async () => {

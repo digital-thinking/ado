@@ -10,10 +10,8 @@ import {
   createAdapter,
   formatAdapterStartupDiagnostic,
 } from "../adapters";
-import { createTelegramRuntime } from "../bot";
 import { resolveCliLogFilePath } from "../cli/logging";
 import {
-  getAvailableAgents,
   loadCliSettings,
   resolveGlobalSettingsFilePath,
   saveCliSettings,
@@ -28,10 +26,6 @@ import {
   type CliAgentSettings,
   type ProjectState,
 } from "../types";
-import {
-  createTelegramNotificationEvaluator,
-  formatRuntimeEventForTelegram,
-} from "../types/runtime-events";
 import { AgentSupervisor, type AgentView } from "./agent-supervisor";
 import { createWebApp } from "./app";
 import { ControlCenterService } from "./control-center-service";
@@ -379,14 +373,6 @@ export async function startWebControlCenter(
   );
   const cliLogFilePath = resolveCliLogFilePath(input.cwd);
 
-  // Telegram runtime — mirrors CLI's telegram integration
-  const telegram = settings.telegram;
-  let telegramRuntime: ReturnType<typeof createTelegramRuntime> | undefined;
-  const notifyTelegramEvent = createTelegramNotificationEvaluator({
-    level: telegram.notifications.level,
-    suppressDuplicates: telegram.notifications.suppressDuplicates,
-  });
-
   const execution = new ExecutionControlService({
     control,
     agents: {
@@ -406,11 +392,6 @@ export async function startWebControlCenter(
         project?.executionSettings?.defaultAssignee ??
         currentSettings.internalWork.assignee
       );
-    },
-    onRuntimeEvent: async (event) => {
-      if (telegramRuntime && notifyTelegramEvent(event)) {
-        await telegramRuntime.notifyOwner(formatRuntimeEventForTelegram(event));
-      }
     },
   });
   const app = createWebApp({
@@ -635,39 +616,6 @@ export async function startWebControlCenter(
     cliLogFilePath,
   });
 
-  // Start Telegram bot polling if enabled (mirrors CLI's resolveTelegramConfig)
-  const telegramToken =
-    process.env.TELEGRAM_BOT_TOKEN?.trim() || telegram.botToken?.trim();
-  const telegramOwnerId = process.env.TELEGRAM_OWNER_ID
-    ? Number(process.env.TELEGRAM_OWNER_ID)
-    : telegram.ownerId;
-  if (telegram.enabled && telegramToken && telegramOwnerId) {
-    telegramRuntime = createTelegramRuntime({
-      token: telegramToken,
-      ownerId: telegramOwnerId,
-      readState: () => control.getState(input.projectName),
-      listAgents: () => agents.list(),
-      availableAssignees: getAvailableAgents(settings),
-      defaultAssignee: input.defaultInternalWorkAssignee,
-      startTask: async (taskInput) =>
-        control.startActiveTaskAndWait({
-          taskNumber: taskInput.taskNumber,
-          assignee: taskInput.assignee,
-        }),
-      setActivePhase: async (phaseInput) =>
-        control.setActivePhase({
-          phaseId: phaseInput.phaseId,
-        }),
-      requestNextLoop: () => "Use the web UI to advance the execution loop.",
-      requestStopLoop: () => {
-        void execution.stop({ projectName: input.projectName });
-        return "Execution loop stop requested.";
-      },
-    });
-    await telegramRuntime.start();
-    console.info("[web] Telegram bot polling started.");
-  }
-
   const requestedPort = await resolveWebPort(input.port);
   const server = Bun.serve({
     port: requestedPort,
@@ -681,7 +629,6 @@ export async function startWebControlCenter(
     port: resolvedPort,
     url: `http://${WEB_SERVER_HOST}:${resolvedPort}`,
     stop: () => {
-      telegramRuntime?.stop();
       server.stop(true);
     },
   };
