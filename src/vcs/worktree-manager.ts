@@ -13,6 +13,7 @@ const TERMINAL_PHASE_STATUSES: ReadonlySet<PhaseStatus> = new Set([
   "READY_FOR_REVIEW",
   "CI_FAILED",
 ]);
+const RACE_WORKTREE_ID_SEPARATOR = "--race-";
 
 export type WorktreeManagerOptions = {
   git: Pick<GitManager, "createWorktree" | "removeWorktree">;
@@ -116,6 +117,20 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+function resolvePhaseIdFromManagedWorktreePath(relPath: string): string {
+  const firstSegment = relPath.split(/[\\/]/)[0]?.trim() ?? "";
+  if (!firstSegment) {
+    return "";
+  }
+
+  const separatorIndex = firstSegment.indexOf(RACE_WORKTREE_ID_SEPARATOR);
+  if (separatorIndex < 0) {
+    return firstSegment;
+  }
+
+  return firstSegment.slice(0, separatorIndex).trim();
+}
+
 export class WorktreeManager {
   private readonly git: Pick<GitManager, "createWorktree" | "removeWorktree">;
   private readonly projectRootDir: string;
@@ -216,7 +231,7 @@ export class WorktreeManager {
         continue;
       }
 
-      const phaseId = rel.split(/[\\/]/)[0]?.trim() ?? "";
+      const phaseId = resolvePhaseIdFromManagedWorktreePath(rel);
       if (!phaseId) {
         continue;
       }

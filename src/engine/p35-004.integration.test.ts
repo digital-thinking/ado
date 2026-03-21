@@ -47,8 +47,8 @@ describe("P35-004 integration coverage", () => {
     const phaseWorktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
     const raceBranch1 = `${phaseBranch}-race-${taskId}-1`;
     const raceBranch2 = `${phaseBranch}-race-${taskId}-2`;
-    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-1`;
-    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-2`;
+    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-1`;
+    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-2`;
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
@@ -455,8 +455,8 @@ describe("P35-004 integration coverage", () => {
     const phaseWorktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
     const raceBranch1 = `${phaseBranch}-race-${taskId}-1`;
     const raceBranch2 = `${phaseBranch}-race-${taskId}-2`;
-    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-1`;
-    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-2`;
+    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-1`;
+    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-2`;
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
@@ -737,8 +737,8 @@ describe("P35-004 integration coverage", () => {
     const phaseWorktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
     const raceBranch1 = `${phaseBranch}-race-${taskId}-1`;
     const raceBranch2 = `${phaseBranch}-race-${taskId}-2`;
-    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-1`;
-    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-2`;
+    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-1`;
+    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-2`;
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",
@@ -929,8 +929,8 @@ describe("P35-004 integration coverage", () => {
     const taskId = "e2222222-2222-4222-8222-222222222222";
     const phaseBranch = "phase-35-race-cleanup";
     const phaseWorktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
-    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-1`;
-    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}/race-${taskId}-2`;
+    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-1`;
+    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-2`;
     const state = {
       projectName: "test-project",
       rootDir: "/tmp/project",

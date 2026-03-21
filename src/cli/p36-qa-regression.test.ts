@@ -122,4 +122,68 @@ describe("P36 QA CLI regressions", () => {
     const state = await sandbox.readProjectState();
     expect(state.phases[0]?.tasks[0]?.status).toBe("DONE");
   });
+
+  test("status reports live running agents without reconciling them away", async () => {
+    const sandbox = await TestSandbox.create("ixado-p36-cli-status-running-");
+    sandboxes.push(sandbox);
+
+    const phaseId = randomUUID();
+    const taskId = randomUUID();
+    const now = new Date().toISOString();
+
+    await sandbox.writeProjectState({
+      projectName: "test-project",
+      rootDir: sandbox.projectDir,
+      createdAt: now,
+      updatedAt: now,
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 36",
+          branchName: "phase-36-execution-dag",
+          status: "CODING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Observe live agent",
+              description:
+                "Status should show live agents without mutating them.",
+              status: "IN_PROGRESS",
+              assignee: "CODEX_CLI",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    } as any);
+    await sandbox.writeAgents([
+      {
+        id: randomUUID(),
+        name: "CODEX_CLI task worker",
+        command: "codex",
+        args: ["exec", "-"],
+        cwd: sandbox.projectDir,
+        phaseId,
+        taskId,
+        adapterId: "CODEX_CLI",
+        projectName: "test-project",
+        status: "RUNNING",
+        startedAt: now,
+        outputTail: [],
+      },
+    ]);
+
+    const result = runIxadoWithPath(["status"], sandbox, sandbox.projectDir);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Running Agents (1):");
+    expect(result.stdout).toContain("CODEX_CLI task worker");
+
+    const persistedAgents = JSON.parse(
+      await readFile(join(sandbox.projectDir, ".ixado", "agents.json"), "utf8"),
+    ) as Array<{ status: string }>;
+    expect(persistedAgents[0]?.status).toBe("RUNNING");
+  });
 });

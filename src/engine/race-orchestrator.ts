@@ -37,6 +37,7 @@ export type RaceExecutionResult<TResult> = {
 };
 
 type WorktreeManagerApi = Pick<WorktreeManager, "provision" | "teardown">;
+const RACE_WORKTREE_ID_SEPARATOR = "--race-";
 
 function normalizeRequiredValue(value: string, fieldName: string): string {
   const normalized = value.trim();
@@ -64,7 +65,7 @@ export function buildRaceWorktreeId(
   taskId: string,
   index: number,
 ): string {
-  return `${phaseId}/race-${taskId}-${index}`;
+  return `${phaseId}${RACE_WORKTREE_ID_SEPARATOR}${taskId}-${index}`;
 }
 
 export function buildRaceBranchName(

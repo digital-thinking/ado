@@ -220,6 +220,42 @@ describe("WorktreeManager", () => {
     }
   });
 
+  test("maps sibling race worktrees back to their owning phase id", async () => {
+    const repoRoot = await createRepoRoot();
+    const fakeGit = createFakeGit();
+    try {
+      const phaseId = "phase-35";
+      const racePath = resolve(
+        repoRoot,
+        ".ixado/worktrees",
+        `${phaseId}--race-task-123-1`,
+      );
+      await writeWorktreeMetadata({
+        repoRoot,
+        metadataName: "managed-race",
+        worktreePath: racePath,
+        branchName: "phase-35-branch-race-task-123-1",
+      });
+
+      const manager = new WorktreeManager({
+        git: fakeGit.api,
+        projectRootDir: repoRoot,
+        baseDir: ".ixado/worktrees",
+      });
+      const active = await manager.listActive();
+
+      expect(active).toEqual([
+        {
+          phaseId,
+          path: racePath,
+          branchName: "phase-35-branch-race-task-123-1",
+        },
+      ]);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   test("prunes worktrees whose phases are missing or terminal", async () => {
     const repoRoot = await createRepoRoot();
     const fakeGit = createFakeGit();

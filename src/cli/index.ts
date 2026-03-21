@@ -2031,7 +2031,6 @@ async function runStatusCommand(): Promise<void> {
   const activePhase = state.phases.find(
     (phase) => phase.id === state.activePhaseIds[0],
   );
-  agents.reconcileStaleRunningAgents();
   const runningAgents = agents
     .list()
     .filter((agent) => agent.status === "RUNNING");

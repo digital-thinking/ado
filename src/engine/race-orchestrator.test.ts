@@ -28,7 +28,7 @@ function createFakeWorktreeManager() {
 }
 
 describe("RaceOrchestrator", () => {
-  test("provisions race worktrees under the phase worktree directory", async () => {
+  test("provisions race worktrees as sibling managed worktrees for the phase", async () => {
     const fake = createFakeWorktreeManager();
     const orchestrator = new RaceOrchestrator(fake.api);
 
@@ -41,25 +41,25 @@ describe("RaceOrchestrator", () => {
 
     expect(fake.provisionCalls).toEqual([
       {
-        phaseId: "phase-35/race-task-123-1",
+        phaseId: "phase-35--race-task-123-1",
         branchName: "phase-35-branch-race-task-123-1",
         fromRef: "phase-35-branch",
       },
       {
-        phaseId: "phase-35/race-task-123-2",
+        phaseId: "phase-35--race-task-123-2",
         branchName: "phase-35-branch-race-task-123-2",
         fromRef: "phase-35-branch",
       },
       {
-        phaseId: "phase-35/race-task-123-3",
+        phaseId: "phase-35--race-task-123-3",
         branchName: "phase-35-branch-race-task-123-3",
         fromRef: "phase-35-branch",
       },
     ]);
     expect(branches.map((branch) => branch.worktreePath)).toEqual([
-      "/tmp/project/.ixado/worktrees/phase-35/race-task-123-1",
-      "/tmp/project/.ixado/worktrees/phase-35/race-task-123-2",
-      "/tmp/project/.ixado/worktrees/phase-35/race-task-123-3",
+      "/tmp/project/.ixado/worktrees/phase-35--race-task-123-1",
+      "/tmp/project/.ixado/worktrees/phase-35--race-task-123-2",
+      "/tmp/project/.ixado/worktrees/phase-35--race-task-123-3",
     ]);
   });
 
@@ -77,12 +77,12 @@ describe("RaceOrchestrator", () => {
 
     expect(fake.provisionCalls).toEqual([
       {
-        phaseId: "phase-35/race-task-321-1",
+        phaseId: "phase-35--race-task-321-1",
         branchName: "phase-35-branch-race-task-321-1",
         fromRef: "origin/main",
       },
       {
-        phaseId: "phase-35/race-task-321-2",
+        phaseId: "phase-35--race-task-321-2",
         branchName: "phase-35-branch-race-task-321-2",
         fromRef: "origin/main",
       },
@@ -195,6 +195,6 @@ describe("RaceOrchestrator", () => {
         baseBranchName: "phase-35-branch",
       }),
     ).rejects.toThrow("provision failed");
-    expect(fake.teardownCalls).toEqual(["phase-35/race-task-000-1"]);
+    expect(fake.teardownCalls).toEqual(["phase-35--race-task-000-1"]);
   });
 });
