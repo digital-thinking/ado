@@ -146,8 +146,6 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 
 - [x] `P34-001` Extract `VcsProvider` interface from `GitHubManager` in `src/vcs/`: `pushBranch`, `openPr`, `pollChecks`, `markReady`, `mergePr`. Deps: none.
 - [x] `P34-002` Implement `GitHubProvider` wrapping existing `GitHubManager` logic behind the `VcsProvider` interface (preserves all current behavior). Deps: `P34-001`.
-<<<<<<< HEAD
-<<<<<<< HEAD
 - [x] `P34-003` Implement `LocalProvider` (push to remote only, no PR operations) and `NullProvider` (no remote ops — branch stays local). Deps: `P34-001`.
 - [x] `P34-003a` Remove per-task `REMOTE_PUSH` and `PR_CREATION` side-effect contracts from `verifyTaskCompletionSideEffects`. These are orchestrator responsibilities (push/PR happen deterministically in `ci-integration.ts` after execution loop), not agent task side-effects. Updated tests to use `CI_TRIGGERED_UPDATE` contracts. Deps: `P34-003`.
 - [x] `P34-004` Add `vcsProvider` config to project settings (`github | local | null`, default `null`). Migrate `ciEnabled: true` → `vcsProvider: github` via Zod transform. Wire `VcsProvider` into `runCiIntegration` (replaces direct `GitManager`/`GitHubManager`/`PrivilegedGitActions` instantiation). Provider-aware: `NullProvider` skips push/PR, `LocalProvider` pushes but skips PR → DONE, `GitHubProvider` does full push/PR/CI flow. Added `createVcsProvider` factory. Deps: `P34-002`, `P34-003a`.
