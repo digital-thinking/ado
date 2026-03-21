@@ -7,6 +7,7 @@ import { loadCliSettings, getAvailableAgents } from "../cli/settings";
 import type { AgentView } from "./agent-supervisor";
 import type { ControlCenterService } from "./control-center-service";
 import type { CLIAdapterId, CliAgentSettings } from "../types";
+import type { RuntimeEvent } from "../types/runtime-events";
 
 const STOP_SETTLE_POLL_MS = 1_000;
 const STOP_SETTLE_MAX_ATTEMPTS = 15;
@@ -35,6 +36,7 @@ export type ExecutionControlServiceInput = {
   settingsFilePath: string;
   agentSettings: CliAgentSettings;
   resolveDefaultAssignee: ResolveDefaultAssignee;
+  onRuntimeEvent?: (event: RuntimeEvent) => Promise<void> | void;
   sleep?: (ms: number) => Promise<void>;
 };
 
@@ -52,6 +54,9 @@ export class ExecutionControlService {
   private readonly settingsFilePath: string;
   private readonly agentSettings: CliAgentSettings;
   private readonly resolveDefaultAssignee: ResolveDefaultAssignee;
+  private readonly onRuntimeEvent: (
+    event: RuntimeEvent,
+  ) => Promise<void> | void;
   private readonly sleep: (ms: number) => Promise<void>;
   private status: AutoExecutionStatus;
   private runLock: ExecutionRunLock | null = null;
@@ -67,6 +72,7 @@ export class ExecutionControlService {
     this.settingsFilePath = input.settingsFilePath;
     this.agentSettings = input.agentSettings;
     this.resolveDefaultAssignee = input.resolveDefaultAssignee;
+    this.onRuntimeEvent = input.onRuntimeEvent ?? (() => {});
     this.sleep =
       input.sleep ??
       ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -280,6 +286,8 @@ export class ExecutionControlService {
               ),
             });
           }
+          // Forward to external listeners (Telegram, logging, etc.)
+          await this.onRuntimeEvent(event);
         },
       );
 
