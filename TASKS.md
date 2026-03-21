@@ -146,7 +146,7 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 
 - [x] `P34-001` Extract `VcsProvider` interface from `GitHubManager` in `src/vcs/`: `pushBranch`, `openPr`, `pollChecks`, `markReady`, `mergePr`. Deps: none.
 - [x] `P34-002` Implement `GitHubProvider` wrapping existing `GitHubManager` logic behind the `VcsProvider` interface (preserves all current behavior). Deps: `P34-001`.
-- [ ] `P34-003` Implement `LocalProvider` (push to remote only, no PR operations) and `NullProvider` (no remote ops — branch stays local). Deps: `P34-001`.
+- [x] `P34-003` Implement `LocalProvider` (push to remote only, no PR operations) and `NullProvider` (no remote ops — branch stays local). Deps: `P34-001`.
 - [ ] `P34-004` Add `vcsProvider` config to project settings (`github | local | null`, default `github`). Migrate `ciEnabled: true` → `provider: github` on load. Update `PrivilegedGitActions` to route through active provider. Deps: `P34-002`, `P34-003`.
 - [ ] `P34-005` Define `Gate` interface (`evaluate(context: GateContext): Promise<GateResult>`) and `GateChain` runner that executes gates in sequence. Deps: none.
 - [ ] `P34-006` Implement `CommandGate`: run a configurable shell command; pass if exit code is 0; capture stdout/stderr for diagnostics. Deps: `P34-005`.
