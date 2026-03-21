@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { GitManager } from "./git-manager";
-import { GitHubManager } from "./github-manager";
+import { GitHubProvider } from "./github-provider";
 import { MockProcessRunner } from "./test-utils";
 import type { VcsProvider } from "./vcs-provider";
 
 describe("VcsProvider", () => {
-  test("adapts the existing git and GitHub managers behind a shared contract", async () => {
+  test("GitHubProvider adapts the existing git and GitHub managers behind a shared contract", async () => {
     const runner = new MockProcessRunner([
       { stdout: "" },
       { stdout: "https://github.com/org/repo/pull/77\n" },
@@ -20,15 +19,7 @@ describe("VcsProvider", () => {
       { stdout: "" },
       { stdout: "" },
     ]);
-    const git = new GitManager(runner);
-    const github = new GitHubManager(runner);
-    const provider: VcsProvider = {
-      pushBranch: git.pushBranch.bind(git),
-      openPr: github.createPullRequest.bind(github),
-      pollChecks: github.pollCiStatus.bind(github),
-      markReady: github.markPullRequestReady.bind(github),
-      mergePr: github.mergePullRequest.bind(github),
-    };
+    const provider: VcsProvider = new GitHubProvider(runner);
 
     await provider.pushBranch({ branchName: "phase-34", cwd: "C:/repo" });
     const prUrl = await provider.openPr({
