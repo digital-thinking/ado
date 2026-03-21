@@ -131,6 +131,33 @@ describe("exception recovery", () => {
     expect(attempt.result.status).toBe("fixed");
   });
 
+  test("forwards recovery cwd to the internal worker", async () => {
+    const exception = classifyRecoveryException({
+      message: "Git working tree is not clean.",
+      category: "DIRTY_WORKTREE",
+    });
+
+    let capturedCwd: string | undefined;
+
+    await runExceptionRecovery({
+      cwd: "/tmp/phase-worktree",
+      assignee: "MOCK_CLI",
+      exception,
+      attemptNumber: 1,
+      role: "admin",
+      policy: DEFAULT_AUTH_POLICY,
+      runInternalWork: async (work) => {
+        capturedCwd = work.cwd;
+        return {
+          stdout: "non-json freeform model response",
+          stderr: "",
+        };
+      },
+    });
+
+    expect(capturedCwd).toBe("/tmp/phase-worktree");
+  });
+
   test("DIRTY_WORKTREE attempt 2 uses recovery-worker JSON prompt and does not resume", async () => {
     const exception = classifyRecoveryException({
       message: "Git working tree is not clean.",

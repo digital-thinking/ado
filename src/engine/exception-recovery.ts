@@ -142,6 +142,7 @@ export type RunExceptionRecoveryInput = {
   runInternalWork: (input: {
     assignee: "MOCK_CLI" | "CLAUDE_CLI" | "GEMINI_CLI" | "CODEX_CLI";
     prompt: string;
+    cwd?: string;
     phaseId?: string;
     taskId?: string;
     resume?: boolean;
@@ -222,6 +223,7 @@ export async function runExceptionRecovery(
   const adapterResult = await input.runInternalWork({
     assignee: input.assignee,
     prompt,
+    cwd: input.cwd,
     phaseId: exception.phaseId,
     taskId: exception.taskId,
     ...(shouldResumeOriginalSession ? { resume: true } : {}),

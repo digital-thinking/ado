@@ -231,6 +231,7 @@ describe("WorktreeManager", () => {
       );
       const donePath = resolve(repoRoot, ".ixado/worktrees", "phase-done");
       const codingPath = resolve(repoRoot, ".ixado/worktrees", "phase-coding");
+      await mkdir(codingPath, { recursive: true });
       await writeWorktreeMetadata({
         repoRoot,
         metadataName: "missing",
@@ -274,6 +275,46 @@ describe("WorktreeManager", () => {
         },
         {
           path: missingPath,
+          cwd: repoRoot,
+          force: true,
+        },
+      ]);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("prunes stale worktree metadata when the path is missing even for active phases", async () => {
+    const repoRoot = await createRepoRoot();
+    const fakeGit = createFakeGit();
+    try {
+      const stalePath = resolve(repoRoot, ".ixado/worktrees", "phase-coding");
+      await writeWorktreeMetadata({
+        repoRoot,
+        metadataName: "stale-coding",
+        worktreePath: stalePath,
+        branchName: "phase-coding",
+      });
+
+      const manager = new WorktreeManager({
+        git: fakeGit.api,
+        projectRootDir: repoRoot,
+        baseDir: ".ixado/worktrees",
+      });
+      const pruned = await manager.pruneOrphaned({
+        phases: [{ id: "phase-coding", status: "CODING" }],
+      });
+
+      expect(pruned).toEqual([
+        {
+          phaseId: "phase-coding",
+          path: stalePath,
+          branchName: "phase-coding",
+        },
+      ]);
+      expect(fakeGit.removeCalls).toEqual([
+        {
+          path: stalePath,
           cwd: repoRoot,
           force: true,
         },

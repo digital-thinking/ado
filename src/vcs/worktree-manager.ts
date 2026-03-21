@@ -104,6 +104,18 @@ async function readWorktreeBranchName(
   return branchName || null;
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export class WorktreeManager {
   private readonly git: Pick<GitManager, "createWorktree" | "removeWorktree">;
   private readonly projectRootDir: string;
@@ -227,7 +239,8 @@ export class WorktreeManager {
 
     for (const worktree of active) {
       const phase = phasesById.get(worktree.phaseId);
-      if (phase && !isPhaseTerminal(phase.status)) {
+      const worktreePathExists = await pathExists(worktree.path);
+      if (worktreePathExists && phase && !isPhaseTerminal(phase.status)) {
         continue;
       }
 

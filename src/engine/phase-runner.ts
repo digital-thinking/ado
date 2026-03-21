@@ -3545,6 +3545,7 @@ ${testerResult.fixTaskDescription}`.trim(),
             const result = await this.control.runInternalWork({
               assignee: work.assignee,
               prompt: work.prompt,
+              cwd: work.cwd,
               phaseId: work.phaseId,
               taskId: work.taskId,
               resume: work.resume,
