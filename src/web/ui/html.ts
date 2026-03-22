@@ -325,6 +325,30 @@ export function controlCenterHtml(params: {
       display: flex;
       justify-content: flex-end;
     }
+    .sortable-list {
+      display: grid;
+      gap: 12px;
+    }
+    .adapter-card {
+      display: grid;
+      gap: 10px;
+      cursor: grab;
+    }
+    .adapter-card.dragging {
+      opacity: 0.55;
+      cursor: grabbing;
+    }
+    .adapter-card.drop-target {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(31, 122, 90, 0.12);
+    }
+    .drag-handle {
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
   </style>
 </head>
 <body>
@@ -483,8 +507,8 @@ export function controlCenterHtml(params: {
 
       <section class="card wide" style="margin-top: 16px;">
         <h2>CLI Adapters</h2>
-        <div class="small">Card order defines automatic failover priority for rate-limited tasks. Top to bottom wins.</div>
-        <div id="adaptersSettingsList" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+        <div class="small">Automatic provider failover priority. Drag adapters with the mouse to reorder them. The top enabled adapter is tried first when IxADO switches providers after a rate limit.</div>
+        <div id="adaptersSettingsList" class="sortable-list" style="margin-top: 12px;">
           <!-- Dynamically populated -->
         </div>
         <div class="row" style="margin-top: 16px;">
@@ -595,6 +619,7 @@ export function controlCenterHtml(params: {
     const projectStateCache = new Map();
     let currentEventSource = null;
     let latestExecutionStatus = null;
+    let draggingAdapterCard = null;
 
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
@@ -619,36 +644,77 @@ export function controlCenterHtml(params: {
     };
 
     function updateAdapterPriorityLabels() {
-      document.querySelectorAll("#adaptersSettingsList .card").forEach((card, index) => {
+      document.querySelectorAll("#adaptersSettingsList .adapter-card").forEach((card, index) => {
         const label = card.querySelector(".adapter-priority-label");
         if (label) {
-          label.textContent = "Priority " + String(index + 1);
+          label.textContent =
+            index === 0
+              ? "Priority 1 - top failover choice"
+              : "Priority " + String(index + 1) + " - failover order";
         }
       });
     }
 
-    function moveAdapterCard(button) {
-      const direction = button.getAttribute("data-move");
-      const card = button.closest(".card");
-      const list = document.getElementById("adaptersSettingsList");
-      if (!card || !list || !direction) {
-        return;
-      }
-
-      if (direction === "up" && card.previousElementSibling) {
-        list.insertBefore(card, card.previousElementSibling);
-      } else if (direction === "down" && card.nextElementSibling) {
-        list.insertBefore(card.nextElementSibling, card);
-      }
-      updateAdapterPriorityLabels();
+    function clearAdapterDropTargets() {
+      document.querySelectorAll("#adaptersSettingsList .adapter-card").forEach((card) => {
+        card.classList.remove("drop-target");
+      });
     }
 
-    document.getElementById("adaptersSettingsList").addEventListener("click", (event) => {
-      const button = event.target.closest("[data-move]");
-      if (!button) {
+    function getAdapterDragAfterElement(container, pointerY) {
+      const cards = [...container.querySelectorAll(".adapter-card:not(.dragging)")];
+      let closest = null;
+      let closestOffset = Number.NEGATIVE_INFINITY;
+      cards.forEach((card) => {
+        const box = card.getBoundingClientRect();
+        const offset = pointerY - box.top - box.height / 2;
+        if (offset < 0 && offset > closestOffset) {
+          closestOffset = offset;
+          closest = card;
+        }
+      });
+      return closest;
+    }
+
+    const adaptersSettingsList = document.getElementById("adaptersSettingsList");
+    adaptersSettingsList.addEventListener("dragstart", (event) => {
+      const card = event.target.closest(".adapter-card");
+      if (!card) {
         return;
       }
-      moveAdapterCard(button);
+      draggingAdapterCard = card;
+      card.classList.add("dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+
+    adaptersSettingsList.addEventListener("dragend", () => {
+      if (draggingAdapterCard) {
+        draggingAdapterCard.classList.remove("dragging");
+        draggingAdapterCard = null;
+      }
+      clearAdapterDropTargets();
+      updateAdapterPriorityLabels();
+    });
+
+    adaptersSettingsList.addEventListener("dragover", (event) => {
+      if (!draggingAdapterCard) {
+        return;
+      }
+      event.preventDefault();
+      const afterElement = getAdapterDragAfterElement(
+        adaptersSettingsList,
+        event.clientY,
+      );
+      clearAdapterDropTargets();
+      if (afterElement) {
+        afterElement.classList.add("drop-target");
+        adaptersSettingsList.insertBefore(draggingAdapterCard, afterElement);
+      } else {
+        adaptersSettingsList.appendChild(draggingAdapterCard);
+      }
+      updateAdapterPriorityLabels();
     });
 
     async function api(path, options = {}, timeoutMs = 0) {
@@ -961,21 +1027,20 @@ export function controlCenterHtml(params: {
         agentIds.forEach(id => {
           const config = settings.agents[id];
           const div = document.createElement("div");
-          div.className = "card";
+          div.className = "card adapter-card";
+          div.setAttribute("draggable", "true");
           div.innerHTML = \`
             <div class="row" style="justify-content:space-between; align-items:flex-start;">
               <div>
                 <h3 class="mono" style="margin-top:0; margin-bottom:4px;">\${id}</h3>
                 <div class="small adapter-priority-label">Priority</div>
               </div>
-              <div class="row">
-                <button type="button" class="secondary" data-move="up">Up</button>
-                <button type="button" class="secondary" data-move="down">Down</button>
-              </div>
+              <div class="drag-handle">Drag to reorder</div>
             </div>
             <label class="row small">
               <input type="checkbox" class="adapter-enabled" data-id="\${id}" \${config.enabled ? "checked" : ""}> Enabled
             </label>
+            <div class="small muted">This position defines automatic failover priority when IxADO switches providers after a rate limit.</div>
             <label class="small" style="display:block; margin-top:8px;">Timeout (ms)</label>
             <input type="number" class="adapter-timeout" data-id="\${id}" value="\${config.timeoutMs}" style="width:100%;">
           \`;
