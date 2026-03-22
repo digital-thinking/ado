@@ -72,6 +72,7 @@ export type AgentSupervisorOptions = {
   spawnFn?: SpawnFn;
   registryFilePath?: string;
   onFailure?: (agent: AgentView) => void | Promise<void>;
+  terminationGraceMs?: number;
   runtimeDiagnostics?: {
     heartbeatIntervalMs?: number;
     idleThresholdMs?: number;
@@ -88,6 +89,7 @@ export type AgentEvent = RuntimeEvent;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS = 120_000;
 const DEFAULT_IDLE_TIMEOUT_MULTIPLIER = 5;
+const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 
 /**
  * How long (ms) to wait before coalescing buffered agent-registry writes into
@@ -235,6 +237,7 @@ export class AgentSupervisor {
   private readonly spawnFn: SpawnFn;
   private readonly registryFilePath?: string;
   private readonly onFailure?: (agent: AgentView) => void | Promise<void>;
+  private readonly terminationGraceMs: number;
   private readonly runtimeDiagnostics: RuntimeDiagnosticsConfig;
   private readonly records = new Map<string, AgentRecord>();
   private readonly emitter = new EventEmitter();
@@ -254,6 +257,7 @@ export class AgentSupervisor {
     if (typeof spawnOrOptions === "function") {
       this.spawnFn = spawnOrOptions;
       this.registryFilePath = registryFilePath;
+      this.terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS;
       this.runtimeDiagnostics = {
         heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
         idleThresholdMs: DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS,
@@ -264,6 +268,8 @@ export class AgentSupervisor {
     this.spawnFn = spawnOrOptions.spawnFn ?? spawn;
     this.registryFilePath = spawnOrOptions.registryFilePath;
     this.onFailure = spawnOrOptions.onFailure;
+    this.terminationGraceMs =
+      spawnOrOptions.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
     this.runtimeDiagnostics = {
       heartbeatIntervalMs:
         spawnOrOptions.runtimeDiagnostics?.heartbeatIntervalMs ??
@@ -272,6 +278,12 @@ export class AgentSupervisor {
         spawnOrOptions.runtimeDiagnostics?.idleThresholdMs ??
         DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS,
     };
+    if (
+      !Number.isFinite(this.terminationGraceMs) ||
+      this.terminationGraceMs <= 0
+    ) {
+      throw new Error("terminationGraceMs must be > 0.");
+    }
     if (
       !Number.isFinite(this.runtimeDiagnostics.heartbeatIntervalMs) ||
       this.runtimeDiagnostics.heartbeatIntervalMs <= 0
@@ -659,8 +671,10 @@ export class AgentSupervisor {
     let timeoutHandle: NodeJS.Timeout | undefined;
     let silenceHandle: NodeJS.Timeout | undefined;
     let heartbeatHandle: NodeJS.Timeout | undefined;
+    let forceKillHandle: NodeJS.Timeout | undefined;
     let hasReceivedOutput = false;
     let idleTimeoutTriggered = false;
+    let terminationRequested = false;
     const startedAtMs = Date.now();
     let lastOutputAtMs = startedAtMs;
     let lastIdleDiagnosticBucket = -1;
@@ -690,6 +704,27 @@ export class AgentSupervisor {
       clearTimeout(timeoutHandle);
       cancelSilenceTimer();
       clearInterval(heartbeatHandle);
+      clearTimeout(forceKillHandle);
+    };
+    const requestTermination = (reason: "timeout" | "idle-timeout") => {
+      if (
+        terminationRequested ||
+        runToken !== record.runToken ||
+        record.child !== child
+      ) {
+        return;
+      }
+      terminationRequested = true;
+      child.kill();
+      forceKillHandle = setTimeout(() => {
+        if (runToken !== record.runToken || record.child !== child) {
+          return;
+        }
+        appendSystemOutput(
+          `Agent ${reason} grace period expired after ${this.terminationGraceMs}ms: force killing ${record.command} ${record.args.join(" ")}`.trim(),
+        );
+        child.kill("SIGKILL");
+      }, this.terminationGraceMs);
     };
 
     if (options.startupSilenceTimeoutMs !== undefined) {
@@ -760,7 +795,7 @@ export class AgentSupervisor {
           `Agent idle timeout after ${idleTimeoutMs}ms: terminating ${record.command} ${record.args.join(" ")}`.trim(),
         );
         options.onIdleTimeout?.();
-        child.kill();
+        requestTermination("idle-timeout");
       }
     }, this.runtimeDiagnostics.heartbeatIntervalMs);
 
@@ -853,7 +888,7 @@ export class AgentSupervisor {
     if (options.timeoutMs !== undefined) {
       timeoutHandle = setTimeout(() => {
         options.onTimeout?.();
-        child.kill();
+        requestTermination("timeout");
       }, options.timeoutMs);
     }
 

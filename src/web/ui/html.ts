@@ -480,7 +480,7 @@ export function controlCenterHtml(params: {
           <h2>Global Defaults</h2>
           <form id="globalDefaultsForm">
             <label class="row small">
-              <input type="checkbox" id="globalAutoMode" /> Fallback Auto Mode
+              <input type="checkbox" id="globalAutoMode" /> Global Default Auto Mode
             </label>
             <label class="small" for="globalDefaultAssignee">Default CLI Assignee</label>
             <select id="globalDefaultAssignee"></select>

@@ -20,6 +20,7 @@ type FakeChild = ChildProcess & {
   stderr: PassThrough;
   stdin: PassThrough;
   killedByTest: boolean;
+  killSignals: Array<NodeJS.Signals | number | undefined>;
 };
 
 function createFakeChild(pid = 1001): FakeChild {
@@ -28,20 +29,25 @@ function createFakeChild(pid = 1001): FakeChild {
   const stderr = new PassThrough();
   const stdin = new PassThrough();
   let killedByTest = false;
+  const killSignals: Array<NodeJS.Signals | number | undefined> = [];
 
   const child = Object.assign(emitter, {
     pid,
     stdout,
     stderr,
     stdin,
-    kill: () => {
+    kill: (signal?: NodeJS.Signals | number) => {
       killedByTest = true;
+      killSignals.push(signal);
       return true;
     },
   }) as FakeChild;
 
   Object.defineProperty(child, "killedByTest", {
     get: () => killedByTest,
+  });
+  Object.defineProperty(child, "killSignals", {
+    get: () => killSignals,
   });
 
   return child;
@@ -540,6 +546,51 @@ describe("AgentSupervisor", () => {
     expect(
       listed?.outputTail.some((line) =>
         line.includes("Agent idle timeout after 40ms"),
+      ),
+    ).toBe(true);
+  });
+
+  test("force-kills idle run-to-completion agents that ignore the initial termination signal", async () => {
+    const child = createFakeChild();
+    child.kill = ((signal?: NodeJS.Signals | number) => {
+      child.killSignals.push(signal);
+      if (signal === "SIGKILL") {
+        queueMicrotask(() => {
+          child.emit("close", null, "SIGKILL");
+        });
+      }
+      return true;
+    }) as ChildProcess["kill"];
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => child,
+      terminationGraceMs: 5,
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 10,
+      },
+    });
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Stuck idle worker",
+        command: "gemini",
+        args: ["--yolo"],
+        cwd: "/tmp",
+        adapterId: "GEMINI_CLI",
+        approvedAdapterSpawn: true,
+        idleTimeoutMs: 20,
+      }),
+    ).rejects.toThrow("Command became idle for 20ms");
+
+    expect(child.killSignals).toEqual([undefined, "SIGKILL"]);
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Stuck idle worker");
+    expect(listed?.status).toBe("FAILED");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("force killing gemini --yolo"),
       ),
     ).toBe(true);
   });
