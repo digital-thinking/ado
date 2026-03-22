@@ -49,6 +49,10 @@ import {
   type TaskRoutingReason,
   type WorkerAssignee,
 } from "../types";
+import {
+  ExecutionTraceSchema,
+  type ExecutionTrace,
+} from "../types/execution-trace";
 
 const DEFAULT_TASKS_MARKDOWN_PATH = "TASKS.md";
 const TASKS_IMPORT_TIMEOUT_MS = 180_000;
@@ -117,6 +121,7 @@ export type RunInternalWorkInput = {
 
 export type RunInternalWorkResult = {
   assignee: CLIAdapterId;
+  agentId?: string;
   command: string;
   args: string[];
   stdout: string;
@@ -635,6 +640,24 @@ export class ControlCenterService {
 
   async getState(projectName?: string): Promise<ProjectState> {
     return (await this.getEngine(projectName)).readProjectState();
+  }
+
+  async getPhaseTrace(
+    phaseId: string,
+    projectName?: string,
+  ): Promise<ExecutionTrace> {
+    if (!phaseId.trim()) {
+      throw new Error("phaseId must not be empty.");
+    }
+    return (await this.getEngine(projectName)).readExecutionTrace(phaseId);
+  }
+
+  async updatePhaseTrace(
+    trace: ExecutionTrace,
+    projectName?: string,
+  ): Promise<ExecutionTrace> {
+    const validated = ExecutionTraceSchema.parse(trace);
+    return (await this.getEngine(projectName)).writeExecutionTrace(validated);
   }
 
   async createPhase(
@@ -1337,6 +1360,7 @@ export class ControlCenterService {
 
     return {
       assignee,
+      agentId: result.agentId,
       command: result.command,
       args: result.args,
       stdout: result.stdout,

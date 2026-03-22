@@ -292,6 +292,7 @@ export async function startWebControlCenter(
       );
 
       return {
+        agentId: result.id,
         command: result.command,
         args: result.args,
         stdout: result.stdout,
@@ -397,6 +398,7 @@ export async function startWebControlCenter(
   const app = createWebApp({
     control: {
       getState: (name) => control.getState(name),
+      getPhaseTrace: (phaseId, name) => control.getPhaseTrace(phaseId, name),
       createPhase: (input) => control.createPhase(input),
       createTask: (input) => control.createTask(input),
       updateTask: (input) => control.updateTask(input),

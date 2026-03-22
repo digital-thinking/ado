@@ -281,6 +281,7 @@ type PhaseTimeoutWatchdog = {
 };
 
 type RaceBranchExecutionOutput = {
+  agentId?: string;
   diff: string;
   stdout: string;
   stderr: string;
@@ -1093,22 +1094,6 @@ Recovery: ${recoveryMessage}`,
       taskNumber,
       preferredAssignee,
     });
-    let taskDescriptionOverride: string | undefined;
-    let resultContextPrefix: string | undefined;
-    let deliberationSummary: DeliberationSummary | undefined;
-    if (task.deliberate === true) {
-      const deliberation = await this.runDeliberationForTask({
-        phase,
-        task,
-        taskNumber,
-        implementerAssignee: effectiveAssignee,
-      });
-      taskDescriptionOverride = deliberation.refinedPrompt;
-      deliberationSummary = deliberation.summary;
-      resultContextPrefix = formatDeliberationSummaryForResultContext(
-        deliberation.summary,
-      );
-    }
     const nextTaskLabel = `task #${taskNumber} ${task.title}`;
     console.info(
       `Execution loop: starting ${nextTaskLabel} with ${effectiveAssignee}.`,
@@ -1146,6 +1131,25 @@ Recovery: ${recoveryMessage}`,
       label: `Task #${taskNumber} ${task.title}`,
       detail: { assignee: effectiveAssignee, routingReason },
     });
+    await this.saveTrace();
+
+    let taskDescriptionOverride: string | undefined;
+    let resultContextPrefix: string | undefined;
+    let deliberationSummary: DeliberationSummary | undefined;
+    if (task.deliberate === true) {
+      const deliberation = await this.runDeliberationForTask({
+        phase,
+        task,
+        taskNumber,
+        implementerAssignee: effectiveAssignee,
+        parentTraceId: taskRunTraceId || undefined,
+      });
+      taskDescriptionOverride = deliberation.refinedPrompt;
+      deliberationSummary = deliberation.summary;
+      resultContextPrefix = formatDeliberationSummaryForResultContext(
+        deliberation.summary,
+      );
+    }
 
     while (taskRunCount < maxTaskRunCount) {
       this.setPhaseTimeoutStep(
@@ -1170,6 +1174,7 @@ Recovery: ${recoveryMessage}`,
         resume: resumeSession,
         taskDescriptionOverride,
         resultContextPrefix,
+        parentTraceId: taskRunTraceId || undefined,
       });
       await this.assertPhaseNotTimedOut();
       const updatedPhase = this.resolveActivePhase(updatedState);
@@ -1222,6 +1227,7 @@ Recovery: ${recoveryMessage}`,
             finalStatus: resultTask.status,
             attempts: taskRunCount,
           });
+          await this.saveTrace();
         }
         this.lastExecutedTaskContext = {
           taskId: resultTask.id,
@@ -1283,6 +1289,7 @@ Recovery: ${recoveryMessage}`,
               reason: "rate_limit_exhausted",
               attempts: taskRunCount,
             });
+            await this.saveTrace();
           }
           throw new Error(
             `Rate-limit retries exhausted for task #${taskNumber} after ${maxTaskRetries} retries.`,
@@ -1357,6 +1364,7 @@ Recovery: ${recoveryMessage}`,
           errorMessage: failureMessage,
           category: resultTask.errorCategory,
           adapterFailureKind: (resultTask as any).adapterFailureKind,
+          parentTraceId: taskRunTraceId || undefined,
         });
         console.info(
           `Execution loop: recovery fixed ${nextTaskLabel}, retrying task.`,
@@ -1414,6 +1422,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
             recoveryMessage,
             attempts: taskRunCount,
           });
+          await this.saveTrace();
         }
         throw recoveryError;
       }
@@ -1424,6 +1433,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         reason: "max_attempts_exhausted",
         attempts: maxTaskRunCount,
       });
+      await this.saveTrace();
     }
     await this.control.setPhaseStatus({
       phaseId: phase.id,
@@ -1445,6 +1455,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     resume: boolean;
     taskDescriptionOverride?: string;
     resultContextPrefix?: string;
+    parentTraceId?: string;
   }): Promise<any> {
     const raceCount = this.resolveTaskRaceCount(input.task);
     if (raceCount <= 1) {
@@ -1589,6 +1600,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                 raceCount: input.raceCount,
               },
             });
+            await this.saveTrace();
             try {
               const result = await this.runRaceBranch({
                 phase: input.phase,
@@ -1598,9 +1610,15 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                 resume: prepared.resume,
               });
               if (branchTraceId) {
-                this.traceRecorder?.finish(branchTraceId, "passed", {
-                  status: "fulfilled",
-                });
+                this.traceRecorder?.finish(
+                  branchTraceId,
+                  "passed",
+                  {
+                    status: "fulfilled",
+                  },
+                  result.agentId,
+                );
+                await this.saveTrace();
               }
               await queueRaceStateUpdate((current) =>
                 this.updateRaceStateBranch(current, {
@@ -1630,6 +1648,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                   status: "rejected",
                   error: message,
                 });
+                await this.saveTrace();
               }
               await queueRaceStateUpdate((current) =>
                 this.updateRaceStateBranch(current, {
@@ -1783,6 +1802,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     });
 
     return {
+      agentId: result.agentId,
       diff: diffResult.stdout,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -2482,6 +2502,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
     task: Task;
     taskNumber: number;
     implementerAssignee: CLIAdapterId;
+    parentTraceId?: string;
   }): Promise<{
     refinedPrompt: string;
     summary: DeliberationSummary;
@@ -2500,12 +2521,14 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       taskNumber: input.taskNumber,
       adapterId: input.implementerAssignee,
       label: `Deliberation for task #${input.taskNumber} ${input.task.title}`,
+      parentIds: input.parentTraceId ? [input.parentTraceId] : [],
       detail: {
         implementer: input.implementerAssignee,
         reviewer: reviewerAssignee,
         maxRefinePasses,
       },
     });
+    await this.saveTrace();
     console.info(
       `Execution loop: running deliberation for task #${input.taskNumber} ${input.task.title} with implementer=${input.implementerAssignee} reviewer=${reviewerAssignee}.`,
     );
@@ -2527,6 +2550,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           resume: internalInput.resume,
         });
         return {
+          agentId: executionResult.agentId,
           stdout: executionResult.stdout,
           stderr: executionResult.stderr,
         };
@@ -2541,6 +2565,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           refinePassesUsed: result.summary.refinePassesUsed,
           capped: true,
         });
+        await this.saveTrace();
       }
       console.warn(
         `Deliberation reached max refine passes (${maxRefinePasses}) for task #${input.taskNumber}. Continuing with latest refined prompt.`,
@@ -2552,6 +2577,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           rounds: result.summary.rounds.length,
           refinePassesUsed: result.summary.refinePassesUsed,
         });
+        await this.saveTrace();
       }
       console.info(
         `Deliberation approved for task #${input.taskNumber} after ${result.summary.rounds.length} round(s).`,
@@ -3101,6 +3127,7 @@ ${testerResult.fixTaskDescription}`.trim(),
         if (traceId) {
           gateTraceIds.set(index, traceId);
         }
+        await this.saveTrace();
         console.info(`Gate chain: starting gate "${gate.name}".`);
         await this.publishRuntimeEvent(
           createRuntimeEvent({
@@ -3128,6 +3155,7 @@ ${testerResult.fixTaskDescription}`.trim(),
               retryable: result.passed ? undefined : result.retryable,
             },
           );
+          await this.saveTrace();
         }
         const stage = result.passed ? "pass" : "fail";
         console.info(
@@ -3595,6 +3623,7 @@ ${testerResult.fixTaskDescription}`.trim(),
     errorMessage: string;
     category?: any;
     adapterFailureKind?: any;
+    parentTraceId?: string;
   }): Promise<void> {
     const exception = classifyRecoveryException({
       message: input.errorMessage,
@@ -3626,12 +3655,14 @@ ${testerResult.fixTaskDescription}`.trim(),
         phaseId: input.phaseId,
         taskId: input.taskId,
         label: `Recovery #${attemptNumber} for ${input.taskTitle ?? input.phaseName}`,
+        parentIds: input.parentTraceId ? [input.parentTraceId] : [],
         detail: {
           attemptNumber,
           maxAttempts: this.config.maxRecoveryAttempts,
           category: exception.category,
         },
       });
+      await this.saveTrace();
       console.info(
         `Recovery attempt ${attemptNumber}/${this.config.maxRecoveryAttempts} for ${input.taskTitle ?? input.phaseName}: ${exception.category}.`,
       );
@@ -3703,6 +3734,7 @@ ${testerResult.fixTaskDescription}`.trim(),
             this.traceRecorder?.finish(recoveryTraceId, "passed", {
               reasoning: recovery.result.reasoning,
             });
+            await this.saveTrace();
           }
           await this.publishRuntimeEvent(
             createRuntimeEvent({
@@ -3754,6 +3786,7 @@ ${testerResult.fixTaskDescription}`.trim(),
             reason: "unfixable",
             reasoning: recovery.result.reasoning,
           });
+          await this.saveTrace();
         }
         throw new Error(
           `Recovery marked unfixable: ${recovery.result.reasoning}`,
@@ -3766,6 +3799,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           this.traceRecorder?.finish(recoveryTraceId, "failed", {
             error: message,
           });
+          await this.saveTrace();
         }
         console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
         await this.publishRuntimeEvent(
@@ -3814,6 +3848,13 @@ ${testerResult.fixTaskDescription}`.trim(),
       return;
     }
     await this.notifyLoopEvent(event);
+  }
+
+  private async saveTrace(): Promise<void> {
+    const trace = this.traceRecorder?.snapshot();
+    if (trace && typeof this.control.updatePhaseTrace === "function") {
+      await this.control.updatePhaseTrace(trace, this.config.projectName);
+    }
   }
 
   /** Return a snapshot of the execution trace recorded during this run. */
