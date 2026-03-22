@@ -924,6 +924,186 @@ describe("P35-004 integration coverage", () => {
     ).toBe(true);
   });
 
+  test("starts fresh sessions for race branches even when retrying a failed task", async () => {
+    const phaseId = "f1111111-1111-4111-8111-111111111111";
+    const taskId = "f2222222-2222-4222-8222-222222222222";
+    const phaseBranch = "phase-35-race-retry";
+    const phaseWorktreePath = `/tmp/project/.ixado/worktrees/${phaseId}`;
+    const raceBranch1 = `${phaseBranch}-race-${taskId}-1`;
+    const raceBranch2 = `${phaseBranch}-race-${taskId}-2`;
+    const racePath1 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-1`;
+    const racePath2 = `/tmp/project/.ixado/worktrees/${phaseId}--race-${taskId}-2`;
+    const state = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 35 Race Retry",
+          branchName: phaseBranch,
+          status: "PLANNING",
+          worktreePath: null as string | null,
+          tasks: [
+            {
+              id: taskId,
+              title: "Retry race branches without resume",
+              description:
+                "A retried raced task must not reuse resume state in fresh worktrees.",
+              race: 2,
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const control = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => state),
+      setPhaseStatus: mock(async (input: any) => {
+        const phase = state.phases[0] as any;
+        phase.status = input.status;
+        if (input.worktreePath !== undefined) {
+          phase.worktreePath = input.worktreePath;
+        }
+        return state;
+      }),
+      startActiveTaskAndWait: mock(async () => state),
+      prepareTaskExecution: mock(async (input: any) => {
+        const phase = state.phases[0] as any;
+        const task = phase.tasks[0] as any;
+        const startedFromStatus = task.status;
+        task.status = "IN_PROGRESS";
+        task.assignee = input.assignee;
+        return {
+          projectName: state.projectName,
+          phase: { ...phase },
+          task: { ...task },
+          taskForPrompt: { ...task },
+          rootDir: input.cwd ?? phase.worktreePath ?? state.rootDir,
+          resume: true,
+          startedFromStatus,
+        };
+      }),
+      completeTaskExecution: mock(async (input: any) => {
+        const task = state.phases[0].tasks[0] as any;
+        task.status = input.status;
+        task.resultContext = input.resultContext;
+        return state;
+      }),
+      updateTaskRaceState: mock(async (input: any) => {
+        const task = state.phases[0].tasks[0] as any;
+        task.raceState = input.raceState;
+        return state;
+      }),
+      createTask: mock(async () => state),
+      recordRecoveryAttempt: mock(async () => state),
+      runInternalWork: mock(async (input: any) => {
+        if (input.prompt.startsWith("Race Judge")) {
+          return {
+            stdout: "PICK 2\nCandidate 2 has the better implementation.",
+            stderr: "",
+          };
+        }
+        expect(input.resume).toBe(false);
+        if (input.cwd === racePath1) {
+          return { stdout: "branch 1 output", stderr: "" };
+        }
+        if (input.cwd === racePath2) {
+          return { stdout: "branch 2 output", stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      }),
+    } as unknown as ControlCenterService;
+
+    const runner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.command !== "git") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args[0] === "rev-parse") {
+          throw new Error("missing local branch");
+        }
+        if (input.args[0] === "status" && input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (
+          input.args[0] === "branch" &&
+          input.args.includes("--show-current")
+        ) {
+          if (input.cwd === "/tmp/project") {
+            return { exitCode: 0, stdout: "main\n", stderr: "" };
+          }
+          if (input.cwd === phaseWorktreePath) {
+            return { exitCode: 0, stdout: `${phaseBranch}\n`, stderr: "" };
+          }
+          if (input.cwd === racePath1) {
+            return { exitCode: 0, stdout: `${raceBranch1}\n`, stderr: "" };
+          }
+          if (input.cwd === racePath2) {
+            return { exitCode: 0, stdout: `${raceBranch2}\n`, stderr: "" };
+          }
+        }
+        if (input.args[0] === "fetch" || input.args[0] === "pull") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args[0] === "worktree" && input.args[1] === "add") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args[0] === "worktree" && input.args[1] === "remove") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args[0] === "diff" && input.args[1] === "--no-color") {
+          if (input.cwd === racePath1) {
+            return {
+              exitCode: 0,
+              stdout: "diff --git a/src/one.ts b/src/one.ts",
+              stderr: "",
+            };
+          }
+          if (input.cwd === racePath2) {
+            return {
+              exitCode: 0,
+              stdout: "diff --git a/src/two.ts b/src/two.ts",
+              stderr: "",
+            };
+          }
+        }
+        if (input.args[0] === "rev-list" && input.args[1] === "--reverse") {
+          if (input.args[2] === `${phaseBranch}..${raceBranch2}`) {
+            return { exitCode: 0, stdout: "commit-2a\n", stderr: "" };
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args[0] === "apply") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const phaseRunner = new PhaseRunner(
+      control,
+      {
+        ...createBaseConfig(),
+        worktrees: {
+          enabled: true,
+          baseDir: ".ixado/worktrees",
+        },
+      },
+      undefined,
+      undefined,
+      runner,
+    );
+
+    await phaseRunner.run();
+
+    expect(state.phases[0]?.tasks[0]?.status).toBe("DONE");
+  });
+
   test("tears down provisioned race worktrees when failure happens before branch execution results are collected", async () => {
     const phaseId = "e1111111-1111-4111-8111-111111111111";
     const taskId = "e2222222-2222-4222-8222-222222222222";

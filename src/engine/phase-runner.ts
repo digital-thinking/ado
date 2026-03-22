@@ -1541,7 +1541,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                 task: prepared.taskForPrompt,
                 assignee: input.assignee,
                 branch,
-                resume: prepared.resume,
+                resume: false,
               });
               await queueRaceStateUpdate((current) =>
                 this.updateRaceStateBranch(current, {
