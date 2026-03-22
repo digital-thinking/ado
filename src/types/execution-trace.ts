@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { CLIAdapterIdSchema } from "./index";
+import { CLIAdapterIdSchema } from "./adapters";
 
 // ── Trace node types ────────────────────────────────────────────────────
 

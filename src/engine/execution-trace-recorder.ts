@@ -33,12 +33,22 @@ export class ExecutionTraceRecorder {
   private updatedAt: string;
   private readonly now: () => number;
 
-  constructor(phaseId: string, now?: () => number) {
+  constructor(
+    phaseId: string,
+    now?: () => number,
+    initialTrace?: ExecutionTrace,
+  ) {
     this.phaseId = phaseId;
     this.now = now ?? (() => Date.now());
-    const ts = new Date(this.now()).toISOString();
-    this.createdAt = ts;
-    this.updatedAt = ts;
+    if (initialTrace) {
+      this.nodes = [...initialTrace.nodes];
+      this.createdAt = initialTrace.createdAt;
+      this.updatedAt = initialTrace.updatedAt;
+    } else {
+      const ts = new Date(this.now()).toISOString();
+      this.createdAt = ts;
+      this.updatedAt = ts;
+    }
   }
 
   /** Start a new trace node (status = "running") and return its id. */

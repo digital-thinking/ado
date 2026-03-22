@@ -1654,6 +1654,9 @@ async function runPhaseRunCommand({
     lockState,
     parsedRunArgs.phaseReference,
   );
+  const targetPhase = targetPhaseId
+    ? lockState.phases.find((p) => p.id === targetPhaseId)
+    : undefined;
   const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
   const enabledAdapters = getAvailableAgents(settings);
@@ -1698,6 +1701,7 @@ async function runPhaseRunCommand({
       projectName,
       policy,
       role: "admin",
+      initialTrace: targetPhase?.executionTrace,
     },
     loopControl,
     async (event) => {

@@ -247,6 +247,7 @@ export type PhaseRunnerConfig = {
   projectName: string;
   policy: AuthPolicy;
   role: Role | null;
+  initialTrace?: ExecutionTrace;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -302,6 +303,7 @@ export class PhaseRunner {
     | undefined;
   private phaseTimeoutWatchdog: PhaseTimeoutWatchdog | undefined;
   private traceRecorder: ExecutionTraceRecorder | undefined;
+  private lastNodeIds: string[] = [];
 
   constructor(
     private control: ControlCenterService,
@@ -533,6 +535,7 @@ export class PhaseRunner {
       this.traceRecorder = new ExecutionTraceRecorder(
         phase.id,
         this.config.now,
+        this.config.initialTrace,
       );
       this.startPhaseTimeoutWatchdog(phase);
       await this.assertPhaseNotTimedOut();
@@ -1144,8 +1147,12 @@ Recovery: ${recoveryMessage}`,
       taskNumber,
       adapterId: effectiveAssignee,
       label: `Task #${taskNumber} ${task.title}`,
+      parentIds: [...this.lastNodeIds],
       detail: { assignee: effectiveAssignee, routingReason },
     });
+    if (taskRunTraceId) {
+      this.lastNodeIds = [taskRunTraceId];
+    }
 
     while (taskRunCount < maxTaskRunCount) {
       this.setPhaseTimeoutStep(
@@ -1222,6 +1229,7 @@ Recovery: ${recoveryMessage}`,
             finalStatus: resultTask.status,
             attempts: taskRunCount,
           });
+          await this.persistTrace();
         }
         this.lastExecutedTaskContext = {
           taskId: resultTask.id,
@@ -1424,6 +1432,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         reason: "max_attempts_exhausted",
         attempts: maxTaskRunCount,
       });
+      await this.persistTrace();
     }
     await this.control.setPhaseStatus({
       phaseId: phase.id,
@@ -1571,6 +1580,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         })),
         updatedAt: new Date().toISOString(),
       });
+      const branchTraceIds: string[] = [];
       branchResults = await Promise.all(
         branches.map(
           async (
@@ -1583,12 +1593,16 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
               taskNumber: input.taskNumber,
               adapterId: input.assignee,
               label: `Race branch #${branch.index} ${branch.branchName}`,
+              parentIds: [...this.lastNodeIds],
               detail: {
                 branchIndex: branch.index,
                 branchName: branch.branchName,
                 raceCount: input.raceCount,
               },
             });
+            if (branchTraceId) {
+              branchTraceIds.push(branchTraceId);
+            }
             try {
               const result = await this.runRaceBranch({
                 phase: input.phase,
@@ -1601,6 +1615,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                 this.traceRecorder?.finish(branchTraceId, "passed", {
                   status: "fulfilled",
                 });
+                await this.persistTrace();
               }
               await queueRaceStateUpdate((current) =>
                 this.updateRaceStateBranch(current, {
@@ -1630,6 +1645,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                   status: "rejected",
                   error: message,
                 });
+                await this.persistTrace();
               }
               await queueRaceStateUpdate((current) =>
                 this.updateRaceStateBranch(current, {
@@ -1657,6 +1673,9 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           },
         ),
       );
+      if (branchTraceIds.length > 0) {
+        this.lastNodeIds = branchTraceIds;
+      }
 
       const judgedWinner = await this.judgeRaceBranches({
         phase: input.phase,
@@ -2500,12 +2519,16 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       taskNumber: input.taskNumber,
       adapterId: input.implementerAssignee,
       label: `Deliberation for task #${input.taskNumber} ${input.task.title}`,
+      parentIds: [...this.lastNodeIds],
       detail: {
         implementer: input.implementerAssignee,
         reviewer: reviewerAssignee,
         maxRefinePasses,
       },
     });
+    if (deliberationTraceId) {
+      this.lastNodeIds = [deliberationTraceId];
+    }
     console.info(
       `Execution loop: running deliberation for task #${input.taskNumber} ${input.task.title} with implementer=${input.implementerAssignee} reviewer=${reviewerAssignee}.`,
     );
@@ -2541,6 +2564,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           refinePassesUsed: result.summary.refinePassesUsed,
           capped: true,
         });
+        await this.persistTrace();
       }
       console.warn(
         `Deliberation reached max refine passes (${maxRefinePasses}) for task #${input.taskNumber}. Continuing with latest refined prompt.`,
@@ -2552,6 +2576,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
           rounds: result.summary.rounds.length,
           refinePassesUsed: result.summary.refinePassesUsed,
         });
+        await this.persistTrace();
       }
       console.info(
         `Deliberation approved for task #${input.taskNumber} after ${result.summary.rounds.length} round(s).`,
@@ -3096,10 +3121,12 @@ ${testerResult.fixTaskDescription}`.trim(),
           type: "gate_eval",
           phaseId: phase.id,
           label: `Gate "${gate.name}" (${index + 1}/${totalGates})`,
+          parentIds: [...this.lastNodeIds],
           detail: { gateName: gate.name, gateIndex: index, totalGates },
         });
         if (traceId) {
           gateTraceIds.set(index, traceId);
+          this.lastNodeIds = [traceId];
         }
         console.info(`Gate chain: starting gate "${gate.name}".`);
         await this.publishRuntimeEvent(
@@ -3128,6 +3155,7 @@ ${testerResult.fixTaskDescription}`.trim(),
               retryable: result.passed ? undefined : result.retryable,
             },
           );
+          await this.persistTrace();
         }
         const stage = result.passed ? "pass" : "fail";
         console.info(
@@ -3626,12 +3654,16 @@ ${testerResult.fixTaskDescription}`.trim(),
         phaseId: input.phaseId,
         taskId: input.taskId,
         label: `Recovery #${attemptNumber} for ${input.taskTitle ?? input.phaseName}`,
+        parentIds: [...this.lastNodeIds],
         detail: {
           attemptNumber,
           maxAttempts: this.config.maxRecoveryAttempts,
           category: exception.category,
         },
       });
+      if (recoveryTraceId) {
+        this.lastNodeIds = [recoveryTraceId];
+      }
       console.info(
         `Recovery attempt ${attemptNumber}/${this.config.maxRecoveryAttempts} for ${input.taskTitle ?? input.phaseName}: ${exception.category}.`,
       );
@@ -3703,6 +3735,7 @@ ${testerResult.fixTaskDescription}`.trim(),
             this.traceRecorder?.finish(recoveryTraceId, "passed", {
               reasoning: recovery.result.reasoning,
             });
+            await this.persistTrace();
           }
           await this.publishRuntimeEvent(
             createRuntimeEvent({
@@ -3754,6 +3787,7 @@ ${testerResult.fixTaskDescription}`.trim(),
             reason: "unfixable",
             reasoning: recovery.result.reasoning,
           });
+          await this.persistTrace();
         }
         throw new Error(
           `Recovery marked unfixable: ${recovery.result.reasoning}`,
@@ -3766,6 +3800,7 @@ ${testerResult.fixTaskDescription}`.trim(),
           this.traceRecorder?.finish(recoveryTraceId, "failed", {
             error: message,
           });
+          await this.persistTrace();
         }
         console.info(`Recovery attempt ${attemptNumber} failed: ${message}`);
         await this.publishRuntimeEvent(
@@ -3814,6 +3849,21 @@ ${testerResult.fixTaskDescription}`.trim(),
       return;
     }
     await this.notifyLoopEvent(event);
+  }
+
+  private async persistTrace(): Promise<void> {
+    const trace = this.getExecutionTrace();
+    if (
+      !trace ||
+      typeof (this.control as any).updatePhaseTrace !== "function"
+    ) {
+      return;
+    }
+    await (this.control as any).updatePhaseTrace(
+      this.config.projectName,
+      trace.phaseId,
+      trace,
+    );
   }
 
   /** Return a snapshot of the execution trace recorded during this run. */

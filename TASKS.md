@@ -172,11 +172,11 @@ Foundation shipped in PR #33 (worktree provisioning, per-phase locks, concurrent
 
 ### Phase 36: Phase Execution DAG
 
-- [ ] `P36-001` Define `ExecutionTrace` schema in `src/types/`: node types (`task_run`, `recovery_attempt`, `race_branch`, `gate_eval`, `deliberation_pass`), edges, timestamps, durations, statuses, adapter used. Deps: none.
-- [ ] `P36-002` Instrument `PhaseRunner` to record trace nodes at each execution point (task dispatch, recovery, gate evaluation, race branch, deliberation pass). Deps: `P36-001`.
-- [ ] `P36-003` Persist execution traces alongside phase state in `.ixado/` so they survive restarts and are viewable after phase completion. Deps: `P36-002`.
+- [x] `P36-001` Define `ExecutionTrace` schema in `src/types/`: node types (`task_run`, `recovery_attempt`, `race_branch`, `gate_eval`, `deliberation_pass`), edges, timestamps, durations, statuses, adapter used. Deps: none.
+- [x] `P36-002` Instrument `PhaseRunner` to record trace nodes at each execution point (task dispatch, recovery, gate evaluation, race branch, deliberation pass). Deps: `P36-001`.
+- [x] `P36-003` Persist execution traces alongside phase state in `.ixado/` so they survive restarts and are viewable after phase completion. Deps: `P36-002`.
 - [ ] `P36-004` Add interactive DAG renderer component in Web Control Center phase detail view: nodes color-coded by outcome (pass/fail/retry/skipped), edges show dependency and sequencing, click node to open log output. Deps: `P36-003`.
 - [ ] `P36-005` Highlight the critical path (longest chain of dependent nodes) in the DAG view to surface bottlenecks. Deps: `P36-004`.
 - [ ] `P36-006` Include gate outcomes (from Phase 34) and race branch selection (from Phase 35) as first-class node types in the DAG renderer. Deps: `P36-004`.
-- [ ] `P36-007` Add regression/integration tests: trace recording for each node type, persistence across restarts, DAG rendering data correctness, critical path calculation. Deps: `P36-002`..`P36-006`.
+- [x] `P36-007` Add regression/integration tests: trace recording for each node type, persistence across restarts, DAG rendering data correctness, critical path calculation. Deps: `P36-002`..`P36-006`.
 - [ ] `P36-008` ~~Create PR Task~~ Obsolete — orchestrator owns PR creation. Deps: `P36-007`.

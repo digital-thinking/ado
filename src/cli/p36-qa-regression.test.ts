@@ -209,4 +209,91 @@ describe("P36 QA CLI regressions", () => {
     expect(showResult.exitCode).toBe(0);
     expect(showResult.stdout).toContain("Race judge CLI: CLAUDE_CLI");
   });
+
+  test("execution trace is persisted to state.json after task execution", async () => {
+    const sandbox = await TestSandbox.create("ixado-p36-trace-persistence-");
+    sandboxes.push(sandbox);
+
+    const phaseId = randomUUID();
+    const taskId = randomUUID();
+    const now = new Date().toISOString();
+    const worktreePath = join(sandbox.projectDir, ".ixado", "worktree-phase");
+    await mkdir(worktreePath, { recursive: true });
+
+    // Initialize git repo for PhaseRunner
+    Bun.spawnSync({
+      cmd: ["git", "init", "-b", "main"],
+      cwd: sandbox.projectDir,
+    });
+    Bun.spawnSync({
+      cmd: ["git", "config", "user.name", "Test"],
+      cwd: sandbox.projectDir,
+    });
+    Bun.spawnSync({
+      cmd: ["git", "config", "user.email", "test@example.com"],
+      cwd: sandbox.projectDir,
+    });
+    await writeFile(join(sandbox.projectDir, "README.md"), "# Test");
+    await writeFile(
+      join(sandbox.projectDir, ".gitignore"),
+      ".ixado\n.test-bin\n",
+    );
+    Bun.spawnSync({ cmd: ["git", "add", "."], cwd: sandbox.projectDir });
+    Bun.spawnSync({
+      cmd: ["git", "commit", "-m", "Initial commit"],
+      cwd: sandbox.projectDir,
+    });
+
+    await sandbox.writeProjectState({
+      projectName: "test-project",
+      rootDir: sandbox.projectDir,
+      createdAt: now,
+      updatedAt: now,
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 36 Trace",
+          branchName: "phase-36-trace",
+          status: "CODING",
+          worktreePath,
+          tasks: [
+            {
+              id: taskId,
+              title: "Traceable task",
+              description: "Ensure trace is persisted.",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    } as any);
+
+    // Mock codex binary to avoid real execution
+    const binDir = join(sandbox.projectDir, ".test-bin");
+    await mkdir(binDir, { recursive: true });
+    const codexPath = join(binDir, "codex");
+    await writeFile(codexPath, "#!/bin/bash\necho 'ok'\n", { mode: 0o755 });
+
+    const result = runIxadoWithPath(
+      ["phase", "run", "auto", "0"],
+      sandbox,
+      binDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    const phase = state.phases[0];
+    expect(phase?.executionTrace).toBeDefined();
+    expect(phase?.executionTrace?.nodes.length).toBeGreaterThan(0);
+
+    const taskRunNode = phase?.executionTrace?.nodes.find(
+      (n: any) => n.type === "task_run",
+    );
+    expect(taskRunNode).toBeDefined();
+    expect(taskRunNode?.status).toBe("passed");
+  });
 });
