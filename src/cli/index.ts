@@ -392,7 +392,27 @@ function createControlCenterServiceWithAgentTracking(
           );
         }
 
-        throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
+        const wrapped = new Error(
+          `${message}\nLogs: ${artifacts.outputFilePath}`,
+        ) as Error & {
+          cause?: unknown;
+          category?: unknown;
+          adapterFailureKind?: unknown;
+        };
+        wrapped.cause = error;
+        if (error && typeof error === "object" && "category" in error) {
+          wrapped.category = (error as { category?: unknown }).category;
+        }
+        if (
+          error &&
+          typeof error === "object" &&
+          "adapterFailureKind" in error
+        ) {
+          wrapped.adapterFailureKind = (
+            error as { adapterFailureKind?: unknown }
+          ).adapterFailureKind;
+        }
+        throw wrapped;
       }
     },
     repositoryResetRunner: async () => {

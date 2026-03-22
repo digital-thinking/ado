@@ -131,6 +131,55 @@ printf 'stub ok\\n'
   return binDir;
 }
 
+async function installProviderFailoverStubs(
+  sandbox: TestSandbox,
+  invocationLogPath: string,
+): Promise<string> {
+  const binDir = join(sandbox.projectDir, ".test-bin-failover");
+  await mkdir(binDir, { recursive: true });
+
+  const claudePath = join(binDir, "claude");
+  const claudeScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+pwd >> "${invocationLogPath}"
+echo "CLAUDE" >> "${invocationLogPath}"
+printf "You're out of extra usage · resets 5pm (Europe/Berlin)\\n"
+exit 1
+`;
+  await writeFile(claudePath, claudeScript, "utf8");
+  await chmod(claudePath, 0o755);
+
+  const geminiPath = join(binDir, "gemini");
+  const geminiScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+pwd >> "${invocationLogPath}"
+echo "GEMINI" >> "${invocationLogPath}"
+cat >/dev/null
+printf 'ok from gemini\\n'
+`;
+  await writeFile(geminiPath, geminiScript, "utf8");
+  await chmod(geminiPath, 0o755);
+
+  const codexPath = join(binDir, "codex");
+  const codexScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+prompt="$(cat)"
+if [[ "$prompt" == Race\\ Judge* ]]; then
+  printf 'PICK 1\\nReasoning: prefer the only successful candidate.\\n'
+  exit 0
+fi
+
+printf 'codex helper ok\\n'
+`;
+  await writeFile(codexPath, codexScript, "utf8");
+  await chmod(codexPath, 0o755);
+
+  return binDir;
+}
+
 async function bindSandboxProjectInGlobalConfig(
   sandbox: TestSandbox,
   projectName: string,
@@ -478,5 +527,106 @@ describe("P36 QA CLI regressions", () => {
     const state = await sandbox.readProjectState();
     expect(state.phases[0]?.tasks[0]?.status).toBe("DONE");
     expect(state.phases[0]?.tasks[0]?.assignee).toBe("CODEX_CLI");
+  });
+
+  test("raced task start fails over to the next provider on Claude usage exhaustion", async () => {
+    const sandbox = await TestSandbox.create(
+      "ixado-p36-cli-provider-failover-",
+    );
+    sandboxes.push(sandbox);
+
+    await initGitRepo(sandbox.projectDir);
+    const projectName = basename(sandbox.projectDir);
+
+    const phaseId = randomUUID();
+    const taskId = randomUUID();
+    const now = new Date().toISOString();
+    const invocationLogPath = join(
+      sandbox.projectDir,
+      ".ixado",
+      "provider-failover-invocations.txt",
+    );
+
+    await sandbox.writeProjectState({
+      projectName,
+      rootDir: sandbox.projectDir,
+      createdAt: now,
+      updatedAt: now,
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 36",
+          branchName: "phase-36-execution-dag",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "Fail over provider",
+              description:
+                "Switch to the next provider when Claude is exhausted.",
+              race: 2,
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    } as any);
+
+    expect(
+      runIxadoWithPath(["init"], sandbox, sandbox.projectDir).exitCode,
+    ).toBe(0);
+    expect(
+      runIxadoWithPath(
+        ["config", "judge", "CODEX_CLI"],
+        sandbox,
+        sandbox.projectDir,
+      ).exitCode,
+    ).toBe(0);
+    expect(
+      runIxadoWithPath(
+        ["config", "worktrees", "on"],
+        sandbox,
+        sandbox.projectDir,
+      ).exitCode,
+    ).toBe(0);
+    expect(
+      runIxadoWithPath(
+        ["config", "assignee", "CLAUDE_CLI"],
+        sandbox,
+        sandbox.projectDir,
+      ).exitCode,
+    ).toBe(0);
+    await bindSandboxProjectInGlobalConfig(sandbox, projectName);
+
+    const binDir = await installProviderFailoverStubs(
+      sandbox,
+      invocationLogPath,
+    );
+    const result = runIxadoWithPath(
+      ["task", "start", "1", "CLAUDE_CLI"],
+      sandbox,
+      binDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "switching immediately to GEMINI_CLI (1/3).",
+    );
+    expect(result.stdout).toContain(
+      "Task #1 Fail over provider finished with status DONE.",
+    );
+
+    const invocations = (await readFile(invocationLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(invocations.filter((line) => line === "CLAUDE")).toHaveLength(2);
+    expect(invocations.filter((line) => line === "GEMINI")).toHaveLength(2);
+
+    const state = await sandbox.readProjectState();
+    expect(state.phases[0]?.tasks[0]?.status).toBe("DONE");
   });
 });
