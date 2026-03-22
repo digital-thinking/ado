@@ -495,6 +495,7 @@ function buildCliPhaseRunnerConfig(input: {
     countdownSeconds: input.countdownSeconds,
     activeAssignee: input.activeAssignee,
     enabledAdapters: getAvailableAgents(input.settings),
+    providerPriority: input.settings.executionLoop.providerPriority,
     adapterAffinities: input.settings.agents.adapterAffinities,
     adapterCircuitBreakers: {
       CODEX_CLI: input.settings.agents.CODEX_CLI.circuitBreaker,
@@ -509,6 +510,7 @@ function buildCliPhaseRunnerConfig(input: {
     defaultRace: projectExecutionSettings.defaultRace,
     maxTaskRetries: projectExecutionSettings.maxTaskRetries,
     judgeAdapter: input.settings.executionLoop.judgeAdapter,
+    raceJudgePrompt: input.settings.executionLoop.raceJudgePrompt,
     phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
     ciEnabled: input.settings.executionLoop.ciEnabled,
     vcsProvider: input.settings.executionLoop.vcsProvider,

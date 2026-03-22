@@ -265,6 +265,7 @@ export class ExecutionControlService {
         countdownSeconds: settings.executionLoop.countdownSeconds,
         activeAssignee: projectExec.defaultAssignee,
         enabledAdapters,
+        providerPriority: settings.executionLoop.providerPriority,
         adapterAffinities: settings.agents.adapterAffinities,
         adapterCircuitBreakers: {
           CODEX_CLI: settings.agents.CODEX_CLI.circuitBreaker,
@@ -279,6 +280,7 @@ export class ExecutionControlService {
         defaultRace: projectExec.defaultRace,
         maxTaskRetries: projectExec.maxTaskRetries,
         judgeAdapter: settings.executionLoop.judgeAdapter,
+        raceJudgePrompt: settings.executionLoop.raceJudgePrompt,
         phaseTimeoutMs: projectExec.phaseTimeoutMs,
         ciEnabled: settings.executionLoop.ciEnabled,
         vcsProvider: settings.executionLoop.vcsProvider,

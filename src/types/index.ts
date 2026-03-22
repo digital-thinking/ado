@@ -14,6 +14,11 @@ export const CLI_ADAPTER_IDS: CLIAdapterId[] = [
   "GEMINI_CLI",
   "MOCK_CLI",
 ];
+export const DEFAULT_PROVIDER_PRIORITY: CLIAdapterId[] = [
+  "CLAUDE_CLI",
+  "GEMINI_CLI",
+  "CODEX_CLI",
+];
 
 const TASK_TYPE_VALUES = [
   "implementation",
@@ -199,13 +204,33 @@ export const GateConfigSchema = z.discriminatedUnion("type", [
 ]);
 export type GateConfig = z.infer<typeof GateConfigSchema>;
 
+const ProviderPrioritySchema = z
+  .array(CLIAdapterIdSchema)
+  .min(1)
+  .superRefine((value, context) => {
+    const seen = new Set<CLIAdapterId>();
+    value.forEach((adapterId, index) => {
+      if (seen.has(adapterId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "executionLoop.providerPriority values must be unique.",
+          path: [index],
+        });
+        return;
+      }
+      seen.add(adapterId);
+    });
+  });
+
 export const ExecutionLoopSettingsSchema = z
   .object({
     autoMode: z.boolean().default(false),
     countdownSeconds: z.number().int().min(0).max(3_600).default(10),
     maxTaskRetries: z.number().int().min(0).max(20).default(3),
     defaultRace: z.number().int().min(1).default(1),
+    providerPriority: ProviderPrioritySchema.default(DEFAULT_PROVIDER_PRIORITY),
     judgeAdapter: CLIAdapterIdSchema.default("CODEX_CLI"),
+    raceJudgePrompt: z.string().min(1).nullable().default(null),
     phaseTimeoutMs: z.number().int().positive().default(21_600_000),
     testerCommand: z.string().min(1).nullable().default(null),
     testerArgs: z.array(z.string()).min(1).nullable().default(null),
@@ -366,7 +391,9 @@ export const CliSettingsSchema = z
       countdownSeconds: 10,
       maxTaskRetries: 3,
       defaultRace: 1,
+      providerPriority: DEFAULT_PROVIDER_PRIORITY,
       judgeAdapter: "CODEX_CLI",
+      raceJudgePrompt: null,
       phaseTimeoutMs: 21_600_000,
       testerCommand: null,
       testerArgs: null,
@@ -498,6 +525,15 @@ export const CliSettingsSchema = z
         path: ["executionLoop", "judgeAdapter"],
       });
     }
+    value.executionLoop.providerPriority.forEach((adapterId, index) => {
+      if (!value.agents[adapterId].enabled) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `executionLoop.providerPriority[${index}] references '${adapterId}', but that adapter is disabled in settings.agents.`,
+          path: ["executionLoop", "providerPriority", index],
+        });
+      }
+    });
 
     for (const [taskType, adapterId] of Object.entries(
       value.agents.adapterAffinities ?? {},
@@ -539,7 +575,9 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   countdownSeconds: z.number().int().min(0).max(3_600).optional(),
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
   defaultRace: z.number().int().min(1).optional(),
+  providerPriority: ProviderPrioritySchema.optional(),
   judgeAdapter: CLIAdapterIdSchema.optional(),
+  raceJudgePrompt: z.string().min(1).nullable().optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),

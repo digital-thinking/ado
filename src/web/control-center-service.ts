@@ -225,6 +225,8 @@ export type UpdateTaskRaceStateInput = {
 export type ResetTaskInput = {
   phaseId: string;
   taskId: string;
+  rateLimitRetryCount?: number;
+  rateLimitRetryAt?: string;
 };
 
 export type MarkTaskDeadLetterInput = {
@@ -2450,6 +2452,20 @@ export class ControlCenterService {
     if (!taskId) {
       throw new Error("taskId must not be empty.");
     }
+    const rateLimitRetryCount =
+      input.rateLimitRetryCount === undefined
+        ? undefined
+        : Number(input.rateLimitRetryCount);
+    const rateLimitRetryAt = input.rateLimitRetryAt?.trim();
+    if (
+      rateLimitRetryCount !== undefined &&
+      (!Number.isInteger(rateLimitRetryCount) || rateLimitRetryCount <= 0)
+    ) {
+      throw new Error("rateLimitRetryCount must be a positive integer.");
+    }
+    if (input.rateLimitRetryAt !== undefined && !rateLimitRetryAt) {
+      throw new Error("rateLimitRetryAt must not be empty when set.");
+    }
     if (!this.repositoryResetRunner) {
       throw new Error("Repository reset runner is not configured.");
     }
@@ -2490,8 +2506,8 @@ export class ControlCenterService {
       errorLogs: undefined,
       errorCategory: undefined,
       adapterFailureKind: undefined,
-      rateLimitRetryCount: undefined,
-      rateLimitRetryAt: undefined,
+      rateLimitRetryCount,
+      rateLimitRetryAt,
       completionVerification: undefined,
     });
 

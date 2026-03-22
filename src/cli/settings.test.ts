@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { TestSandbox } from "./test-helpers";
+import type { CLIAdapterId } from "../types";
 
 import {
   DEFAULT_CLI_SETTINGS,
@@ -61,7 +62,9 @@ const DEFAULT_LOOP_SETTINGS = {
   countdownSeconds: 10,
   maxTaskRetries: 3,
   defaultRace: 1,
+  providerPriority: ["CLAUDE_CLI", "GEMINI_CLI", "CODEX_CLI"] as CLIAdapterId[],
   judgeAdapter: "CODEX_CLI" as const,
+  raceJudgePrompt: null,
   phaseTimeoutMs: 21600000,
   testerCommand: null,
   testerArgs: null,

@@ -97,6 +97,33 @@ describe("race judge", () => {
     expect(prompt.length).toBeLessThan(25_000);
   });
 
+  test("includes configurable additional judging instructions", () => {
+    const prompt = buildRaceJudgePrompt({
+      projectName: "ado",
+      rootDir: "/repo",
+      phaseName: "Phase 35",
+      taskTitle: "Bias selection",
+      taskDescription: "Pick the best branch.",
+      additionalInstructions:
+        "Prefer the candidate that preserves the current UI structure.",
+      branches: [
+        {
+          index: 1,
+          branchName: "phase-35-race-task-1",
+          status: "fulfilled",
+          diff: "",
+          stdout: "",
+          stderr: "",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Additional judging instructions:");
+    expect(prompt).toContain(
+      "Prefer the candidate that preserves the current UI structure.",
+    );
+  });
+
   test("parses PICK verdict and trailing reasoning", () => {
     const verdict = parseRaceJudgeVerdict(
       "PICK 2\nReasoning: Candidate 2 is smaller and keeps the existing contract intact.",

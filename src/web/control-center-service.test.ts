@@ -1651,6 +1651,53 @@ describe("ControlCenterService", () => {
     expect(afterRetryReset.phases[0].tasks[0].rateLimitRetryAt).toBeUndefined();
   });
 
+  test("retryFailedTaskToTodo can preserve rate-limit retry metadata", async () => {
+    let resetCalled = 0;
+    const serviceWithRunner = new ControlCenterService({
+      stateEngine: new StateEngine(stateFilePath),
+      tasksMarkdownFilePath: tasksMarkdownPath,
+      internalWorkRunner: async () => {
+        throw new Error("adapter failed");
+      },
+      repositoryResetRunner: async () => {
+        resetCalled += 1;
+      },
+    });
+    await serviceWithRunner.ensureInitialized("IxADO", "C:/repo");
+
+    const created = await serviceWithRunner.createPhase({
+      name: "Phase Rate Limit Retry Reset",
+      branchName: "phase-rate-limit-retry-reset",
+    });
+    const phaseId = created.phases[0].id;
+    const withTask = await serviceWithRunner.createTask({
+      phaseId,
+      title: "Retry me with metadata",
+      description: "Preserve retry metadata while resetting failure state.",
+      assignee: "CLAUDE_CLI",
+    });
+    const taskId = withTask.phases[0].tasks[0].id;
+
+    await serviceWithRunner.startTaskAndWait({
+      phaseId,
+      taskId,
+      assignee: "CLAUDE_CLI",
+    });
+    const afterRetryReset = await serviceWithRunner.retryFailedTaskToTodo({
+      phaseId,
+      taskId,
+      rateLimitRetryCount: 2,
+      rateLimitRetryAt: "2026-03-22T12:00:00.000Z",
+    });
+
+    expect(resetCalled).toBe(1);
+    expect(afterRetryReset.phases[0].tasks[0].status).toBe("TODO");
+    expect(afterRetryReset.phases[0].tasks[0].rateLimitRetryCount).toBe(2);
+    expect(afterRetryReset.phases[0].tasks[0].rateLimitRetryAt).toBe(
+      "2026-03-22T12:00:00.000Z",
+    );
+  });
+
   test("requeueRateLimitedTask transitions FAILED rate-limited task back to TODO with retry metadata", async () => {
     const stateEngine = new StateEngine(stateFilePath);
     const serviceWithRunner = new ControlCenterService({

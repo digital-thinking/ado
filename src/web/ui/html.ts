@@ -462,6 +462,10 @@ export function controlCenterHtml(params: {
             <select id="globalDefaultAssignee"></select>
             <label class="small" for="globalDefaultRace">Default Race Count</label>
             <input id="globalDefaultRace" type="number" min="1" step="1" required />
+            <label class="small" for="globalJudgeAdapter">Race Judge CLI</label>
+            <select id="globalJudgeAdapter"></select>
+            <label class="small" for="globalRaceJudgePrompt">Race Judge Extra Instructions</label>
+            <textarea id="globalRaceJudgePrompt" rows="5" placeholder="Optional extra judging instructions"></textarea>
             <label class="small" for="globalRecoveryMaxAttempts">Exception Recovery Max Attempts</label>
             <input id="globalRecoveryMaxAttempts" type="number" min="0" max="10" step="1" required />
             <button type="submit">Save Global Defaults</button>
@@ -479,6 +483,7 @@ export function controlCenterHtml(params: {
 
       <section class="card wide" style="margin-top: 16px;">
         <h2>CLI Adapters</h2>
+        <div class="small">Card order defines automatic failover priority for rate-limited tasks. Top to bottom wins.</div>
         <div id="adaptersSettingsList" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
           <!-- Dynamically populated -->
         </div>
@@ -612,6 +617,39 @@ export function controlCenterHtml(params: {
     logOverlay.onclick = (e) => {
       if (e.target === logOverlay) closeLogs();
     };
+
+    function updateAdapterPriorityLabels() {
+      document.querySelectorAll("#adaptersSettingsList .card").forEach((card, index) => {
+        const label = card.querySelector(".adapter-priority-label");
+        if (label) {
+          label.textContent = "Priority " + String(index + 1);
+        }
+      });
+    }
+
+    function moveAdapterCard(button) {
+      const direction = button.getAttribute("data-move");
+      const card = button.closest(".card");
+      const list = document.getElementById("adaptersSettingsList");
+      if (!card || !list || !direction) {
+        return;
+      }
+
+      if (direction === "up" && card.previousElementSibling) {
+        list.insertBefore(card, card.previousElementSibling);
+      } else if (direction === "down" && card.nextElementSibling) {
+        list.insertBefore(card.nextElementSibling, card);
+      }
+      updateAdapterPriorityLabels();
+    }
+
+    document.getElementById("adaptersSettingsList").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-move]");
+      if (!button) {
+        return;
+      }
+      moveAdapterCard(button);
+    });
 
     async function api(path, options = {}, timeoutMs = 0) {
       const controller = timeoutMs > 0 ? new AbortController() : undefined;
@@ -869,17 +907,26 @@ export function controlCenterHtml(params: {
         // Global Defaults
         document.getElementById("globalAutoMode").checked = !!settings.executionLoop?.autoMode;
         const globalAssigneeSelect = document.getElementById("globalDefaultAssignee");
+        const globalJudgeSelect = document.getElementById("globalJudgeAdapter");
         globalAssigneeSelect.innerHTML = "";
+        globalJudgeSelect.innerHTML = "";
         WORKER_ASSIGNEES.forEach((assignee) => {
           const option = document.createElement("option");
           option.value = assignee;
           option.textContent = assignee;
           option.selected = settings.internalWork?.assignee === assignee;
           globalAssigneeSelect.appendChild(option);
+          const judgeOption = document.createElement("option");
+          judgeOption.value = assignee;
+          judgeOption.textContent = assignee;
+          judgeOption.selected = settings.executionLoop?.judgeAdapter === assignee;
+          globalJudgeSelect.appendChild(judgeOption);
         });
         document.getElementById("globalDefaultRace").value = String(
           settings.executionLoop?.defaultRace ?? 1,
         );
+        document.getElementById("globalRaceJudgePrompt").value =
+          settings.executionLoop?.raceJudgePrompt || "";
         const globalRecoveryMaxAttemptsInput = document.getElementById("globalRecoveryMaxAttempts");
         globalRecoveryMaxAttemptsInput.value = String(
           settings.exceptionRecovery?.maxAttempts ?? 1,
@@ -888,7 +935,7 @@ export function controlCenterHtml(params: {
         // Adapters
         const adaptersList = document.getElementById("adaptersSettingsList");
         adaptersList.innerHTML = "";
-        const agentIds = Object.keys(settings.agents || {}).filter((id) => {
+        const discoveredAgentIds = Object.keys(settings.agents || {}).filter((id) => {
           const config = settings.agents[id];
           return (
             config &&
@@ -897,12 +944,35 @@ export function controlCenterHtml(params: {
             typeof config.timeoutMs === "number"
           );
         });
+        const configuredPriority = Array.isArray(settings.executionLoop?.providerPriority)
+          ? settings.executionLoop.providerPriority
+          : [];
+        const priorityIndex = new Map(
+          configuredPriority.map((id, index) => [id, index]),
+        );
+        const agentIds = [...discoveredAgentIds].sort((left, right) => {
+          const leftIndex = priorityIndex.has(left) ? priorityIndex.get(left) : Number.MAX_SAFE_INTEGER;
+          const rightIndex = priorityIndex.has(right) ? priorityIndex.get(right) : Number.MAX_SAFE_INTEGER;
+          if (leftIndex !== rightIndex) {
+            return leftIndex - rightIndex;
+          }
+          return left.localeCompare(right);
+        });
         agentIds.forEach(id => {
           const config = settings.agents[id];
           const div = document.createElement("div");
           div.className = "card";
           div.innerHTML = \`
-            <h3 class="mono" style="margin-top:0;">\${id}</h3>
+            <div class="row" style="justify-content:space-between; align-items:flex-start;">
+              <div>
+                <h3 class="mono" style="margin-top:0; margin-bottom:4px;">\${id}</h3>
+                <div class="small adapter-priority-label">Priority</div>
+              </div>
+              <div class="row">
+                <button type="button" class="secondary" data-move="up">Up</button>
+                <button type="button" class="secondary" data-move="down">Down</button>
+              </div>
+            </div>
             <label class="row small">
               <input type="checkbox" class="adapter-enabled" data-id="\${id}" \${config.enabled ? "checked" : ""}> Enabled
             </label>
@@ -911,6 +981,7 @@ export function controlCenterHtml(params: {
           \`;
           adaptersList.appendChild(div);
         });
+        updateAdapterPriorityLabels();
 
         // Completion Gates
         renderGatesList(settings.executionLoop?.gates || []);
@@ -2321,6 +2392,9 @@ export function controlCenterHtml(params: {
             executionLoop: {
               autoMode: document.getElementById("globalAutoMode").checked,
               defaultRace: globalDefaultRace,
+              judgeAdapter: document.getElementById("globalJudgeAdapter").value,
+              raceJudgePrompt:
+                document.getElementById("globalRaceJudgePrompt").value.trim() || null,
             },
             internalWork: {
               assignee: document.getElementById("globalDefaultAssignee").value
@@ -2344,18 +2418,31 @@ export function controlCenterHtml(params: {
       error.textContent = "";
       try {
         const agents = {};
+        const providerPriority = [];
         document.querySelectorAll("#adaptersSettingsList .card").forEach(card => {
           const enabledInput = card.querySelector(".adapter-enabled");
           const timeoutInput = card.querySelector(".adapter-timeout");
           const id = enabledInput.getAttribute("data-id");
+          const timeoutMs = parseInt(timeoutInput.value, 10);
+          if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+            throw new Error("Adapter timeout must be a positive integer.");
+          }
           agents[id] = {
             enabled: enabledInput.checked,
-            timeoutMs: parseInt(timeoutInput.value, 10)
+            timeoutMs
           };
+          if (enabledInput.checked) {
+            providerPriority.push(id);
+          }
         });
         await api("/api/settings", {
           method: "PATCH",
-          body: JSON.stringify({ agents })
+          body: JSON.stringify({
+            agents,
+            executionLoop: {
+              providerPriority,
+            },
+          })
         });
         status.textContent = "Saved.";
       } catch (err) {

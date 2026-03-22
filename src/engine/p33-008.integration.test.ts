@@ -145,17 +145,17 @@ describe("P33-008 integration coverage", () => {
         task.adapterFailureKind = undefined;
         return state;
       }),
-      requeueRateLimitedTask: mock(
+      retryFailedTaskToTodo: mock(
         async (input: {
           phaseId: string;
           taskId: string;
-          retryCount: number;
-          retryAt: string;
+          rateLimitRetryCount?: number;
+          rateLimitRetryAt?: string;
         }) => {
           const task = state.phases[0].tasks[0] as any;
           task.status = "TODO";
-          task.rateLimitRetryCount = input.retryCount;
-          task.rateLimitRetryAt = input.retryAt;
+          task.rateLimitRetryCount = input.rateLimitRetryCount;
+          task.rateLimitRetryAt = input.rateLimitRetryAt;
           task.errorLogs = undefined;
           task.errorCategory = undefined;
           task.adapterFailureKind = undefined;
@@ -172,6 +172,8 @@ describe("P33-008 integration coverage", () => {
       control,
       {
         ...createBaseConfig(),
+        enabledAdapters: ["CODEX_CLI"],
+        providerPriority: ["CODEX_CLI"],
         now: () => nowMs,
         sleep: async (ms) => {
           sleepCalls.push(ms);
@@ -187,23 +189,23 @@ describe("P33-008 integration coverage", () => {
 
     await phaseRunner.run();
 
-    const requeueCalls = (
-      control.requeueRateLimitedTask as ReturnType<typeof mock>
+    const retryResetCalls = (
+      control.retryFailedTaskToTodo as ReturnType<typeof mock>
     ).mock.calls.map((entry: any[]) => entry[0]);
-    expect(requeueCalls).toHaveLength(2);
-    expect(requeueCalls[0]).toEqual({
+    expect(retryResetCalls).toHaveLength(2);
+    expect(retryResetCalls[0]).toEqual({
       phaseId,
       taskId,
-      retryCount: 1,
-      retryAt: new Date(
+      rateLimitRetryCount: 1,
+      rateLimitRetryAt: new Date(
         initialNowMs + computeRateLimitBackoffMs(1),
       ).toISOString(),
     });
-    expect(requeueCalls[1]).toEqual({
+    expect(retryResetCalls[1]).toEqual({
       phaseId,
       taskId,
-      retryCount: 2,
-      retryAt: new Date(
+      rateLimitRetryCount: 2,
+      rateLimitRetryAt: new Date(
         initialNowMs +
           computeRateLimitBackoffMs(1) +
           computeRateLimitBackoffMs(2),
@@ -281,6 +283,7 @@ describe("P33-008 integration coverage", () => {
         return state;
       }),
       requeueRateLimitedTask: mock(async () => state),
+      retryFailedTaskToTodo: mock(async () => state),
       markTaskDeadLetter: mock(async (input: { reason: string }) => {
         const task = state.phases[0].tasks[0] as any;
         task.status = "DEAD_LETTER";
@@ -308,7 +311,7 @@ describe("P33-008 integration coverage", () => {
     const error = await phaseRunner.run().catch((candidate) => candidate);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("Rate-limit retries exhausted");
-    expect(control.requeueRateLimitedTask).not.toHaveBeenCalled();
+    expect(control.retryFailedTaskToTodo).not.toHaveBeenCalled();
     expect(control.markTaskDeadLetter).toHaveBeenCalledTimes(1);
 
     const deadLetterEvent = events.find(

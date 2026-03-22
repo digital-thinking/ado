@@ -86,6 +86,55 @@ describe("web server runtime", () => {
     }
   });
 
+  test("serves race judge settings controls and persists settings updates", async () => {
+    const runtime = await startWebControlCenter({
+      cwd: sandboxDir,
+      stateFilePath,
+      settingsFilePath: join(sandboxDir, "settings.json"),
+      projectName: "IxADO",
+      defaultInternalWorkAssignee: "MOCK_CLI",
+      defaultAutoMode: false,
+      agentSettings: defaultAgentSettings,
+      webLogFilePath: join(sandboxDir, ".ixado", "web.log"),
+      port: 0,
+    });
+
+    try {
+      const html = await fetch(runtime.url).then((response) => response.text());
+      expect(html).toContain('id="globalJudgeAdapter"');
+      expect(html).toContain('id="globalRaceJudgePrompt"');
+
+      const patchResponse = await fetch(`${runtime.url}/api/settings`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          executionLoop: {
+            providerPriority: ["GEMINI_CLI", "CODEX_CLI"],
+            judgeAdapter: "GEMINI_CLI",
+            raceJudgePrompt: "Prefer candidates with smaller diffs.",
+          },
+        }),
+      });
+      expect(patchResponse.status).toBe(200);
+
+      const settings = await fetch(`${runtime.url}/api/settings`).then(
+        (response) => response.json(),
+      );
+      expect(settings.executionLoop.providerPriority).toEqual([
+        "GEMINI_CLI",
+        "CODEX_CLI",
+      ]);
+      expect(settings.executionLoop.judgeAdapter).toBe("GEMINI_CLI");
+      expect(settings.executionLoop.raceJudgePrompt).toBe(
+        "Prefer candidates with smaller diffs.",
+      );
+    } finally {
+      runtime.stop();
+    }
+  });
+
   test("starts server even when Telegram is enabled in settings", async () => {
     const settingsFilePath = join(sandboxDir, "settings.json");
     await Bun.write(
