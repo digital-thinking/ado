@@ -53,6 +53,7 @@ export type StartAgentInput = {
 export type RunAgentInput = StartAgentInput & {
   timeoutMs?: number;
   startupSilenceTimeoutMs?: number;
+  idleTimeoutMs?: number;
   stdin?: string;
   env?: NodeJS.ProcessEnv;
 };
@@ -86,6 +87,7 @@ export type AgentEvent = RuntimeEvent;
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS = 120_000;
+const DEFAULT_IDLE_TIMEOUT_MULTIPLIER = 5;
 
 /**
  * How long (ms) to wait before coalescing buffered agent-registry writes into
@@ -624,6 +626,7 @@ export class AgentSupervisor {
       stdin?: string;
       timeoutMs?: number;
       startupSilenceTimeoutMs?: number;
+      idleTimeoutMs?: number;
       onStdout?: (chunk: string) => void;
       onStderr?: (chunk: string) => void;
       onClose?: (
@@ -632,6 +635,7 @@ export class AgentSupervisor {
       ) => void;
       onError?: (error: Error) => void;
       onTimeout?: () => void;
+      onIdleTimeout?: () => void;
     } = {},
   ): ChildProcess {
     record.runToken += 1;
@@ -656,9 +660,15 @@ export class AgentSupervisor {
     let silenceHandle: NodeJS.Timeout | undefined;
     let heartbeatHandle: NodeJS.Timeout | undefined;
     let hasReceivedOutput = false;
+    let idleTimeoutTriggered = false;
     const startedAtMs = Date.now();
     let lastOutputAtMs = startedAtMs;
     let lastIdleDiagnosticBucket = -1;
+    const idleTimeoutMs =
+      options.idleTimeoutMs ??
+      (options.startupSilenceTimeoutMs !== undefined
+        ? options.startupSilenceTimeoutMs * DEFAULT_IDLE_TIMEOUT_MULTIPLIER
+        : undefined);
 
     const cancelSilenceTimer = () => {
       clearTimeout(silenceHandle);
@@ -740,6 +750,18 @@ export class AgentSupervisor {
         }),
       );
       appendSystemOutput(diagnostic);
+      if (
+        idleTimeoutMs !== undefined &&
+        idleMs >= idleTimeoutMs &&
+        !idleTimeoutTriggered
+      ) {
+        idleTimeoutTriggered = true;
+        appendSystemOutput(
+          `Agent idle timeout after ${idleTimeoutMs}ms: terminating ${record.command} ${record.args.join(" ")}`.trim(),
+        );
+        options.onIdleTimeout?.();
+        child.kill();
+      }
     }, this.runtimeDiagnostics.heartbeatIntervalMs);
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -854,6 +876,11 @@ export class AgentSupervisor {
   async runToCompletion(input: RunAgentInput): Promise<RunAgentResult> {
     const record = this.createRecord(input);
     this.records.set(record.id, record);
+    const effectiveIdleTimeoutMs =
+      input.idleTimeoutMs ??
+      (input.startupSilenceTimeoutMs !== undefined
+        ? input.startupSilenceTimeoutMs * DEFAULT_IDLE_TIMEOUT_MULTIPLIER
+        : undefined);
 
     return new Promise<RunAgentResult>((resolve, reject) => {
       const startedAtMs = Date.now();
@@ -861,6 +888,7 @@ export class AgentSupervisor {
       let stderr = "";
       let settled = false;
       let timedOut = false;
+      let idleTimedOut = false;
 
       const settle = (callback: () => void) => {
         if (settled) {
@@ -876,6 +904,7 @@ export class AgentSupervisor {
         stdin: input.stdin,
         timeoutMs: input.timeoutMs,
         startupSilenceTimeoutMs: input.startupSilenceTimeoutMs,
+        idleTimeoutMs: effectiveIdleTimeoutMs,
         onStdout: (chunk) => {
           stdout += chunk;
         },
@@ -899,6 +928,10 @@ export class AgentSupervisor {
             this.emitAdapterOutput(record, "system", line),
           );
         },
+        onIdleTimeout: () => {
+          idleTimedOut = true;
+          timedOut = true;
+        },
         onError: (error) => {
           settle(() =>
             reject(
@@ -912,10 +945,21 @@ export class AgentSupervisor {
         onClose: (exitCode) => {
           settle(() => {
             if (timedOut) {
+              const combinedOutput = [
+                stdout.trim(),
+                stderr.trim(),
+                record.outputTail.join("\n").trim(),
+              ]
+                .filter((value) => value.length > 0)
+                .join("\n\n");
               reject(
                 new AgentFailureError(
-                  `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
-                  "timeout",
+                  idleTimedOut
+                    ? `Command became idle for ${effectiveIdleTimeoutMs}ms: ${record.command}`
+                    : `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
+                  idleTimedOut
+                    ? classifyAdapterFailure(combinedOutput)
+                    : "timeout",
                 ),
               );
               return;

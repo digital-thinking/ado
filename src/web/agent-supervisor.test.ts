@@ -497,6 +497,53 @@ describe("AgentSupervisor", () => {
     );
   });
 
+  test("kills idle run-to-completion agents after idleTimeoutMs and preserves rate-limit taxonomy from output", async () => {
+    const child = createFakeChild();
+    child.kill = () => {
+      queueMicrotask(() => {
+        child.emit("close", null, "SIGTERM");
+      });
+      return true;
+    };
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        setTimeout(() => {
+          child.stderr.write("status 429 too many requests\n");
+        }, 5);
+        return child;
+      },
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 20,
+      },
+    });
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Idle rate-limited worker",
+        command: "gemini",
+        args: ["--yolo"],
+        cwd: "/tmp",
+        adapterId: "GEMINI_CLI",
+        approvedAdapterSpawn: true,
+        idleTimeoutMs: 40,
+      }),
+    ).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "rate_limited",
+    });
+
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Idle rate-limited worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("Agent idle timeout after 40ms"),
+      ),
+    ).toBe(true);
+  });
+
   test("appends structured execution-timeout diagnostic with adapter hint", async () => {
     const child = createFakeChild();
     child.kill = () => {
