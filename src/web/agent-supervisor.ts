@@ -520,6 +520,55 @@ export class AgentSupervisor {
     return reconcileCount;
   }
 
+  stopRunningAgentsWhere(predicate: (agent: AgentView) => boolean): number {
+    const stoppedAt = nowIso();
+    const stoppedIds = new Set<string>();
+    const persistable = this.registryFilePath ? this.readPersistedAgents() : [];
+    const nextPersisted = persistable.map((agent) => {
+      if (agent.status !== "RUNNING" || !predicate(agent)) {
+        return agent;
+      }
+
+      stoppedIds.add(agent.id);
+      this.forceStopPid(agent.pid);
+      return {
+        ...agent,
+        status: "STOPPED" as AgentStatus,
+        stoppedAt,
+      };
+    });
+
+    if (stoppedIds.size > 0 && this.registryFilePath) {
+      this.writePersistedAgents(nextPersisted);
+    }
+
+    for (const [id, record] of this.records.entries()) {
+      if (record.status !== "RUNNING") {
+        continue;
+      }
+      const view = toView(record);
+      if (!predicate(view)) {
+        continue;
+      }
+
+      stoppedIds.add(id);
+      record.stopRequested = true;
+      record.child?.kill("SIGKILL");
+      this.records.set(id, {
+        ...record,
+        status: "STOPPED",
+        lastExitCode: -1,
+        stoppedAt,
+      });
+    }
+
+    if (stoppedIds.size > 0) {
+      this.doFlushRegistry();
+    }
+
+    return stoppedIds.size;
+  }
+
   list(): AgentView[] {
     const inMemory = [...this.records.values()].map(toView);
     if (!this.registryFilePath) {
@@ -533,6 +582,23 @@ export class AgentSupervisor {
       merged.set(local.id, local);
     }
     return [...merged.values()];
+  }
+
+  private forceStopPid(pid: number | undefined): void {
+    if (!Number.isInteger(pid) || (pid ?? 0) <= 0) {
+      return;
+    }
+    const normalizedPid = Number(pid);
+
+    try {
+      process.kill(normalizedPid, "SIGKILL");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ESRCH") {
+        return;
+      }
+      throw error;
+    }
   }
 
   private createRecord(input: StartAgentInput): AgentRecord {

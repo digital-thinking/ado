@@ -19,6 +19,7 @@ import {
 import { createTelegramRuntime } from "../bot";
 import { ExecutionRunLock } from "../engine/execution-run-lock";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
+import { buildRaceWorktreeId } from "../engine/race-orchestrator";
 import {
   PhaseRunner,
   pickNextTask,
@@ -473,6 +474,47 @@ function ensureTaskIsNextActionable(phase: Phase, taskNumber: number): void {
       hint: `Next actionable task is #${nextTaskIndex + 1} ${nextTask.title}. Run 'ixado phase run' or start that task first.`,
     },
   );
+}
+
+async function teardownTaskRaceWorktrees(input: {
+  task: Task;
+  phase: Phase;
+  settings: Awaited<ReturnType<typeof loadCliSettings>>;
+  projectRootDir: string;
+}): Promise<number> {
+  const raceCount = input.task.raceState?.raceCount ?? input.task.race ?? 1;
+  if (!Number.isInteger(raceCount) || raceCount <= 1) {
+    return 0;
+  }
+
+  const manager = createWorktreeManager(
+    input.projectRootDir,
+    input.settings.worktrees.baseDir,
+  );
+  let teardownCount = 0;
+  for (let index = 1; index <= raceCount; index += 1) {
+    const worktreeId = buildRaceWorktreeId(
+      input.phase.id,
+      input.task.id,
+      index,
+    );
+    try {
+      await manager.teardown(worktreeId);
+      teardownCount += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("is not a working tree") ||
+        message.includes("does not exist") ||
+        message.includes("No such file or directory")
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return teardownCount;
 }
 
 function buildCliPhaseRunnerConfig(input: {
@@ -1160,7 +1202,7 @@ async function runTaskStartCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1357,7 +1399,7 @@ async function runDiscoverCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1514,7 +1556,7 @@ async function runTaskCreateCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1799,7 +1841,7 @@ async function runTaskResetCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1824,6 +1866,15 @@ async function runTaskResetCommand({
     );
   }
 
+  const stoppedAgents = agents.stopRunningAgentsWhere(
+    (agent) => agent.taskId === task.id,
+  );
+  const removedRaceWorktrees = await teardownTaskRaceWorktrees({
+    task,
+    phase,
+    settings,
+    projectRootDir,
+  });
   await control.resetTaskToTodo({
     phaseId: phase.id,
     taskId: task.id,
@@ -1831,6 +1882,16 @@ async function runTaskResetCommand({
   console.info(
     `Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`,
   );
+  if (stoppedAgents > 0) {
+    console.info(
+      `Recovered: stopped ${stoppedAgents} lingering task agent(s).`,
+    );
+  }
+  if (removedRaceWorktrees > 0) {
+    console.info(
+      `Recovered: removed ${removedRaceWorktrees} lingering race worktree(s).`,
+    );
+  }
   console.info(
     `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
   );
