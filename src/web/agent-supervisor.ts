@@ -714,6 +714,7 @@ export class AgentSupervisor {
       onError?: (error: Error) => void;
       onTimeout?: () => void;
       onIdleTimeout?: () => void;
+      onRateLimitDetected?: () => void;
     } = {},
   ): ChildProcess {
     record.runToken += 1;
@@ -740,6 +741,7 @@ export class AgentSupervisor {
     let forceKillHandle: NodeJS.Timeout | undefined;
     let hasReceivedOutput = false;
     let idleTimeoutTriggered = false;
+    let rateLimitTriggered = false;
     let terminationRequested = false;
     const startedAtMs = Date.now();
     let lastOutputAtMs = startedAtMs;
@@ -772,7 +774,9 @@ export class AgentSupervisor {
       clearInterval(heartbeatHandle);
       clearTimeout(forceKillHandle);
     };
-    const requestTermination = (reason: "timeout" | "idle-timeout") => {
+    const requestTermination = (
+      reason: "timeout" | "idle-timeout" | "rate-limit",
+    ) => {
       if (
         terminationRequested ||
         runToken !== record.runToken ||
@@ -791,6 +795,20 @@ export class AgentSupervisor {
         );
         child.kill("SIGKILL");
       }, this.terminationGraceMs);
+    };
+    const detectRateLimit = (chunk: string) => {
+      if (
+        rateLimitTriggered ||
+        classifyAdapterFailure(chunk) !== "rate_limited"
+      ) {
+        return;
+      }
+      rateLimitTriggered = true;
+      appendSystemOutput(
+        `Agent rate limit detected: terminating ${record.command} ${record.args.join(" ")}`.trim(),
+      );
+      options.onRateLimitDetected?.();
+      requestTermination("rate-limit");
     };
 
     if (options.startupSilenceTimeoutMs !== undefined) {
@@ -874,6 +892,7 @@ export class AgentSupervisor {
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
       lines.forEach((line) => this.emitAdapterOutput(record, "stdout", line));
+      detectRateLimit(value);
       options.onStdout?.(value);
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -885,6 +904,7 @@ export class AgentSupervisor {
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
       lines.forEach((line) => this.emitAdapterOutput(record, "stderr", line));
+      detectRateLimit(value);
       options.onStderr?.(value);
     });
     child.on("close", (exitCode, signal) => {
@@ -990,6 +1010,7 @@ export class AgentSupervisor {
       let settled = false;
       let timedOut = false;
       let idleTimedOut = false;
+      let rateLimitDetected = false;
 
       const settle = (callback: () => void) => {
         if (settled) {
@@ -1033,6 +1054,9 @@ export class AgentSupervisor {
           idleTimedOut = true;
           timedOut = true;
         },
+        onRateLimitDetected: () => {
+          rateLimitDetected = true;
+        },
         onError: (error) => {
           settle(() =>
             reject(
@@ -1061,6 +1085,23 @@ export class AgentSupervisor {
                   idleTimedOut
                     ? classifyAdapterFailure(combinedOutput)
                     : "timeout",
+                ),
+              );
+              return;
+            }
+
+            if (rateLimitDetected) {
+              const combinedOutput = [
+                stdout.trim(),
+                stderr.trim(),
+                record.outputTail.join("\n").trim(),
+              ]
+                .filter((value) => value.length > 0)
+                .join("\n\n");
+              reject(
+                new AgentFailureError(
+                  `Command hit a rate limit: ${record.command}`,
+                  classifyAdapterFailure(combinedOutput),
                 ),
               );
               return;

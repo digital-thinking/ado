@@ -545,7 +545,7 @@ describe("AgentSupervisor", () => {
       .find((agent) => agent.name === "Idle rate-limited worker");
     expect(
       listed?.outputTail.some((line) =>
-        line.includes("Agent idle timeout after 40ms"),
+        line.includes("Agent rate limit detected: terminating gemini --yolo"),
       ),
     ).toBe(true);
   });
@@ -591,6 +591,57 @@ describe("AgentSupervisor", () => {
     expect(
       listed?.outputTail.some((line) =>
         line.includes("force killing gemini --yolo"),
+      ),
+    ).toBe(true);
+  });
+
+  test("terminates immediately when a provider emits a rate-limit message during execution", async () => {
+    const child = createFakeChild();
+    child.kill = ((signal?: NodeJS.Signals | number) => {
+      child.killSignals.push(signal);
+      queueMicrotask(() => {
+        child.emit("close", null, signal === "SIGKILL" ? "SIGKILL" : "SIGTERM");
+      });
+      return true;
+    }) as ChildProcess["kill"];
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        queueMicrotask(() => {
+          child.stdout.write(
+            "Attempt 1 failed: You have exhausted your capacity on this model. Your quota will reset after 0s.\n",
+          );
+        });
+        return child;
+      },
+      terminationGraceMs: 5,
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 1_000,
+      },
+    });
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Rate-limited worker",
+        command: "gemini",
+        args: ["--yolo"],
+        cwd: "/tmp",
+        adapterId: "GEMINI_CLI",
+        approvedAdapterSpawn: true,
+      }),
+    ).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "rate_limited",
+    });
+
+    expect(child.killSignals).toEqual([undefined]);
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Rate-limited worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("Agent rate limit detected: terminating gemini --yolo"),
       ),
     ).toBe(true);
   });
