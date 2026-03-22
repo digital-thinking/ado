@@ -20,14 +20,6 @@ export async function handleProjectsApi(
     );
   }
 
-  const phaseTraceMatch =
-    /^\/api\/projects\/([^/]+)\/phases\/([^/]+)\/trace$/.exec(url.pathname);
-  if (request.method === "GET" && phaseTraceMatch) {
-    const projectName = decodeURIComponent(phaseTraceMatch[1]);
-    const phaseId = decodeURIComponent(phaseTraceMatch[2]);
-    return json(await deps.control.getPhaseTrace(phaseId, projectName));
-  }
-
   const projectSettingsMatch = /^\/api\/projects\/([^/]+)\/settings$/.exec(
     url.pathname,
   );

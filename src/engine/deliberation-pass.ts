@@ -13,7 +13,6 @@ const CRITIQUE_RESPONSE_SCHEMA = z.object({
 });
 
 type WorkResult = {
-  agentId?: string;
   stdout: string;
   stderr: string;
 };

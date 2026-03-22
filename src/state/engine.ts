@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve, join } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   ProjectStateSchema,
@@ -7,10 +7,6 @@ import {
   type ProjectState,
   type Task,
 } from "../types";
-import {
-  ExecutionTraceSchema,
-  type ExecutionTrace,
-} from "../types/execution-trace";
 
 export type StateEngineInitInput = {
   projectName: string;
@@ -142,55 +138,6 @@ export class StateEngine {
         phases: nextPhases,
       });
     });
-  }
-
-  async readExecutionTrace(phaseId: string): Promise<ExecutionTrace> {
-    const traceFilePath = this.resolveTraceFilePath(phaseId);
-    try {
-      const raw = await readFile(traceFilePath, "utf8");
-      return ExecutionTraceSchema.parse(JSON.parse(raw));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return {
-          phaseId,
-          nodes: [],
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      throw error;
-    }
-  }
-
-  async writeExecutionTrace(trace: ExecutionTrace): Promise<ExecutionTrace> {
-    const traceFilePath = this.resolveTraceFilePath(trace.phaseId);
-    const validated = ExecutionTraceSchema.parse({
-      ...trace,
-      updatedAt: new Date().toISOString(),
-    });
-
-    const dir = dirname(traceFilePath);
-    await mkdir(dir, { recursive: true });
-
-    const tmpPath = buildTmpStatePath(traceFilePath);
-    try {
-      await writeFile(
-        tmpPath,
-        `${JSON.stringify(validated, null, 2)}\n`,
-        "utf8",
-      );
-      await rename(tmpPath, traceFilePath);
-    } catch (error) {
-      await rm(tmpPath, { force: true });
-      throw error;
-    }
-
-    return validated;
-  }
-
-  private resolveTraceFilePath(phaseId: string): string {
-    const baseDir = dirname(this.stateFilePath);
-    return join(baseDir, "traces", `${phaseId}.json`);
   }
 
   private async writeProjectStateUnlocked(

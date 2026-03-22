@@ -38,8 +38,6 @@ export const TraceNodeSchema = z.object({
   durationMs: z.number().int().min(0).optional(),
   /** Which adapter executed this node (if applicable). */
   adapterId: CLIAdapterIdSchema.optional(),
-  /** The specific agent instance ID that executed this node. */
-  agentId: z.string().uuid().optional(),
   /** Phase that owns this trace. */
   phaseId: z.string().uuid(),
   /** Task associated with this node (absent for phase-level gates). */

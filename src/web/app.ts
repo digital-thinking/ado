@@ -27,7 +27,6 @@ import type {
   ProjectState,
   TaskRaceState,
 } from "../types";
-import type { ExecutionTrace } from "../types/execution-trace";
 import { handleApi } from "./api";
 import { text } from "./api/utils";
 import { controlCenterHtml } from "./ui/html";
@@ -43,7 +42,6 @@ export type AgentControl = {
 
 export type ControlCenterControl = {
   getState(projectName?: string): ReturnType<ControlCenterService["getState"]>;
-  getPhaseTrace(phaseId: string, projectName?: string): Promise<ExecutionTrace>;
   createPhase(
     input: CreatePhaseInput & { projectName?: string },
   ): ReturnType<ControlCenterService["createPhase"]>;

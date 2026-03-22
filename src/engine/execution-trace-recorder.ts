@@ -14,7 +14,6 @@ export interface TraceNodeInit {
   taskId?: string;
   taskNumber?: number;
   adapterId?: CLIAdapterId;
-  agentId?: string;
   label: string;
   parentIds?: string[];
   detail?: Record<string, unknown>;
@@ -55,7 +54,6 @@ export class ExecutionTraceRecorder {
       taskId: init.taskId,
       taskNumber: init.taskNumber,
       adapterId: init.adapterId,
-      agentId: init.agentId,
       parentIds: init.parentIds ?? [],
       label: init.label,
       detail: init.detail,
@@ -69,7 +67,6 @@ export class ExecutionTraceRecorder {
     nodeId: string,
     status: TraceNodeStatus,
     detail?: Record<string, unknown>,
-    agentId?: string,
   ): void {
     const node = this.nodes.find((n) => n.id === nodeId);
     if (!node) {
@@ -82,9 +79,6 @@ export class ExecutionTraceRecorder {
       new Date(endedAt).getTime() - new Date(node.startedAt).getTime();
     if (detail) {
       node.detail = { ...node.detail, ...detail };
-    }
-    if (agentId) {
-      node.agentId = agentId;
     }
     this.updatedAt = endedAt;
   }
@@ -109,7 +103,6 @@ export class ExecutionTraceRecorder {
       taskId: init.taskId,
       taskNumber: init.taskNumber,
       adapterId: init.adapterId,
-      agentId: init.agentId,
       parentIds: init.parentIds ?? [],
       label: init.label,
       detail: init.detail,

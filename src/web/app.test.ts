@@ -1165,18 +1165,6 @@ describe("project tabs frontend (P12-006)", () => {
     expect(html).toContain('"/api/execution/stop"');
   });
 
-  test("HTML includes Phase DAG renderer elements and logic", async () => {
-    const html = await getHtml();
-    expect(html).toContain("phase-view-toggle");
-    expect(html).toContain("dag-container");
-    expect(html).toContain("renderPhaseDag");
-    expect(html).toContain("onDagNodeClick");
-    expect(html).toContain("phaseTraces");
-    expect(html).toContain(
-      'import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";',
-    );
-  });
-
   test("HTML polls execution status for the active project", async () => {
     const html = await getHtml();
     expect(html).toContain(

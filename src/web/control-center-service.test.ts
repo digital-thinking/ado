@@ -1,7 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -1725,43 +1724,6 @@ describe("ControlCenterService", () => {
 
     expect(callCount).toBe(1);
     expect(lastProjectName).toBe("IxADO");
-  });
-
-  test("persists and retrieves phase execution traces", async () => {
-    const phaseId = randomUUID();
-    const trace = {
-      phaseId,
-      nodes: [
-        {
-          id: randomUUID(),
-          type: "task_run" as const,
-          status: "passed" as const,
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: 100,
-          phaseId,
-          label: "Task #1",
-          parentIds: [],
-        },
-      ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await service.updatePhaseTrace(trace);
-    const retrieved = await service.getPhaseTrace(phaseId);
-
-    expect(retrieved.phaseId).toBe(phaseId);
-    expect(retrieved.nodes).toHaveLength(1);
-    expect(retrieved.nodes[0].label).toBe("Task #1");
-  });
-
-  test("returns empty trace if file not found", async () => {
-    const phaseId = randomUUID();
-    const retrieved = await service.getPhaseTrace(phaseId);
-
-    expect(retrieved.phaseId).toBe(phaseId);
-    expect(retrieved.nodes).toEqual([]);
   });
 });
 

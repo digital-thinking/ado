@@ -325,35 +325,7 @@ export function controlCenterHtml(params: {
       display: flex;
       justify-content: flex-end;
     }
-    .dag-container {
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 16px;
-      margin-top: 12px;
-      overflow: auto;
-      min-height: 300px;
-      display: flex;
-      justify-content: center;
-    }
-    .dag-node:hover {
-      cursor: pointer;
-      filter: brightness(0.9);
-    }
   </style>
-  <script type="module">
-    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({ 
-      startOnLoad: false,
-      theme: 'neutral',
-      securityLevel: 'loose',
-      flowchart: {
-        useMaxWidth: false,
-        htmlLabels: true
-      }
-    });
-    window.mermaid = mermaid;
-  </script>
 </head>
 <body>
   <main class="layout">
@@ -596,9 +568,6 @@ export function controlCenterHtml(params: {
     const settingsContent = document.getElementById("settingsContent");
     const activePhaseBadge = document.getElementById("activePhaseBadge");
 
-    const phaseViewMode = new Map(); // phaseId -> 'kanban' | 'dag'
-    const phaseTraces = new Map(); // phaseId -> ExecutionTrace
-
     const defaultInternalWorkAssignee = ${JSON.stringify(params.defaultInternalWorkAssignee)};
     const defaultAutoMode = ${params.defaultAutoMode};
     const defaultWebLogFilePath = ${JSON.stringify(params.webLogFilePath)};
@@ -837,139 +806,6 @@ export function controlCenterHtml(params: {
 
       return statusSummary + branchSummary + judgeSummary + reasoningSummary;
     }
-
-    async function renderPhaseDag(phaseId, container) {
-      container.innerHTML = '<div class="small muted">Loading trace...</div>';
-      try {
-        const trace = await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/phases/" + encodeURIComponent(phaseId) + "/trace");
-        phaseTraces.set(phaseId, trace);
-        if (!trace || !trace.nodes || trace.nodes.length === 0) {
-          container.innerHTML = '<div class="small muted">No execution trace available for this phase.</div>';
-          return;
-        }
-
-        const nodes = trace.nodes;
-        const taskToNodeId = new Map();
-        nodes.forEach(node => {
-          if (node.type === 'task_run' && node.taskId) {
-            taskToNodeId.set(node.taskId, "node_" + node.id.replace(/-/g, "_"));
-          }
-        });
-
-        let mermaidText = "graph TD\\n";
-        
-        nodes.forEach(node => {
-          const status = node.status;
-          const type = node.type;
-          const label = node.label;
-          const nodeId = "node_" + node.id.replace(/-/g, "_");
-          
-          let shape = "(["; // round for tasks
-          let endShape = "])";
-          if (type === 'gate_eval') { shape = "{"; endShape = "}"; }
-          if (type === 'recovery_attempt') { shape = "[["; endShape = "]]"; }
-          if (type === 'race_branch') { shape = ">"; endShape = "]"; }
-          if (type === 'deliberation_pass') { shape = "[/"; endShape = "/]"; }
-          
-          const escapedLabel = escapeHtml(label).replace(/"/g, "'");
-          mermaidText += \`  \${nodeId}\${shape}"\${escapedLabel}"\${endShape}\\n\`;
-          
-          if (node.parentIds && node.parentIds.length > 0) {
-            node.parentIds.forEach(parentId => {
-              const parentNodeId = "node_" + parentId.replace(/-/g, "_");
-              mermaidText += \`  \${parentNodeId} --> \${nodeId}\\n\`;
-            });
-          } else if (node.type === 'task_run' && node.taskId && latestState) {
-            // Link to task dependencies if no explicit parents
-            const task = latestState.phases.flatMap(p => p.tasks).find(t => t.id === node.taskId);
-            if (task && task.dependencies) {
-              task.dependencies.forEach(depId => {
-                const depNodeId = taskToNodeId.get(depId);
-                if (depNodeId) {
-                  mermaidText += \`  \${depNodeId} --> \${nodeId}\\n\`;
-                }
-              });
-            }
-          }
-        });
-
-        // Add styling
-        nodes.forEach(node => {
-          const nodeId = "node_" + node.id.replace(/-/g, "_");
-          let style = "";
-          if (node.status === 'passed') style = "fill:#d6f2e6,stroke:#1f7a5a,stroke-width:2px";
-          else if (node.status === 'failed') style = "fill:#f8d9d3,stroke:#c73b2f,stroke-width:2px";
-          else if (node.status === 'running') style = "fill:#fff3cd,stroke:#d4b96a,stroke-width:2px";
-          else if (node.status === 'skipped') style = "fill:#f4f2ea,stroke:#d9d5c8,stroke-width:1px,stroke-dasharray: 5 5";
-          
-          if (style) {
-            mermaidText += \`  style \${nodeId} \${style}\\n\`;
-          }
-          
-          // Add click handler
-          mermaidText += \`  click \${nodeId} call onDagNodeClick("\${node.id}")\\n\`;
-        });
-
-        const id = "mermaid_" + phaseId.replace(/-/g, "_");
-        container.innerHTML = \`<div id="\${id}">\${mermaidText}</div>\`;
-        
-        if (window.mermaid) {
-          const { svg } = await window.mermaid.render(id + "_svg", mermaidText);
-          container.innerHTML = svg;
-          
-          // Re-attach click events because mermaid render might lose them or we need to map them
-          // Actually 'click ... call' works if the function is global.
-        }
-      } catch (error) {
-        container.innerHTML = '<div class="error small">Failed to render DAG: ' + escapeHtml(error.message) + '</div>';
-      }
-    }
-
-    window.onDagNodeClick = function(nodeId) {
-      let traceNode = null;
-      let phaseId = null;
-      for (const [pId, trace] of phaseTraces.entries()) {
-        const node = trace.nodes.find(n => n.id === nodeId);
-        if (node) {
-          traceNode = node;
-          phaseId = pId;
-          break;
-        }
-      }
-
-      if (!traceNode) return;
-
-      if (traceNode.agentId) {
-        showAgentLogs(traceNode.agentId, traceNode.label);
-        return;
-      }
-
-      // If no agentId, show details in the log modal
-      logModalTitle.textContent = traceNode.label;
-      logModalBody.innerHTML = "";
-      logModalStatus.textContent = "Showing node details.";
-      logOverlay.classList.remove("hidden");
-      
-      const pre = document.createElement("pre");
-      pre.className = "mono small";
-      pre.style.whiteSpace = "pre-wrap";
-      pre.textContent = JSON.stringify(traceNode, null, 2);
-      logModalBody.appendChild(pre);
-      
-      if (traceNode.taskId && latestState) {
-        const task = latestState.phases.flatMap(p => p.tasks).find(t => t.id === traceNode.taskId);
-        if (task && task.errorLogs) {
-          const logs = document.createElement("div");
-          logs.innerHTML = '<h4 style="margin-top:16px; border-top: 1px solid var(--line); padding-top: 8px;">Task Error Logs:</h4>';
-          const errorPre = document.createElement("pre");
-          errorPre.className = "mono small";
-          errorPre.style.whiteSpace = "pre-wrap";
-          errorPre.textContent = task.errorLogs;
-          logs.appendChild(errorPre);
-          logModalBody.appendChild(logs);
-        }
-      }
-    };
 
     function renderTabs() {
       tabStrip.innerHTML = "";
@@ -1474,8 +1310,6 @@ export function controlCenterHtml(params: {
       }
       const html = state.phases.map((phase) => {
         const isActive = activePhaseIds.has(phase.id);
-        const mode = phaseViewMode.get(phase.id) || "kanban";
-
         if (!isActive) {
           const tasks = phase.tasks || [];
           if (tasks.length === 0) return ""; // hide phases with no tasks
@@ -1759,28 +1593,16 @@ export function controlCenterHtml(params: {
                   : "") +
               "</div>" +
               '<div class="phase-actions">' +
-                '<div class="row" style="margin-right: 16px;">' +
-                  '<button type="button" class="secondary small phase-view-toggle ' + (mode === 'kanban' ? 'active' : '') + '" data-phase-id="' + escapeHtml(phase.id) + '" data-mode="kanban">Kanban</button>' +
-                  '<button type="button" class="secondary small phase-view-toggle ' + (mode === 'dag' ? 'active' : '') + '" data-phase-id="' + escapeHtml(phase.id) + '" data-mode="dag">DAG</button>' +
-                '</div>' +
                 '<span class="pill">Active</span>' +
                 '<div class="small mono muted">' + escapeHtml(phase.status) + "</div>" +
               "</div>" +
             "</div>" +
-            (mode === 'dag' 
-              ? '<div class="dag-container" data-phase-id="' + escapeHtml(phase.id) + '"></div>'
-              : '<div class="phase-status-grid">' + columnsHtml + "</div>") +
+            '<div class="phase-status-grid">' + columnsHtml + "</div>" +
           "</section>"
         );
       }).join("");
 
       kanbanBoard.innerHTML = html;
-
-      // Trigger DAG rendering for any phase in DAG mode
-      document.querySelectorAll(".dag-container").forEach(container => {
-        const phaseId = container.getAttribute("data-phase-id");
-        renderPhaseDag(phaseId, container);
-      });
     }
 
     const AGENT_LIST_LIMIT = 5;
@@ -2123,15 +1945,6 @@ export function controlCenterHtml(params: {
         }
         return;
       }
-
-      if (target.classList.contains("phase-view-toggle")) {
-        const phaseId = target.getAttribute("data-phase-id");
-        const mode = target.getAttribute("data-mode");
-        phaseViewMode.set(phaseId, mode);
-        renderKanban(latestState);
-        return;
-      }
-
       if (target.classList.contains("phase-activate-button")) {
         const phaseId = target.getAttribute("data-phase-id") || "";
         if (!phaseId) {
@@ -2347,126 +2160,6 @@ export function controlCenterHtml(params: {
       }
     });
 
-    async function showAgentLogs(id, title) {
-      if (currentEventSource) {
-        currentEventSource.close();
-      }
-
-      logModalTitle.textContent = title || id;
-      logModalBody.textContent = "";
-      logModalStatus.textContent = "Connecting...";
-      logOverlay.classList.remove("hidden");
-
-      const source = new EventSource("/api/agents/" + id + "/logs/stream");
-      currentEventSource = source;
-
-      source.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        const runtimeEvent = data.runtimeEvent;
-        if (runtimeEvent && runtimeEvent.type === "adapter.output") {
-          const span = document.createElement("span");
-          const line =
-            data.formattedLine ||
-            runtimeEvent.payload?.line ||
-            data.line ||
-            "";
-          span.textContent = line + "\\n";
-          logModalBody.appendChild(span);
-          logModalBody.scrollTop = logModalBody.scrollHeight;
-          return;
-        }
-        if (runtimeEvent && runtimeEvent.type === "terminal.outcome") {
-          const status =
-            runtimeEvent.payload?.agentStatus ||
-            data.status ||
-            runtimeEvent.payload?.outcome ||
-            "unknown";
-          const summary = data.failureSummary ? " Failure: " + data.failureSummary : "";
-          logModalStatus.textContent = "Agent status: " + status + "." + summary + " Stream ended.";
-          const linksHtml = renderRecoveryLinks(data.recoveryLinks);
-          if (linksHtml) {
-            const linksLine = document.createElement("div");
-            linksLine.innerHTML = "Recovery traces: " + linksHtml;
-            logModalStatus.appendChild(document.createElement("br"));
-            logModalStatus.appendChild(linksLine);
-          }
-          source.close();
-          currentEventSource = null;
-          return;
-        }
-        if (data.type === "output") {
-          const span = document.createElement("span");
-          span.textContent = (data.formattedLine || data.line) + "\\n";
-          logModalBody.appendChild(span);
-          logModalBody.scrollTop = logModalBody.scrollHeight;
-        } else if (data.type === "status") {
-          const summary = data.failureSummary ? " Failure: " + data.failureSummary : "";
-          logModalStatus.textContent = "Agent status: " + data.status + "." + summary + " Stream ended.";
-          const linksHtml = renderRecoveryLinks(data.recoveryLinks);
-          if (linksHtml) {
-            const linksLine = document.createElement("div");
-            linksLine.innerHTML = "Recovery traces: " + linksHtml;
-            logModalStatus.appendChild(document.createElement("br"));
-            logModalStatus.appendChild(linksLine);
-          }
-          source.close();
-          currentEventSource = null;
-        }
-      };
-
-      source.onerror = (err) => {
-        console.error("SSE error:", err);
-        logModalStatus.textContent = "Stream error or ended.";
-        source.close();
-        currentEventSource = null;
-      };
-    }
-
-    window.onDagNodeClick = async function(nodeId) {
-      // Find the node in all traces (we need to know which phase)
-      // For now, assume it's from the currently rendered DAGs
-      let targetNode = null;
-      let targetPhaseId = null;
-      
-      // This is a bit of a hack, but we can fetch the trace for each active phase
-      // or just the one that was clicked.
-      // Since we don't know the phaseId easily here, let's look at the active project's traces.
-      for (const phase of latestState.phases) {
-        try {
-          const trace = await api("/api/projects/" + encodeURIComponent(activeProjectName) + "/phases/" + encodeURIComponent(phase.id) + "/trace");
-          targetNode = trace.nodes.find(n => n.id === nodeId);
-          if (targetNode) {
-            targetPhaseId = phase.id;
-            break;
-          }
-        } catch (e) {}
-      }
-
-      if (!targetNode) {
-        alert("Trace node not found.");
-        return;
-      }
-
-      if (targetNode.agentId) {
-        showAgentLogs(targetNode.agentId, targetNode.label);
-        return;
-      }
-
-      if (targetNode.taskId) {
-        // Find agents for this taskId
-        // We might need to refresh agents first
-        await globalRefresh();
-        const agentsForTask = latestAgents.filter(a => a.taskId === targetNode.taskId);
-        if (agentsForTask.length > 0) {
-          // Show the most recent agent for this task
-          showAgentLogs(agentsForTask[0].id, targetNode.label);
-          return;
-        }
-      }
-
-      alert("No agent logs found for this node: " + targetNode.label);
-    };
-
     async function handleAgentAction(event) {
       const target = event.target;
       if (!(target instanceof HTMLButtonElement)) return;
@@ -2477,7 +2170,80 @@ export function controlCenterHtml(params: {
       if (action === "show-logs") {
         const agent = latestAgents.find((candidate) => candidate.id === id);
         if (!agent) return;
-        showAgentLogs(id, agent.name || id);
+
+        if (currentEventSource) {
+          currentEventSource.close();
+        }
+
+        logModalTitle.textContent = agent.name || id;
+        logModalBody.textContent = "";
+        logModalStatus.textContent = "Connecting...";
+        logOverlay.classList.remove("hidden");
+
+        const source = new EventSource("/api/agents/" + id + "/logs/stream");
+        currentEventSource = source;
+
+        source.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          const runtimeEvent = data.runtimeEvent;
+          if (runtimeEvent && runtimeEvent.type === "adapter.output") {
+            const span = document.createElement("span");
+            const line =
+              data.formattedLine ||
+              runtimeEvent.payload?.line ||
+              data.line ||
+              "";
+            span.textContent = line + "\\n";
+            logModalBody.appendChild(span);
+            logModalBody.scrollTop = logModalBody.scrollHeight;
+            return;
+          }
+          if (runtimeEvent && runtimeEvent.type === "terminal.outcome") {
+            const status =
+              runtimeEvent.payload?.agentStatus ||
+              data.status ||
+              runtimeEvent.payload?.outcome ||
+              "unknown";
+            const summary = data.failureSummary ? " Failure: " + data.failureSummary : "";
+            logModalStatus.textContent = "Agent status: " + status + "." + summary + " Stream ended.";
+            const linksHtml = renderRecoveryLinks(data.recoveryLinks);
+            if (linksHtml) {
+              const linksLine = document.createElement("div");
+              linksLine.innerHTML = "Recovery traces: " + linksHtml;
+              logModalStatus.appendChild(document.createElement("br"));
+              logModalStatus.appendChild(linksLine);
+            }
+            source.close();
+            currentEventSource = null;
+            return;
+          }
+          if (data.type === "output") {
+            const span = document.createElement("span");
+            span.textContent = (data.formattedLine || data.line) + "\\n";
+            logModalBody.appendChild(span);
+            logModalBody.scrollTop = logModalBody.scrollHeight;
+          } else if (data.type === "status") {
+            const summary = data.failureSummary ? " Failure: " + data.failureSummary : "";
+            logModalStatus.textContent = "Agent status: " + data.status + "." + summary + " Stream ended.";
+            const linksHtml = renderRecoveryLinks(data.recoveryLinks);
+            if (linksHtml) {
+              const linksLine = document.createElement("div");
+              linksLine.innerHTML = "Recovery traces: " + linksHtml;
+              logModalStatus.appendChild(document.createElement("br"));
+              logModalStatus.appendChild(linksLine);
+            }
+            source.close();
+            currentEventSource = null;
+          }
+        };
+
+        source.onerror = (err) => {
+          console.error("SSE error:", err);
+          logModalStatus.textContent = "Stream error or ended.";
+          source.close();
+          currentEventSource = null;
+        };
+
         return;
       }
 
