@@ -1067,10 +1067,17 @@ export class AgentSupervisor {
             }
 
             if ((exitCode ?? -1) !== 0) {
+              const combinedOutput = [
+                stdout.trim(),
+                stderr.trim(),
+                record.outputTail.join("\n").trim(),
+              ]
+                .filter((value) => value.length > 0)
+                .join("\n\n");
               reject(
                 new AgentFailureError(
                   `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
-                  classifyAdapterFailure(stderr || stdout),
+                  classifyAdapterFailure(combinedOutput),
                 ),
               );
               return;
