@@ -53,6 +53,7 @@ export type StartAgentInput = {
 export type RunAgentInput = StartAgentInput & {
   timeoutMs?: number;
   startupSilenceTimeoutMs?: number;
+  idleTimeoutMs?: number;
   stdin?: string;
   env?: NodeJS.ProcessEnv;
 };
@@ -71,6 +72,7 @@ export type AgentSupervisorOptions = {
   spawnFn?: SpawnFn;
   registryFilePath?: string;
   onFailure?: (agent: AgentView) => void | Promise<void>;
+  terminationGraceMs?: number;
   runtimeDiagnostics?: {
     heartbeatIntervalMs?: number;
     idleThresholdMs?: number;
@@ -86,6 +88,8 @@ export type AgentEvent = RuntimeEvent;
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS = 120_000;
+const DEFAULT_IDLE_TIMEOUT_MULTIPLIER = 5;
+const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 
 /**
  * How long (ms) to wait before coalescing buffered agent-registry writes into
@@ -233,6 +237,7 @@ export class AgentSupervisor {
   private readonly spawnFn: SpawnFn;
   private readonly registryFilePath?: string;
   private readonly onFailure?: (agent: AgentView) => void | Promise<void>;
+  private readonly terminationGraceMs: number;
   private readonly runtimeDiagnostics: RuntimeDiagnosticsConfig;
   private readonly records = new Map<string, AgentRecord>();
   private readonly emitter = new EventEmitter();
@@ -252,6 +257,7 @@ export class AgentSupervisor {
     if (typeof spawnOrOptions === "function") {
       this.spawnFn = spawnOrOptions;
       this.registryFilePath = registryFilePath;
+      this.terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS;
       this.runtimeDiagnostics = {
         heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
         idleThresholdMs: DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS,
@@ -262,6 +268,8 @@ export class AgentSupervisor {
     this.spawnFn = spawnOrOptions.spawnFn ?? spawn;
     this.registryFilePath = spawnOrOptions.registryFilePath;
     this.onFailure = spawnOrOptions.onFailure;
+    this.terminationGraceMs =
+      spawnOrOptions.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
     this.runtimeDiagnostics = {
       heartbeatIntervalMs:
         spawnOrOptions.runtimeDiagnostics?.heartbeatIntervalMs ??
@@ -270,6 +278,12 @@ export class AgentSupervisor {
         spawnOrOptions.runtimeDiagnostics?.idleThresholdMs ??
         DEFAULT_IDLE_DIAGNOSTIC_THRESHOLD_MS,
     };
+    if (
+      !Number.isFinite(this.terminationGraceMs) ||
+      this.terminationGraceMs <= 0
+    ) {
+      throw new Error("terminationGraceMs must be > 0.");
+    }
     if (
       !Number.isFinite(this.runtimeDiagnostics.heartbeatIntervalMs) ||
       this.runtimeDiagnostics.heartbeatIntervalMs <= 0
@@ -506,6 +520,55 @@ export class AgentSupervisor {
     return reconcileCount;
   }
 
+  stopRunningAgentsWhere(predicate: (agent: AgentView) => boolean): number {
+    const stoppedAt = nowIso();
+    const stoppedIds = new Set<string>();
+    const persistable = this.registryFilePath ? this.readPersistedAgents() : [];
+    const nextPersisted = persistable.map((agent) => {
+      if (agent.status !== "RUNNING" || !predicate(agent)) {
+        return agent;
+      }
+
+      stoppedIds.add(agent.id);
+      this.forceStopPid(agent.pid);
+      return {
+        ...agent,
+        status: "STOPPED" as AgentStatus,
+        stoppedAt,
+      };
+    });
+
+    if (stoppedIds.size > 0 && this.registryFilePath) {
+      this.writePersistedAgents(nextPersisted);
+    }
+
+    for (const [id, record] of this.records.entries()) {
+      if (record.status !== "RUNNING") {
+        continue;
+      }
+      const view = toView(record);
+      if (!predicate(view)) {
+        continue;
+      }
+
+      stoppedIds.add(id);
+      record.stopRequested = true;
+      record.child?.kill("SIGKILL");
+      this.records.set(id, {
+        ...record,
+        status: "STOPPED",
+        lastExitCode: -1,
+        stoppedAt,
+      });
+    }
+
+    if (stoppedIds.size > 0) {
+      this.doFlushRegistry();
+    }
+
+    return stoppedIds.size;
+  }
+
   list(): AgentView[] {
     const inMemory = [...this.records.values()].map(toView);
     if (!this.registryFilePath) {
@@ -519,6 +582,23 @@ export class AgentSupervisor {
       merged.set(local.id, local);
     }
     return [...merged.values()];
+  }
+
+  private forceStopPid(pid: number | undefined): void {
+    if (!Number.isInteger(pid) || (pid ?? 0) <= 0) {
+      return;
+    }
+    const normalizedPid = Number(pid);
+
+    try {
+      process.kill(normalizedPid, "SIGKILL");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ESRCH") {
+        return;
+      }
+      throw error;
+    }
   }
 
   private createRecord(input: StartAgentInput): AgentRecord {
@@ -624,6 +704,7 @@ export class AgentSupervisor {
       stdin?: string;
       timeoutMs?: number;
       startupSilenceTimeoutMs?: number;
+      idleTimeoutMs?: number;
       onStdout?: (chunk: string) => void;
       onStderr?: (chunk: string) => void;
       onClose?: (
@@ -632,6 +713,8 @@ export class AgentSupervisor {
       ) => void;
       onError?: (error: Error) => void;
       onTimeout?: () => void;
+      onIdleTimeout?: () => void;
+      onRateLimitDetected?: () => void;
     } = {},
   ): ChildProcess {
     record.runToken += 1;
@@ -655,10 +738,19 @@ export class AgentSupervisor {
     let timeoutHandle: NodeJS.Timeout | undefined;
     let silenceHandle: NodeJS.Timeout | undefined;
     let heartbeatHandle: NodeJS.Timeout | undefined;
+    let forceKillHandle: NodeJS.Timeout | undefined;
     let hasReceivedOutput = false;
+    let idleTimeoutTriggered = false;
+    let rateLimitTriggered = false;
+    let terminationRequested = false;
     const startedAtMs = Date.now();
     let lastOutputAtMs = startedAtMs;
     let lastIdleDiagnosticBucket = -1;
+    const idleTimeoutMs =
+      options.idleTimeoutMs ??
+      (options.startupSilenceTimeoutMs !== undefined
+        ? options.startupSilenceTimeoutMs * DEFAULT_IDLE_TIMEOUT_MULTIPLIER
+        : undefined);
 
     const cancelSilenceTimer = () => {
       clearTimeout(silenceHandle);
@@ -680,6 +772,43 @@ export class AgentSupervisor {
       clearTimeout(timeoutHandle);
       cancelSilenceTimer();
       clearInterval(heartbeatHandle);
+      clearTimeout(forceKillHandle);
+    };
+    const requestTermination = (
+      reason: "timeout" | "idle-timeout" | "rate-limit",
+    ) => {
+      if (
+        terminationRequested ||
+        runToken !== record.runToken ||
+        record.child !== child
+      ) {
+        return;
+      }
+      terminationRequested = true;
+      child.kill();
+      forceKillHandle = setTimeout(() => {
+        if (runToken !== record.runToken || record.child !== child) {
+          return;
+        }
+        appendSystemOutput(
+          `Agent ${reason} grace period expired after ${this.terminationGraceMs}ms: force killing ${record.command} ${record.args.join(" ")}`.trim(),
+        );
+        child.kill("SIGKILL");
+      }, this.terminationGraceMs);
+    };
+    const detectRateLimit = (chunk: string) => {
+      if (
+        rateLimitTriggered ||
+        classifyAdapterFailure(chunk) !== "rate_limited"
+      ) {
+        return;
+      }
+      rateLimitTriggered = true;
+      appendSystemOutput(
+        `Agent rate limit detected: terminating ${record.command} ${record.args.join(" ")}`.trim(),
+      );
+      options.onRateLimitDetected?.();
+      requestTermination("rate-limit");
     };
 
     if (options.startupSilenceTimeoutMs !== undefined) {
@@ -740,6 +869,18 @@ export class AgentSupervisor {
         }),
       );
       appendSystemOutput(diagnostic);
+      if (
+        idleTimeoutMs !== undefined &&
+        idleMs >= idleTimeoutMs &&
+        !idleTimeoutTriggered
+      ) {
+        idleTimeoutTriggered = true;
+        appendSystemOutput(
+          `Agent idle timeout after ${idleTimeoutMs}ms: terminating ${record.command} ${record.args.join(" ")}`.trim(),
+        );
+        options.onIdleTimeout?.();
+        requestTermination("idle-timeout");
+      }
     }, this.runtimeDiagnostics.heartbeatIntervalMs);
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -751,6 +892,7 @@ export class AgentSupervisor {
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
       lines.forEach((line) => this.emitAdapterOutput(record, "stdout", line));
+      detectRateLimit(value);
       options.onStdout?.(value);
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -762,6 +904,7 @@ export class AgentSupervisor {
       const lines = tailPush(record.outputTail, value);
       this.persistRecord(record);
       lines.forEach((line) => this.emitAdapterOutput(record, "stderr", line));
+      detectRateLimit(value);
       options.onStderr?.(value);
     });
     child.on("close", (exitCode, signal) => {
@@ -831,7 +974,7 @@ export class AgentSupervisor {
     if (options.timeoutMs !== undefined) {
       timeoutHandle = setTimeout(() => {
         options.onTimeout?.();
-        child.kill();
+        requestTermination("timeout");
       }, options.timeoutMs);
     }
 
@@ -854,6 +997,11 @@ export class AgentSupervisor {
   async runToCompletion(input: RunAgentInput): Promise<RunAgentResult> {
     const record = this.createRecord(input);
     this.records.set(record.id, record);
+    const effectiveIdleTimeoutMs =
+      input.idleTimeoutMs ??
+      (input.startupSilenceTimeoutMs !== undefined
+        ? input.startupSilenceTimeoutMs * DEFAULT_IDLE_TIMEOUT_MULTIPLIER
+        : undefined);
 
     return new Promise<RunAgentResult>((resolve, reject) => {
       const startedAtMs = Date.now();
@@ -861,6 +1009,8 @@ export class AgentSupervisor {
       let stderr = "";
       let settled = false;
       let timedOut = false;
+      let idleTimedOut = false;
+      let rateLimitDetected = false;
 
       const settle = (callback: () => void) => {
         if (settled) {
@@ -876,6 +1026,7 @@ export class AgentSupervisor {
         stdin: input.stdin,
         timeoutMs: input.timeoutMs,
         startupSilenceTimeoutMs: input.startupSilenceTimeoutMs,
+        idleTimeoutMs: effectiveIdleTimeoutMs,
         onStdout: (chunk) => {
           stdout += chunk;
         },
@@ -899,6 +1050,13 @@ export class AgentSupervisor {
             this.emitAdapterOutput(record, "system", line),
           );
         },
+        onIdleTimeout: () => {
+          idleTimedOut = true;
+          timedOut = true;
+        },
+        onRateLimitDetected: () => {
+          rateLimitDetected = true;
+        },
         onError: (error) => {
           settle(() =>
             reject(
@@ -912,20 +1070,55 @@ export class AgentSupervisor {
         onClose: (exitCode) => {
           settle(() => {
             if (timedOut) {
+              const combinedOutput = [
+                stdout.trim(),
+                stderr.trim(),
+                record.outputTail.join("\n").trim(),
+              ]
+                .filter((value) => value.length > 0)
+                .join("\n\n");
               reject(
                 new AgentFailureError(
-                  `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
-                  "timeout",
+                  idleTimedOut
+                    ? `Command became idle for ${effectiveIdleTimeoutMs}ms: ${record.command}`
+                    : `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
+                  idleTimedOut
+                    ? classifyAdapterFailure(combinedOutput)
+                    : "timeout",
+                ),
+              );
+              return;
+            }
+
+            if (rateLimitDetected) {
+              const combinedOutput = [
+                stdout.trim(),
+                stderr.trim(),
+                record.outputTail.join("\n").trim(),
+              ]
+                .filter((value) => value.length > 0)
+                .join("\n\n");
+              reject(
+                new AgentFailureError(
+                  `Command hit a rate limit: ${record.command}`,
+                  classifyAdapterFailure(combinedOutput),
                 ),
               );
               return;
             }
 
             if ((exitCode ?? -1) !== 0) {
+              const combinedOutput = [
+                stdout.trim(),
+                stderr.trim(),
+                record.outputTail.join("\n").trim(),
+              ]
+                .filter((value) => value.length > 0)
+                .join("\n\n");
               reject(
                 new AgentFailureError(
                   `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
-                  classifyAdapterFailure(stderr || stdout),
+                  classifyAdapterFailure(combinedOutput),
                 ),
               );
               return;

@@ -19,7 +19,12 @@ import {
 import { createTelegramRuntime } from "../bot";
 import { ExecutionRunLock } from "../engine/execution-run-lock";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
-import { PhaseRunner } from "../engine/phase-runner";
+import { buildRaceWorktreeId } from "../engine/race-orchestrator";
+import {
+  PhaseRunner,
+  pickNextTask,
+  type PhaseRunnerConfig,
+} from "../engine/phase-runner";
 import {
   discoverTaskCandidates,
   type DiscoveryCandidate,
@@ -38,7 +43,9 @@ import {
 } from "../log-readability";
 import {
   CLIAdapterIdSchema,
+  type Phase,
   TaskTypeSchema,
+  type Task,
   WorkerAssigneeSchema,
   type CLIAdapterId,
   type PhaseFailureKind,
@@ -385,7 +392,27 @@ function createControlCenterServiceWithAgentTracking(
           );
         }
 
-        throw new Error(`${message}\nLogs: ${artifacts.outputFilePath}`);
+        const wrapped = new Error(
+          `${message}\nLogs: ${artifacts.outputFilePath}`,
+        ) as Error & {
+          cause?: unknown;
+          category?: unknown;
+          adapterFailureKind?: unknown;
+        };
+        wrapped.cause = error;
+        if (error && typeof error === "object" && "category" in error) {
+          wrapped.category = (error as { category?: unknown }).category;
+        }
+        if (
+          error &&
+          typeof error === "object" &&
+          "adapterFailureKind" in error
+        ) {
+          wrapped.adapterFailureKind = (
+            error as { adapterFailureKind?: unknown }
+          ).adapterFailureKind;
+        }
+        throw wrapped;
       }
     },
     repositoryResetRunner: async () => {
@@ -431,6 +458,198 @@ function createWorktreeManager(
     projectRootDir,
     baseDir,
   });
+}
+
+function resolveEffectiveTaskRaceCount(
+  task: Pick<Task, "race">,
+  defaultRace: number,
+): number {
+  const raceCount = task.race ?? defaultRace ?? 1;
+  if (!Number.isInteger(raceCount) || raceCount <= 0) {
+    throw new Error("task.race must be a positive integer.");
+  }
+
+  return raceCount;
+}
+
+function ensureTaskIsNextActionable(phase: Phase, taskNumber: number): void {
+  const nextTaskIndex = pickNextTask(phase.tasks);
+  if (nextTaskIndex === taskNumber - 1) {
+    return;
+  }
+
+  if (nextTaskIndex < 0) {
+    throw new ValidationError(
+      `Task #${taskNumber} is not actionable in phase '${phase.name}'.`,
+      {
+        hint: "No TODO/CI_FIX task is currently ready. Run 'ixado task list' to inspect phase state.",
+      },
+    );
+  }
+
+  const nextTask = phase.tasks[nextTaskIndex];
+  throw new ValidationError(
+    `Task #${taskNumber} is not the next actionable task in phase '${phase.name}'.`,
+    {
+      hint: `Next actionable task is #${nextTaskIndex + 1} ${nextTask.title}. Run 'ixado phase run' or start that task first.`,
+    },
+  );
+}
+
+async function teardownTaskRaceWorktrees(input: {
+  task: Task;
+  phase: Phase;
+  settings: Awaited<ReturnType<typeof loadCliSettings>>;
+  projectRootDir: string;
+}): Promise<number> {
+  const raceCount = input.task.raceState?.raceCount ?? input.task.race ?? 1;
+  if (!Number.isInteger(raceCount) || raceCount <= 1) {
+    return 0;
+  }
+
+  const manager = createWorktreeManager(
+    input.projectRootDir,
+    input.settings.worktrees.baseDir,
+  );
+  let teardownCount = 0;
+  for (let index = 1; index <= raceCount; index += 1) {
+    const worktreeId = buildRaceWorktreeId(
+      input.phase.id,
+      input.task.id,
+      index,
+    );
+    try {
+      await manager.teardown(worktreeId);
+      teardownCount += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("is not a working tree") ||
+        message.includes("does not exist") ||
+        message.includes("No such file or directory")
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return teardownCount;
+}
+
+function buildCliPhaseRunnerConfig(input: {
+  settings: Awaited<ReturnType<typeof loadCliSettings>>;
+  projectRootDir: string;
+  projectName: string;
+  policy: Awaited<ReturnType<typeof loadAuthPolicy>>;
+  phaseId?: string;
+  mode: "AUTO" | "MANUAL";
+  countdownSeconds: number;
+  activeAssignee: CLIAdapterId;
+  initialTrace?: PhaseRunnerConfig["initialTrace"];
+}): PhaseRunnerConfig {
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    input.settings,
+    input.projectName,
+  );
+
+  return {
+    mode: input.mode,
+    countdownSeconds: input.countdownSeconds,
+    activeAssignee: input.activeAssignee,
+    enabledAdapters: getAvailableAgents(input.settings),
+    providerPriority: input.settings.executionLoop.providerPriority,
+    adapterAffinities: input.settings.agents.adapterAffinities,
+    adapterCircuitBreakers: {
+      CODEX_CLI: input.settings.agents.CODEX_CLI.circuitBreaker,
+      CLAUDE_CLI: input.settings.agents.CLAUDE_CLI.circuitBreaker,
+      GEMINI_CLI: input.settings.agents.GEMINI_CLI.circuitBreaker,
+      MOCK_CLI: input.settings.agents.MOCK_CLI.circuitBreaker,
+    },
+    maxRecoveryAttempts: input.settings.exceptionRecovery.maxAttempts,
+    testerCommand: input.settings.executionLoop.testerCommand,
+    testerArgs: input.settings.executionLoop.testerArgs,
+    testerTimeoutMs: input.settings.executionLoop.testerTimeoutMs,
+    defaultRace: projectExecutionSettings.defaultRace,
+    maxTaskRetries: projectExecutionSettings.maxTaskRetries,
+    judgeAdapter: input.settings.executionLoop.judgeAdapter,
+    raceJudgePrompt: input.settings.executionLoop.raceJudgePrompt,
+    phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
+    ciEnabled: input.settings.executionLoop.ciEnabled,
+    vcsProvider: input.settings.executionLoop.vcsProvider,
+    gates: input.settings.executionLoop.gates,
+    ciBaseBranch: input.settings.executionLoop.ciBaseBranch,
+    ciPullRequest: input.settings.executionLoop.pullRequest,
+    validationMaxRetries: input.settings.executionLoop.validationMaxRetries,
+    ciFixMaxFanOut: input.settings.executionLoop.ciFixMaxFanOut,
+    ciFixMaxDepth: input.settings.executionLoop.ciFixMaxDepth,
+    deliberation: {
+      reviewerAdapter:
+        input.settings.executionLoop.deliberation.reviewerAdapter,
+      maxRefinePasses:
+        input.settings.executionLoop.deliberation.maxRefinePasses,
+    },
+    projectRootDir: input.projectRootDir,
+    worktrees: input.settings.worktrees,
+    phaseId: input.phaseId,
+    projectName: input.projectName,
+    policy: input.policy,
+    role: "admin",
+    initialTrace: input.initialTrace,
+  };
+}
+
+async function runSelectedTaskViaPhaseRunner(input: {
+  control: ControlCenterService;
+  settings: Awaited<ReturnType<typeof loadCliSettings>>;
+  projectRootDir: string;
+  projectName: string;
+  policy: Awaited<ReturnType<typeof loadAuthPolicy>>;
+  phaseId: string;
+  taskNumber: number;
+  assignee: CLIAdapterId;
+}): Promise<Awaited<ReturnType<ControlCenterService["getState"]>>> {
+  const loopControl = new PhaseLoopControl();
+  const runner = new PhaseRunner(
+    input.control,
+    buildCliPhaseRunnerConfig({
+      settings: input.settings,
+      projectRootDir: input.projectRootDir,
+      projectName: input.projectName,
+      policy: input.policy,
+      phaseId: input.phaseId,
+      mode: "AUTO",
+      countdownSeconds: 0,
+      activeAssignee: input.assignee,
+    }),
+    loopControl,
+    async (event) => {
+      console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
+      if (
+        event.type === "task.lifecycle.finish" &&
+        event.phaseId === input.phaseId &&
+        event.taskNumber === input.taskNumber
+      ) {
+        loopControl.requestStop();
+      }
+    },
+  );
+
+  const runLock = new ExecutionRunLock({
+    projectRootDir: input.projectRootDir,
+    projectName: input.projectName,
+    phaseId: input.phaseId,
+    owner: "CLI_PHASE_RUN",
+  });
+  await runLock.acquire();
+
+  try {
+    await runner.run();
+  } finally {
+    await runLock.release();
+  }
+
+  return input.control.getState();
 }
 
 async function runDefaultCommand(): Promise<void> {
@@ -1005,13 +1224,17 @@ async function runTaskStartCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
     projectName,
   );
   await control.ensureInitialized(projectName, projectRootDir);
+  const { phase, task } = await resolveActivePhaseTaskForNumber(
+    control,
+    taskNumber,
+  );
 
   const explicitAssignee = args[1]?.trim();
   const projectExecutionSettings = resolveProjectExecutionSettings(
@@ -1021,7 +1244,6 @@ async function runTaskStartCommand({
   let assigneeCandidate =
     explicitAssignee || projectExecutionSettings.defaultAssignee;
   if (!explicitAssignee) {
-    const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
     if (task.status === "FAILED" && task.assignee !== "UNASSIGNED") {
       assigneeCandidate = task.assignee;
     }
@@ -1036,34 +1258,67 @@ async function runTaskStartCommand({
   }
   console.info(`Starting active-phase task #${taskNumber} with ${assignee}.`);
 
-  const state = await control.startActiveTaskAndWait({
-    taskNumber,
-    assignee,
-  });
+  const effectiveRaceCount = resolveEffectiveTaskRaceCount(
+    task,
+    projectExecutionSettings.defaultRace,
+  );
+  const state =
+    effectiveRaceCount > 1 &&
+    (task.status === "TODO" ||
+      task.status === "CI_FIX" ||
+      task.status === "FAILED")
+      ? await (async () => {
+          const policy = await loadAuthPolicy(settingsFilePath);
+          if (task.status === "FAILED") {
+            await control.retryFailedTaskToTodo({
+              phaseId: phase.id,
+              taskId: task.id,
+            });
+          }
+          const refreshed = await resolveActivePhaseTaskForNumber(
+            control,
+            taskNumber,
+          );
+          ensureTaskIsNextActionable(refreshed.phase, taskNumber);
+          return runSelectedTaskViaPhaseRunner({
+            control,
+            settings,
+            projectRootDir,
+            projectName,
+            policy,
+            phaseId: refreshed.phase.id,
+            taskNumber,
+            assignee,
+          });
+        })()
+      : await control.startActiveTaskAndWait({
+          taskNumber,
+          assignee,
+        });
 
-  const phase =
+  const completedPhase =
     state.phases.find(
       (candidate) => candidate.id === state.activePhaseIds[0],
     ) ?? state.phases[0];
-  if (!phase) {
+  if (!completedPhase) {
     throw new Error("No phase available after task run.");
   }
-  const task = phase.tasks[taskNumber - 1];
-  if (!task) {
+  const completedTask = completedPhase.tasks[taskNumber - 1];
+  if (!completedTask) {
     throw new Error(`Task #${taskNumber} not found after task run.`);
   }
 
   console.info(
-    `Task #${taskNumber} ${task.title} finished with status ${task.status}.`,
+    `Task #${taskNumber} ${completedTask.title} finished with status ${completedTask.status}.`,
   );
-  if (task.status === "FAILED") {
-    if (task.errorLogs) {
-      console.info(`Failure details: ${task.errorLogs}`);
+  if (completedTask.status === "FAILED") {
+    if (completedTask.errorLogs) {
+      console.info(`Failure details: ${completedTask.errorLogs}`);
     }
     console.info(
       `Next:    Retry with 'ixado task retry ${taskNumber}' or reset with 'ixado task reset ${taskNumber}'.`,
     );
-  } else if (task.status === "DEAD_LETTER") {
+  } else if (completedTask.status === "DEAD_LETTER") {
     console.info(
       `Next:    DEAD_LETTER requires manual remediation. Reset with 'ixado task reset ${taskNumber}' after fixing root cause.`,
     );
@@ -1166,7 +1421,7 @@ async function runDiscoverCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1323,7 +1578,7 @@ async function runTaskCreateCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1406,7 +1661,10 @@ async function runTaskRetryCommand({
   );
   await control.ensureInitialized(projectName, projectRootDir);
 
-  const { task } = await resolveActivePhaseTaskForNumber(control, taskNumber);
+  const { phase, task } = await resolveActivePhaseTaskForNumber(
+    control,
+    taskNumber,
+  );
   if (task.status !== "FAILED") {
     if (task.status === "DEAD_LETTER") {
       throw new ValidationError(
@@ -1438,19 +1696,51 @@ async function runTaskRetryCommand({
   }
 
   console.info(`Retrying active-phase task #${taskNumber} with ${assignee}.`);
-  const state = await control.startActiveTaskAndWait({
-    taskNumber,
-    assignee,
-  });
+  const projectExecutionSettings = resolveProjectExecutionSettings(
+    settings,
+    projectName,
+  );
+  const effectiveRaceCount = resolveEffectiveTaskRaceCount(
+    task,
+    projectExecutionSettings.defaultRace,
+  );
+  const state =
+    effectiveRaceCount > 1
+      ? await (async () => {
+          const policy = await loadAuthPolicy(settingsFilePath);
+          await control.retryFailedTaskToTodo({
+            phaseId: phase.id,
+            taskId: task.id,
+          });
+          const refreshed = await resolveActivePhaseTaskForNumber(
+            control,
+            taskNumber,
+          );
+          ensureTaskIsNextActionable(refreshed.phase, taskNumber);
+          return runSelectedTaskViaPhaseRunner({
+            control,
+            settings,
+            projectRootDir,
+            projectName,
+            policy,
+            phaseId: refreshed.phase.id,
+            taskNumber,
+            assignee,
+          });
+        })()
+      : await control.startActiveTaskAndWait({
+          taskNumber,
+          assignee,
+        });
 
-  const phase =
+  const retriedPhase =
     state.phases.find(
       (candidate) => candidate.id === state.activePhaseIds[0],
     ) ?? state.phases[0];
-  if (!phase) {
+  if (!retriedPhase) {
     throw new Error("No phase available after task retry.");
   }
-  const retriedTask = phase.tasks[taskNumber - 1];
+  const retriedTask = retriedPhase.tasks[taskNumber - 1];
   if (!retriedTask) {
     throw new Error(`Task #${taskNumber} not found after retry.`);
   }
@@ -1573,7 +1863,7 @@ async function runTaskResetCommand({
   const projectRootDir = await resolveProjectRootDir();
   const projectName = await resolveProjectName();
   const stateFilePath = await resolveProjectAwareStateFilePath();
-  const control = createControlCenterService(
+  const { control, agents } = createServices(
     stateFilePath,
     projectRootDir,
     settings,
@@ -1598,6 +1888,15 @@ async function runTaskResetCommand({
     );
   }
 
+  const stoppedAgents = agents.stopRunningAgentsWhere(
+    (agent) => agent.taskId === task.id,
+  );
+  const removedRaceWorktrees = await teardownTaskRaceWorktrees({
+    task,
+    phase,
+    settings,
+    projectRootDir,
+  });
   await control.resetTaskToTodo({
     phaseId: phase.id,
     taskId: task.id,
@@ -1605,6 +1904,16 @@ async function runTaskResetCommand({
   console.info(
     `Task #${taskNumber} reset to TODO and repository hard-reset to last commit.`,
   );
+  if (stoppedAgents > 0) {
+    console.info(
+      `Recovered: stopped ${stoppedAgents} lingering task agent(s).`,
+    );
+  }
+  if (removedRaceWorktrees > 0) {
+    console.info(
+      `Recovered: removed ${removedRaceWorktrees} lingering race worktree(s).`,
+    );
+  }
   console.info(
     `Next:    Run 'ixado task start ${taskNumber}' to start it, or 'ixado phase run' to run all TODO tasks.`,
   );
@@ -1657,53 +1966,22 @@ async function runPhaseRunCommand({
   const targetPhase = targetPhaseId
     ? lockState.phases.find((p) => p.id === targetPhaseId)
     : undefined;
-  const loopControl = new PhaseLoopControl();
   const activeAssignee = projectExecutionSettings.defaultAssignee;
-  const enabledAdapters = getAvailableAgents(settings);
 
   const runner = new PhaseRunner(
     control,
-    {
+    buildCliPhaseRunnerConfig({
+      settings,
+      projectRootDir,
+      projectName,
+      policy,
+      phaseId: targetPhaseId,
       mode,
       countdownSeconds,
       activeAssignee,
-      enabledAdapters,
-      adapterAffinities: settings.agents.adapterAffinities,
-      adapterCircuitBreakers: {
-        CODEX_CLI: settings.agents.CODEX_CLI.circuitBreaker,
-        CLAUDE_CLI: settings.agents.CLAUDE_CLI.circuitBreaker,
-        GEMINI_CLI: settings.agents.GEMINI_CLI.circuitBreaker,
-        MOCK_CLI: settings.agents.MOCK_CLI.circuitBreaker,
-      },
-      maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
-      testerCommand: settings.executionLoop.testerCommand,
-      testerArgs: settings.executionLoop.testerArgs,
-      testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
-      defaultRace: projectExecutionSettings.defaultRace,
-      maxTaskRetries: projectExecutionSettings.maxTaskRetries,
-      judgeAdapter: settings.executionLoop.judgeAdapter,
-      phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
-      ciEnabled: settings.executionLoop.ciEnabled,
-      vcsProvider: settings.executionLoop.vcsProvider,
-      gates: settings.executionLoop.gates,
-      ciBaseBranch: settings.executionLoop.ciBaseBranch,
-      ciPullRequest: settings.executionLoop.pullRequest,
-      validationMaxRetries: settings.executionLoop.validationMaxRetries,
-      ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
-      ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
-      deliberation: {
-        reviewerAdapter: settings.executionLoop.deliberation.reviewerAdapter,
-        maxRefinePasses: settings.executionLoop.deliberation.maxRefinePasses,
-      },
-      projectRootDir,
-      worktrees: settings.worktrees,
-      phaseId: targetPhaseId,
-      projectName,
-      policy,
-      role: "admin",
       initialTrace: targetPhase?.executionTrace,
-    },
-    loopControl,
+    }),
+    new PhaseLoopControl(),
     async (event) => {
       console.info(`[runtime] ${formatRuntimeEventForCli(event)}`);
     },

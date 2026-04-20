@@ -63,6 +63,15 @@ describe("adapter failure taxonomy", () => {
         stdout: "agent stalled",
         stderr: "RATE-LIMIT window exceeded",
       },
+      {
+        stdout: "You're out of extra usage · resets 5pm (Europe/Berlin)",
+        stderr: "",
+      },
+      {
+        stdout:
+          "Attempt 1 failed: You have exhausted your capacity on this model. Your quota will reset after 0s.",
+        stderr: "",
+      },
     ];
 
     for (const [index, sample] of samples.entries()) {

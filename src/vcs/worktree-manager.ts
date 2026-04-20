@@ -159,6 +159,13 @@ export class WorktreeManager {
     }
 
     const worktreePath = resolve(this.worktreesBaseDir, phaseId);
+    if (await pathExists(worktreePath)) {
+      await this.git.removeWorktree({
+        path: worktreePath,
+        cwd: this.projectRootDir,
+        force: true,
+      });
+    }
     const createInput: CreateWorktreeInput = {
       path: worktreePath,
       branchName: input.branchName,

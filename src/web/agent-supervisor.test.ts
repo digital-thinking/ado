@@ -20,6 +20,7 @@ type FakeChild = ChildProcess & {
   stderr: PassThrough;
   stdin: PassThrough;
   killedByTest: boolean;
+  killSignals: Array<NodeJS.Signals | number | undefined>;
 };
 
 function createFakeChild(pid = 1001): FakeChild {
@@ -28,20 +29,25 @@ function createFakeChild(pid = 1001): FakeChild {
   const stderr = new PassThrough();
   const stdin = new PassThrough();
   let killedByTest = false;
+  const killSignals: Array<NodeJS.Signals | number | undefined> = [];
 
   const child = Object.assign(emitter, {
     pid,
     stdout,
     stderr,
     stdin,
-    kill: () => {
+    kill: (signal?: NodeJS.Signals | number) => {
       killedByTest = true;
+      killSignals.push(signal);
       return true;
     },
   }) as FakeChild;
 
   Object.defineProperty(child, "killedByTest", {
     get: () => killedByTest,
+  });
+  Object.defineProperty(child, "killSignals", {
+    get: () => killSignals,
   });
 
   return child;
@@ -495,6 +501,149 @@ describe("AgentSupervisor", () => {
     expect(idleDiagnostics.every((item) => item.idleThresholdMs === 20)).toBe(
       true,
     );
+  });
+
+  test("kills idle run-to-completion agents after idleTimeoutMs and preserves rate-limit taxonomy from output", async () => {
+    const child = createFakeChild();
+    child.kill = () => {
+      queueMicrotask(() => {
+        child.emit("close", null, "SIGTERM");
+      });
+      return true;
+    };
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        setTimeout(() => {
+          child.stderr.write("status 429 too many requests\n");
+        }, 5);
+        return child;
+      },
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 20,
+      },
+    });
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Idle rate-limited worker",
+        command: "gemini",
+        args: ["--yolo"],
+        cwd: "/tmp",
+        adapterId: "GEMINI_CLI",
+        approvedAdapterSpawn: true,
+        idleTimeoutMs: 40,
+      }),
+    ).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "rate_limited",
+    });
+
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Idle rate-limited worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("Agent rate limit detected: terminating gemini --yolo"),
+      ),
+    ).toBe(true);
+  });
+
+  test("force-kills idle run-to-completion agents that ignore the initial termination signal", async () => {
+    const child = createFakeChild();
+    child.kill = ((signal?: NodeJS.Signals | number) => {
+      child.killSignals.push(signal);
+      if (signal === "SIGKILL") {
+        queueMicrotask(() => {
+          child.emit("close", null, "SIGKILL");
+        });
+      }
+      return true;
+    }) as ChildProcess["kill"];
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => child,
+      terminationGraceMs: 5,
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 10,
+      },
+    });
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Stuck idle worker",
+        command: "gemini",
+        args: ["--yolo"],
+        cwd: "/tmp",
+        adapterId: "GEMINI_CLI",
+        approvedAdapterSpawn: true,
+        idleTimeoutMs: 20,
+      }),
+    ).rejects.toThrow("Command became idle for 20ms");
+
+    expect(child.killSignals).toEqual([undefined, "SIGKILL"]);
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Stuck idle worker");
+    expect(listed?.status).toBe("FAILED");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("force killing gemini --yolo"),
+      ),
+    ).toBe(true);
+  });
+
+  test("terminates immediately when a provider emits a rate-limit message during execution", async () => {
+    const child = createFakeChild();
+    child.kill = ((signal?: NodeJS.Signals | number) => {
+      child.killSignals.push(signal);
+      queueMicrotask(() => {
+        child.emit("close", null, signal === "SIGKILL" ? "SIGKILL" : "SIGTERM");
+      });
+      return true;
+    }) as ChildProcess["kill"];
+
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        queueMicrotask(() => {
+          child.stdout.write(
+            "Attempt 1 failed: You have exhausted your capacity on this model. Your quota will reset after 0s.\n",
+          );
+        });
+        return child;
+      },
+      terminationGraceMs: 5,
+      runtimeDiagnostics: {
+        heartbeatIntervalMs: 10,
+        idleThresholdMs: 1_000,
+      },
+    });
+
+    await expect(
+      supervisor.runToCompletion({
+        name: "Rate-limited worker",
+        command: "gemini",
+        args: ["--yolo"],
+        cwd: "/tmp",
+        adapterId: "GEMINI_CLI",
+        approvedAdapterSpawn: true,
+      }),
+    ).rejects.toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "rate_limited",
+    });
+
+    expect(child.killSignals).toEqual([undefined]);
+    const listed = supervisor
+      .list()
+      .find((agent) => agent.name === "Rate-limited worker");
+    expect(
+      listed?.outputTail.some((line) =>
+        line.includes("Agent rate limit detected: terminating gemini --yolo"),
+      ),
+    ).toBe(true);
   });
 
   test("appends structured execution-timeout diagnostic with adapter hint", async () => {

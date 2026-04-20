@@ -110,6 +110,46 @@ describe("WorktreeManager", () => {
     }
   });
 
+  test("provision removes a stale managed worktree path before recreating it", async () => {
+    const repoRoot = await createRepoRoot();
+    const fakeGit = createFakeGit();
+    const stalePath = resolve(repoRoot, ".ixado/worktrees", "phase-27-stale");
+    try {
+      await mkdir(stalePath, { recursive: true });
+
+      const manager = new WorktreeManager({
+        git: fakeGit.api,
+        projectRootDir: repoRoot,
+        baseDir: ".ixado/worktrees",
+      });
+
+      const path = await manager.provision({
+        phaseId: "phase-27-stale",
+        branchName: "phase-27-stale",
+        fromRef: "main",
+      });
+
+      expect(path).toBe(stalePath);
+      expect(fakeGit.removeCalls).toEqual([
+        {
+          path: stalePath,
+          cwd: repoRoot,
+          force: true,
+        },
+      ]);
+      expect(fakeGit.createCalls).toEqual([
+        {
+          path: stalePath,
+          branchName: "phase-27-stale",
+          cwd: repoRoot,
+          fromRef: "main",
+        },
+      ]);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   test("tears down a phase worktree using force removal", async () => {
     const repoRoot = await createRepoRoot();
     const fakeGit = createFakeGit();

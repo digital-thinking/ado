@@ -1631,23 +1631,23 @@ describe("PhaseRunner", () => {
         task.rateLimitRetryAt = undefined;
         return mockState;
       }),
-      requeueRateLimitedTask: mock(
+      retryFailedTaskToTodo: mock(
         async (input: {
           phaseId: string;
           taskId: string;
-          retryCount: number;
-          retryAt: string;
+          rateLimitRetryCount?: number;
+          rateLimitRetryAt?: string;
         }) => {
           expect(input.phaseId).toBe(phaseId);
           expect(input.taskId).toBe(taskId);
-          expect(input.retryCount).toBe(1);
-          expect(input.retryAt).toBe(
+          expect(input.rateLimitRetryCount).toBe(1);
+          expect(input.rateLimitRetryAt).toBe(
             new Date(initialNowMs + computeRateLimitBackoffMs(1)).toISOString(),
           );
           const task = mockState.phases[0].tasks[0] as any;
           task.status = "TODO";
-          task.rateLimitRetryCount = input.retryCount;
-          task.rateLimitRetryAt = input.retryAt;
+          task.rateLimitRetryCount = input.rateLimitRetryCount;
+          task.rateLimitRetryAt = input.rateLimitRetryAt;
           task.errorLogs = undefined;
           task.errorCategory = undefined;
           task.adapterFailureKind = undefined;
@@ -1686,6 +1686,9 @@ describe("PhaseRunner", () => {
       mockControl,
       {
         ...mockConfig,
+        activeAssignee: "CODEX_CLI",
+        enabledAdapters: ["CODEX_CLI"],
+        providerPriority: ["CODEX_CLI"],
         now: () => nowMs,
         sleep: async (ms) => {
           sleepCalls.push(ms);
@@ -1700,7 +1703,7 @@ describe("PhaseRunner", () => {
     );
     await runner.run();
 
-    expect(mockControl.requeueRateLimitedTask).toHaveBeenCalledTimes(1);
+    expect(mockControl.retryFailedTaskToTodo).toHaveBeenCalledTimes(1);
     expect(mockControl.startActiveTaskAndWait).toHaveBeenCalledTimes(2);
     expect(sleepCalls.reduce((sum, value) => sum + value, 0)).toBe(30_000);
     expect((mockState.phases[0].tasks[0] as any).status).toBe("DONE");
@@ -1754,7 +1757,7 @@ describe("PhaseRunner", () => {
         task.errorLogs = "HTTP 429 too many requests";
         return mockState;
       }),
-      requeueRateLimitedTask: mock(async () => mockState),
+      retryFailedTaskToTodo: mock(async () => mockState),
       markTaskDeadLetter: mock(
         async (input: { phaseId: string; taskId: string; reason: string }) => {
           expect(input.phaseId).toBe(phaseId);
@@ -1804,9 +1807,136 @@ describe("PhaseRunner", () => {
     const error = await runner.run().catch((candidate) => candidate);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("Rate-limit retries exhausted");
-    expect(mockControl.requeueRateLimitedTask).not.toHaveBeenCalled();
+    expect(mockControl.retryFailedTaskToTodo).not.toHaveBeenCalled();
     expect(mockControl.markTaskDeadLetter).toHaveBeenCalledTimes(1);
     expect((mockState.phases[0].tasks[0] as any).status).toBe("DEAD_LETTER");
+  });
+
+  test("switches to the next configured provider immediately after a rate limit", async () => {
+    const phaseId = "88777777-7777-4777-8777-777777777777";
+    const taskId = "88888888-8888-4888-8888-888888888888";
+    const runtimeEvents: any[] = [];
+    const startedAssignees: string[] = [];
+    const mockState = {
+      projectName: "test-project",
+      rootDir: "/tmp/project",
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 33",
+          branchName: "phase-33-rate-limit-failover",
+          status: "PLANNING",
+          tasks: [
+            {
+              id: taskId,
+              title: "P33-003 failover",
+              description: "switch providers after a rate limit",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const mockControl = {
+      reconcileInProgressTasks: mock(async () => 0),
+      getState: mock(async () => mockState),
+      setPhaseStatus: mock(async () => mockState),
+      startActiveTaskAndWait: mock(async (input: { assignee: string }) => {
+        startedAssignees.push(input.assignee);
+        const task = mockState.phases[0].tasks[0] as any;
+        if (input.assignee === "CLAUDE_CLI") {
+          task.status = "FAILED";
+          task.errorCategory = "AGENT_FAILURE";
+          task.adapterFailureKind = "rate_limited";
+          task.errorLogs = "HTTP 429 from Claude";
+          task.assignee = "CLAUDE_CLI";
+          return mockState;
+        }
+
+        task.status = "DONE";
+        task.assignee = input.assignee;
+        task.resultContext = "completed after failover";
+        task.rateLimitRetryCount = undefined;
+        task.rateLimitRetryAt = undefined;
+        task.errorLogs = undefined;
+        task.errorCategory = undefined;
+        task.adapterFailureKind = undefined;
+        return mockState;
+      }),
+      retryFailedTaskToTodo: mock(
+        async (input: {
+          rateLimitRetryCount?: number;
+          rateLimitRetryAt?: string;
+        }) => {
+          const task = mockState.phases[0].tasks[0] as any;
+          task.status = "TODO";
+          task.rateLimitRetryCount = input.rateLimitRetryCount;
+          task.rateLimitRetryAt = input.rateLimitRetryAt;
+          task.errorLogs = undefined;
+          task.errorCategory = undefined;
+          task.adapterFailureKind = undefined;
+          return mockState;
+        },
+      ),
+      markTaskDeadLetter: mock(async () => mockState),
+      createTask: mock(async () => mockState),
+      recordRecoveryAttempt: mock(async () => mockState),
+      runInternalWork: mock(async () => ({
+        stdout: "",
+        stderr: "",
+      })),
+    } as unknown as ControlCenterService;
+
+    const mockRunner: ProcessRunner = {
+      run: mock(async (input: any) => {
+        if (input.args.includes("--porcelain")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (input.args.includes("--show-current")) {
+          return {
+            exitCode: 0,
+            stdout: "phase-33-rate-limit-failover",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    } as any;
+
+    const runner = new PhaseRunner(
+      mockControl,
+      {
+        ...mockConfig,
+        activeAssignee: "CLAUDE_CLI",
+        enabledAdapters: ["CLAUDE_CLI", "GEMINI_CLI", "CODEX_CLI"],
+        providerPriority: ["CLAUDE_CLI", "GEMINI_CLI", "CODEX_CLI"],
+      },
+      undefined,
+      async (event) => {
+        runtimeEvents.push(event);
+      },
+      mockRunner,
+    );
+
+    await runner.run();
+
+    expect(startedAssignees).toEqual(["CLAUDE_CLI", "GEMINI_CLI"]);
+    expect(mockControl.retryFailedTaskToTodo).toHaveBeenCalledTimes(1);
+    expect(
+      runtimeEvents.some(
+        (event) =>
+          event.type === "task:rate_limit_retry" &&
+          event.payload.retryDelayMs === 0 &&
+          String(event.payload.summary).includes(
+            "switching immediately to GEMINI_CLI",
+          ),
+      ),
+    ).toBe(true);
+    expect((mockState.phases[0].tasks[0] as any).status).toBe("DONE");
   });
 
   test("P33-005: marks the phase TIMED_OUT when deferred execution exceeds phaseTimeoutMs", async () => {

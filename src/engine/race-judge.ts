@@ -19,6 +19,7 @@ export type BuildRaceJudgePromptInput = {
   phaseName: string;
   taskTitle: string;
   taskDescription: string;
+  additionalInstructions?: string | null;
   branches: readonly RaceJudgeBranchInput[];
 };
 
@@ -117,6 +118,7 @@ export function buildRaceJudgePrompt(input: BuildRaceJudgePromptInput): string {
     input.taskDescription,
     "taskDescription",
   );
+  const additionalInstructions = input.additionalInstructions?.trim() ?? "";
   if (input.branches.length === 0) {
     throw new Error("branches must not be empty.");
   }
@@ -144,6 +146,9 @@ export function buildRaceJudgePrompt(input: BuildRaceJudgePromptInput): string {
     "Prefer the branch that is most correct, minimal, coherent, and best supported by its diff and execution output.",
     "Do not merge ideas across branches. Pick a single winner.",
     "",
+    ...(additionalInstructions
+      ? ["Additional judging instructions:", additionalInstructions, ""]
+      : []),
     "Output contract:",
     "- First verdict line: PICK <N>",
     "- After the verdict, provide plain-text reasoning that references concrete evidence from the candidate data.",

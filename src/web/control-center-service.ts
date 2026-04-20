@@ -227,6 +227,8 @@ export type UpdateTaskRaceStateInput = {
 export type ResetTaskInput = {
   phaseId: string;
   taskId: string;
+  rateLimitRetryCount?: number;
+  rateLimitRetryAt?: string;
 };
 
 export type MarkTaskDeadLetterInput = {
@@ -2449,6 +2451,92 @@ export class ControlCenterService {
       adapterFailureKind: undefined,
       rateLimitRetryCount: undefined,
       rateLimitRetryAt: undefined,
+      completionVerification: undefined,
+    });
+
+    const nextPhases = [...state.phases];
+    const nextTasks = [...phase.tasks];
+    nextTasks[taskIndex] = updatedTask;
+    nextPhases[phaseIndex] = {
+      ...phase,
+      tasks: nextTasks,
+    };
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async retryFailedTaskToTodo(
+    input: ResetTaskInput & { projectName?: string },
+  ): Promise<ProjectState> {
+    const phaseId = input.phaseId.trim();
+    const taskId = input.taskId.trim();
+    if (!phaseId) {
+      throw new Error("phaseId must not be empty.");
+    }
+    if (!taskId) {
+      throw new Error("taskId must not be empty.");
+    }
+    const rateLimitRetryCount =
+      input.rateLimitRetryCount === undefined
+        ? undefined
+        : Number(input.rateLimitRetryCount);
+    const rateLimitRetryAt = input.rateLimitRetryAt?.trim();
+    if (
+      rateLimitRetryCount !== undefined &&
+      (!Number.isInteger(rateLimitRetryCount) || rateLimitRetryCount <= 0)
+    ) {
+      throw new Error("rateLimitRetryCount must be a positive integer.");
+    }
+    if (input.rateLimitRetryAt !== undefined && !rateLimitRetryAt) {
+      throw new Error("rateLimitRetryAt must not be empty when set.");
+    }
+    if (!this.repositoryResetRunner) {
+      throw new Error("Repository reset runner is not configured.");
+    }
+
+    const runKey = taskExecutionKey(phaseId, taskId);
+    if (this.runningTaskExecutions.has(runKey)) {
+      throw new Error("Cannot reset a running task.");
+    }
+
+    const engine = await this.getEngine(input.projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+    const phase = state.phases[phaseIndex];
+    const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+    const task = phase.tasks[taskIndex];
+    if (task.status !== "FAILED") {
+      throw new Error(
+        `Task must be FAILED before retry reset. Current status: ${task.status}`,
+      );
+    }
+    if (task.assignee === "UNASSIGNED") {
+      throw new Error("FAILED task must keep its assignee for retry reset.");
+    }
+
+    await this.repositoryResetRunner();
+
+    const updatedTask = TaskSchema.parse({
+      ...task,
+      status: "TODO",
+      raceState: undefined,
+      resultContext: undefined,
+      errorLogs: undefined,
+      errorCategory: undefined,
+      adapterFailureKind: undefined,
+      rateLimitRetryCount,
+      rateLimitRetryAt,
       completionVerification: undefined,
     });
 

@@ -58,7 +58,13 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.countdownSeconds).toBe(10);
     expect(parsed.executionLoop.maxTaskRetries).toBe(3);
     expect(parsed.executionLoop.defaultRace).toBe(1);
+    expect(parsed.executionLoop.providerPriority).toEqual([
+      "CLAUDE_CLI",
+      "GEMINI_CLI",
+      "CODEX_CLI",
+    ]);
     expect(parsed.executionLoop.judgeAdapter).toBe("CODEX_CLI");
+    expect(parsed.executionLoop.raceJudgePrompt).toBeNull();
     expect(parsed.executionLoop.phaseTimeoutMs).toBe(21_600_000);
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
@@ -96,6 +102,16 @@ describe("type contracts", () => {
     expect(parsed.agents.CODEX_CLI.timeoutMs).toBe(3_600_000);
     expect(parsed.agents.CODEX_CLI.circuitBreaker.failureThreshold).toBe(3);
     expect(parsed.agents.CODEX_CLI.circuitBreaker.cooldownMs).toBe(300_000);
+  });
+
+  test("rejects duplicate provider priority entries", () => {
+    expect(() =>
+      CliSettingsSchema.parse({
+        executionLoop: {
+          providerPriority: ["CLAUDE_CLI", "CLAUDE_CLI"],
+        },
+      }),
+    ).toThrow("providerPriority values must be unique");
   });
 
   test("validates strict exception recovery result contract", () => {

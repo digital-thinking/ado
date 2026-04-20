@@ -325,6 +325,30 @@ export function controlCenterHtml(params: {
       display: flex;
       justify-content: flex-end;
     }
+    .sortable-list {
+      display: grid;
+      gap: 12px;
+    }
+    .adapter-card {
+      display: grid;
+      gap: 10px;
+      cursor: grab;
+    }
+    .adapter-card.dragging {
+      opacity: 0.55;
+      cursor: grabbing;
+    }
+    .adapter-card.drop-target {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(31, 122, 90, 0.12);
+    }
+    .drag-handle {
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
   </style>
 </head>
 <body>
@@ -456,12 +480,16 @@ export function controlCenterHtml(params: {
           <h2>Global Defaults</h2>
           <form id="globalDefaultsForm">
             <label class="row small">
-              <input type="checkbox" id="globalAutoMode" /> Fallback Auto Mode
+              <input type="checkbox" id="globalAutoMode" /> Global Default Auto Mode
             </label>
             <label class="small" for="globalDefaultAssignee">Default CLI Assignee</label>
             <select id="globalDefaultAssignee"></select>
             <label class="small" for="globalDefaultRace">Default Race Count</label>
             <input id="globalDefaultRace" type="number" min="1" step="1" required />
+            <label class="small" for="globalJudgeAdapter">Race Judge CLI</label>
+            <select id="globalJudgeAdapter"></select>
+            <label class="small" for="globalRaceJudgePrompt">Race Judge Extra Instructions</label>
+            <textarea id="globalRaceJudgePrompt" rows="5" placeholder="Optional extra judging instructions"></textarea>
             <label class="small" for="globalRecoveryMaxAttempts">Exception Recovery Max Attempts</label>
             <input id="globalRecoveryMaxAttempts" type="number" min="0" max="10" step="1" required />
             <button type="submit">Save Global Defaults</button>
@@ -479,7 +507,8 @@ export function controlCenterHtml(params: {
 
       <section class="card wide" style="margin-top: 16px;">
         <h2>CLI Adapters</h2>
-        <div id="adaptersSettingsList" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+        <div class="small">Automatic provider failover priority. Drag adapters with the mouse to reorder them. The top enabled adapter is tried first when IxADO switches providers after a rate limit.</div>
+        <div id="adaptersSettingsList" class="sortable-list" style="margin-top: 12px;">
           <!-- Dynamically populated -->
         </div>
         <div class="row" style="margin-top: 16px;">
@@ -590,6 +619,7 @@ export function controlCenterHtml(params: {
     const projectStateCache = new Map();
     let currentEventSource = null;
     let latestExecutionStatus = null;
+    let draggingAdapterCard = null;
 
     webLogPath.textContent = defaultWebLogFilePath;
     cliLogPath.textContent = defaultCliLogFilePath;
@@ -612,6 +642,80 @@ export function controlCenterHtml(params: {
     logOverlay.onclick = (e) => {
       if (e.target === logOverlay) closeLogs();
     };
+
+    function updateAdapterPriorityLabels() {
+      document.querySelectorAll("#adaptersSettingsList .adapter-card").forEach((card, index) => {
+        const label = card.querySelector(".adapter-priority-label");
+        if (label) {
+          label.textContent =
+            index === 0
+              ? "Priority 1 - top failover choice"
+              : "Priority " + String(index + 1) + " - failover order";
+        }
+      });
+    }
+
+    function clearAdapterDropTargets() {
+      document.querySelectorAll("#adaptersSettingsList .adapter-card").forEach((card) => {
+        card.classList.remove("drop-target");
+      });
+    }
+
+    function getAdapterDragAfterElement(container, pointerY) {
+      const cards = [...container.querySelectorAll(".adapter-card:not(.dragging)")];
+      let closest = null;
+      let closestOffset = Number.NEGATIVE_INFINITY;
+      cards.forEach((card) => {
+        const box = card.getBoundingClientRect();
+        const offset = pointerY - box.top - box.height / 2;
+        if (offset < 0 && offset > closestOffset) {
+          closestOffset = offset;
+          closest = card;
+        }
+      });
+      return closest;
+    }
+
+    const adaptersSettingsList = document.getElementById("adaptersSettingsList");
+    adaptersSettingsList.addEventListener("dragstart", (event) => {
+      const card = event.target.closest(".adapter-card");
+      if (!card) {
+        return;
+      }
+      draggingAdapterCard = card;
+      card.classList.add("dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+
+    adaptersSettingsList.addEventListener("dragend", () => {
+      if (draggingAdapterCard) {
+        draggingAdapterCard.classList.remove("dragging");
+        draggingAdapterCard = null;
+      }
+      clearAdapterDropTargets();
+      updateAdapterPriorityLabels();
+    });
+
+    adaptersSettingsList.addEventListener("dragover", (event) => {
+      if (!draggingAdapterCard) {
+        return;
+      }
+      event.preventDefault();
+      const afterElement = getAdapterDragAfterElement(
+        adaptersSettingsList,
+        event.clientY,
+      );
+      clearAdapterDropTargets();
+      if (afterElement) {
+        afterElement.classList.add("drop-target");
+        adaptersSettingsList.insertBefore(draggingAdapterCard, afterElement);
+      } else {
+        adaptersSettingsList.appendChild(draggingAdapterCard);
+      }
+      updateAdapterPriorityLabels();
+    });
 
     async function api(path, options = {}, timeoutMs = 0) {
       const controller = timeoutMs > 0 ? new AbortController() : undefined;
@@ -869,17 +973,26 @@ export function controlCenterHtml(params: {
         // Global Defaults
         document.getElementById("globalAutoMode").checked = !!settings.executionLoop?.autoMode;
         const globalAssigneeSelect = document.getElementById("globalDefaultAssignee");
+        const globalJudgeSelect = document.getElementById("globalJudgeAdapter");
         globalAssigneeSelect.innerHTML = "";
+        globalJudgeSelect.innerHTML = "";
         WORKER_ASSIGNEES.forEach((assignee) => {
           const option = document.createElement("option");
           option.value = assignee;
           option.textContent = assignee;
           option.selected = settings.internalWork?.assignee === assignee;
           globalAssigneeSelect.appendChild(option);
+          const judgeOption = document.createElement("option");
+          judgeOption.value = assignee;
+          judgeOption.textContent = assignee;
+          judgeOption.selected = settings.executionLoop?.judgeAdapter === assignee;
+          globalJudgeSelect.appendChild(judgeOption);
         });
         document.getElementById("globalDefaultRace").value = String(
           settings.executionLoop?.defaultRace ?? 1,
         );
+        document.getElementById("globalRaceJudgePrompt").value =
+          settings.executionLoop?.raceJudgePrompt || "";
         const globalRecoveryMaxAttemptsInput = document.getElementById("globalRecoveryMaxAttempts");
         globalRecoveryMaxAttemptsInput.value = String(
           settings.exceptionRecovery?.maxAttempts ?? 1,
@@ -888,7 +1001,7 @@ export function controlCenterHtml(params: {
         // Adapters
         const adaptersList = document.getElementById("adaptersSettingsList");
         adaptersList.innerHTML = "";
-        const agentIds = Object.keys(settings.agents || {}).filter((id) => {
+        const discoveredAgentIds = Object.keys(settings.agents || {}).filter((id) => {
           const config = settings.agents[id];
           return (
             config &&
@@ -897,20 +1010,43 @@ export function controlCenterHtml(params: {
             typeof config.timeoutMs === "number"
           );
         });
+        const configuredPriority = Array.isArray(settings.executionLoop?.providerPriority)
+          ? settings.executionLoop.providerPriority
+          : [];
+        const priorityIndex = new Map(
+          configuredPriority.map((id, index) => [id, index]),
+        );
+        const agentIds = [...discoveredAgentIds].sort((left, right) => {
+          const leftIndex = priorityIndex.has(left) ? priorityIndex.get(left) : Number.MAX_SAFE_INTEGER;
+          const rightIndex = priorityIndex.has(right) ? priorityIndex.get(right) : Number.MAX_SAFE_INTEGER;
+          if (leftIndex !== rightIndex) {
+            return leftIndex - rightIndex;
+          }
+          return left.localeCompare(right);
+        });
         agentIds.forEach(id => {
           const config = settings.agents[id];
           const div = document.createElement("div");
-          div.className = "card";
+          div.className = "card adapter-card";
+          div.setAttribute("draggable", "true");
           div.innerHTML = \`
-            <h3 class="mono" style="margin-top:0;">\${id}</h3>
+            <div class="row" style="justify-content:space-between; align-items:flex-start;">
+              <div>
+                <h3 class="mono" style="margin-top:0; margin-bottom:4px;">\${id}</h3>
+                <div class="small adapter-priority-label">Priority</div>
+              </div>
+              <div class="drag-handle">Drag to reorder</div>
+            </div>
             <label class="row small">
               <input type="checkbox" class="adapter-enabled" data-id="\${id}" \${config.enabled ? "checked" : ""}> Enabled
             </label>
+            <div class="small muted">This position defines automatic failover priority when IxADO switches providers after a rate limit.</div>
             <label class="small" style="display:block; margin-top:8px;">Timeout (ms)</label>
             <input type="number" class="adapter-timeout" data-id="\${id}" value="\${config.timeoutMs}" style="width:100%;">
           \`;
           adaptersList.appendChild(div);
         });
+        updateAdapterPriorityLabels();
 
         // Completion Gates
         renderGatesList(settings.executionLoop?.gates || []);
@@ -2321,6 +2457,9 @@ export function controlCenterHtml(params: {
             executionLoop: {
               autoMode: document.getElementById("globalAutoMode").checked,
               defaultRace: globalDefaultRace,
+              judgeAdapter: document.getElementById("globalJudgeAdapter").value,
+              raceJudgePrompt:
+                document.getElementById("globalRaceJudgePrompt").value.trim() || null,
             },
             internalWork: {
               assignee: document.getElementById("globalDefaultAssignee").value
@@ -2344,18 +2483,31 @@ export function controlCenterHtml(params: {
       error.textContent = "";
       try {
         const agents = {};
+        const providerPriority = [];
         document.querySelectorAll("#adaptersSettingsList .card").forEach(card => {
           const enabledInput = card.querySelector(".adapter-enabled");
           const timeoutInput = card.querySelector(".adapter-timeout");
           const id = enabledInput.getAttribute("data-id");
+          const timeoutMs = parseInt(timeoutInput.value, 10);
+          if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+            throw new Error("Adapter timeout must be a positive integer.");
+          }
           agents[id] = {
             enabled: enabledInput.checked,
-            timeoutMs: parseInt(timeoutInput.value, 10)
+            timeoutMs
           };
+          if (enabledInput.checked) {
+            providerPriority.push(id);
+          }
         });
         await api("/api/settings", {
           method: "PATCH",
-          body: JSON.stringify({ agents })
+          body: JSON.stringify({
+            agents,
+            executionLoop: {
+              providerPriority,
+            },
+          })
         });
         status.textContent = "Saved.";
       } catch (err) {

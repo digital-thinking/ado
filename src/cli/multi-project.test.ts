@@ -7,7 +7,7 @@ import {
   saveCliSettings,
   resolveGlobalSettingsFilePath,
 } from "./settings";
-import type { CliSettings } from "../types";
+import type { CLIAdapterId, CliSettings } from "../types";
 import { TestSandbox } from "./test-helpers";
 
 const DEFAULT_AGENT_SETTINGS = {
@@ -58,7 +58,9 @@ const DEFAULT_LOOP_SETTINGS = {
   countdownSeconds: 10,
   maxTaskRetries: 3,
   defaultRace: 1,
+  providerPriority: ["CLAUDE_CLI", "GEMINI_CLI", "CODEX_CLI"] as CLIAdapterId[],
   judgeAdapter: "CODEX_CLI" as const,
+  raceJudgePrompt: null,
   phaseTimeoutMs: 21600000,
   testerCommand: null,
   testerArgs: null,

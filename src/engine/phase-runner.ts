@@ -214,6 +214,7 @@ export type PhaseRunnerConfig = {
   countdownSeconds: number;
   activeAssignee: CLIAdapterId;
   enabledAdapters?: CLIAdapterId[];
+  providerPriority?: CLIAdapterId[];
   adapterAffinities?: Partial<Record<TaskType, CLIAdapterId>>;
   adapterCircuitBreakers?: Partial<
     Record<CLIAdapterId, AdapterCircuitBreakerConfig>
@@ -225,6 +226,7 @@ export type PhaseRunnerConfig = {
   defaultRace?: number;
   maxTaskRetries?: number;
   judgeAdapter?: CLIAdapterId;
+  raceJudgePrompt?: string | null;
   phaseTimeoutMs?: number;
   ciEnabled: boolean;
   vcsProvider: VcsProviderType;
@@ -1090,11 +1092,12 @@ Recovery: ${recoveryMessage}`,
   ): Promise<void> {
     const { assignee: preferredAssignee, routingReason } =
       this.resolveTaskRouting(task, taskNumber);
+    let currentPreferredAssignee = preferredAssignee;
     let effectiveAssignee = await this.resolveDispatchAssignee({
       phase,
       task,
       taskNumber,
-      preferredAssignee,
+      preferredAssignee: currentPreferredAssignee,
     });
     let taskDescriptionOverride: string | undefined;
     let resultContextPrefix: string | undefined;
@@ -1165,7 +1168,7 @@ Recovery: ${recoveryMessage}`,
           phase,
           task,
           taskNumber,
-          preferredAssignee,
+          preferredAssignee: currentPreferredAssignee,
         });
       }
       const updatedState = await this.executeTaskAttemptAndWait({
@@ -1297,16 +1300,84 @@ Recovery: ${recoveryMessage}`,
           );
         }
 
+        const failoverAssignee = await this.resolveRateLimitFailoverAssignee({
+          phase: updatedPhase,
+          task: resultTask,
+          taskNumber,
+          currentAssignee: effectiveAssignee,
+        });
+        if (failoverAssignee) {
+          const retryAt = new Date(this.nowMs()).toISOString();
+          const retrySummary =
+            `${nextTaskLabel} hit a rate limit on ${effectiveAssignee}; ` +
+            `switching immediately to ${failoverAssignee} ` +
+            `(${nextRetryCount}/${maxTaskRetries}).`;
+          await this.control.retryFailedTaskToTodo({
+            phaseId: updatedPhase.id,
+            taskId: resultTask.id,
+            rateLimitRetryCount: nextRetryCount,
+            rateLimitRetryAt: retryAt,
+          });
+          console.info(`Execution loop: ${retrySummary}`);
+          await this.publishRuntimeEvent(
+            createRuntimeEvent({
+              family: "task-resilience",
+              type: "task:rate_limit_retry",
+              payload: {
+                retryCount: nextRetryCount,
+                maxRetries: maxTaskRetries,
+                retryDelayMs: 0,
+                retryAt,
+                summary: retrySummary,
+              },
+              context: {
+                source: "PHASE_RUNNER",
+                projectName: this.config.projectName,
+                phaseId: updatedPhase.id,
+                phaseName: updatedPhase.name,
+                taskId: resultTask.id,
+                taskTitle: resultTask.title,
+                taskNumber,
+                adapterId: failoverAssignee,
+              },
+            }),
+          );
+          await this.publishRuntimeEvent(
+            createRuntimeEvent({
+              family: "task-lifecycle",
+              type: "task.lifecycle.progress",
+              payload: {
+                message: retrySummary,
+              },
+              context: {
+                source: "PHASE_RUNNER",
+                projectName: this.config.projectName,
+                phaseId: updatedPhase.id,
+                phaseName: updatedPhase.name,
+                taskId: resultTask.id,
+                taskTitle: resultTask.title,
+                taskNumber,
+                adapterId: failoverAssignee,
+              },
+            }),
+          );
+          currentPreferredAssignee = failoverAssignee;
+          effectiveAssignee = failoverAssignee;
+          resumeSession = false;
+          taskRunCount -= 1;
+          continue;
+        }
+
         const retryDelayMs = computeRateLimitBackoffMs(nextRetryCount);
         const retryAt = new Date(this.nowMs() + retryDelayMs).toISOString();
         const retrySummary =
           `${nextTaskLabel} hit a rate limit; re-queued for retry ${nextRetryCount}/${maxTaskRetries} ` +
           `in ${Math.ceil(retryDelayMs / 1000)}s.`;
-        await this.control.requeueRateLimitedTask({
+        await this.control.retryFailedTaskToTodo({
           phaseId: updatedPhase.id,
           taskId: resultTask.id,
-          retryCount: nextRetryCount,
-          retryAt,
+          rateLimitRetryCount: nextRetryCount,
+          rateLimitRetryAt: retryAt,
         });
         console.info(
           `Execution loop: re-queued ${nextTaskLabel} after rate limit; retry ${nextRetryCount}/${maxTaskRetries} scheduled in ${Math.ceil(retryDelayMs / 1000)}s.`,
@@ -1609,7 +1680,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
                 task: prepared.taskForPrompt,
                 assignee: input.assignee,
                 branch,
-                resume: prepared.resume,
+                resume: false,
               });
               if (branchTraceId) {
                 this.traceRecorder?.finish(branchTraceId, "passed", {
@@ -1840,6 +1911,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       phaseName: input.phase.name,
       taskTitle: input.task.title,
       taskDescription: input.task.description,
+      additionalInstructions: this.config.raceJudgePrompt,
       branches: input.branches.map((branch) => ({
         index: branch.index,
         branchName: branch.branchName,
@@ -2309,19 +2381,49 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
   private buildAdapterFallbackChain(
     preferredAssignee: CLIAdapterId,
   ): CLIAdapterId[] {
-    const preferredIndex = this.enabledAdapters.indexOf(preferredAssignee);
-    if (preferredIndex < 0) {
-      return [
-        preferredAssignee,
-        ...this.enabledAdapters.filter(
-          (adapterId) => adapterId !== preferredAssignee,
-        ),
-      ];
+    const configuredPriority = (this.config.providerPriority ?? []).filter(
+      (adapterId, index, array) =>
+        this.enabledAdapters.includes(adapterId) &&
+        array.indexOf(adapterId) === index,
+    );
+    const chain: CLIAdapterId[] = [];
+    const append = (adapterId: CLIAdapterId): void => {
+      if (!chain.includes(adapterId)) {
+        chain.push(adapterId);
+      }
+    };
+
+    append(preferredAssignee);
+    configuredPriority.forEach(append);
+    this.enabledAdapters.forEach(append);
+
+    return chain;
+  }
+
+  private async resolveRateLimitFailoverAssignee(input: {
+    phase: Phase;
+    task: Task;
+    taskNumber: number;
+    currentAssignee: CLIAdapterId;
+  }): Promise<CLIAdapterId | null> {
+    const chain = this.buildAdapterFallbackChain(input.currentAssignee).filter(
+      (adapterId) => adapterId !== input.currentAssignee,
+    );
+
+    for (const adapterId of chain) {
+      const decision = this.getAdapterBreaker(adapterId).check(adapterId);
+      await this.maybeEmitCircuitTransition({
+        phase: input.phase,
+        task: input.task,
+        taskNumber: input.taskNumber,
+        decision,
+      });
+      if (decision.canExecute) {
+        return adapterId;
+      }
     }
-    return [
-      ...this.enabledAdapters.slice(preferredIndex),
-      ...this.enabledAdapters.slice(0, preferredIndex),
-    ];
+
+    return null;
   }
 
   private getAdapterBreakerConfig(
