@@ -22,7 +22,6 @@ describe("PhaseRunner", () => {
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
     maxTaskRetries: 3,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -34,8 +33,6 @@ describe("PhaseRunner", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -776,8 +773,8 @@ describe("PhaseRunner", () => {
       mockControl,
       {
         ...mockConfig,
-        ciEnabled: true,
         vcsProvider: "github" as const,
+        gates: [{ type: "pr_ci" }],
         testerCommand: null,
         testerArgs: null,
         ciPullRequest: {
@@ -844,7 +841,7 @@ describe("PhaseRunner", () => {
     expect(
       runtimeEvents.some(
         (event) =>
-          event.type === "ci.activity" && event.payload.stage === "succeeded",
+          event.type === "gate.activity" && event.payload.stage === "pass",
       ),
     ).toBe(true);
   });
@@ -934,355 +931,6 @@ describe("PhaseRunner", () => {
       phaseId: phaseId,
       status: "DONE",
     });
-  });
-
-  test("P23-003: maps failed CI checks to targeted CI_FIX tasks with rich diagnostics", async () => {
-    const phaseId = "41111111-1111-4111-8111-111111111111";
-    const taskId = "42222222-2222-4222-8222-222222222222";
-    const mockState = {
-      projectName: "test-project",
-      rootDir: "/tmp/project",
-      activePhaseIds: [phaseId],
-      phases: [
-        {
-          id: phaseId,
-          name: "Phase 23 CI Mapping",
-          branchName: "phase-23-ci-mapping",
-          status: "PLANNING",
-          prUrl: undefined as string | undefined,
-          tasks: [
-            {
-              id: taskId,
-              title: "P23-003 implementation",
-              description: "Implement CI mapping",
-              status: "TODO",
-              assignee: "UNASSIGNED",
-              dependencies: [],
-            },
-          ],
-        },
-      ],
-    };
-
-    const mockControl = {
-      reconcileInProgressTasks: mock(async () => 0),
-      getState: mock(async () => mockState),
-      setPhaseStatus: mock(async (input: any) => {
-        const phase = mockState.phases[0] as any;
-        phase.status = input.status;
-        if (typeof input.ciStatusContext === "string") {
-          phase.ciStatusContext = input.ciStatusContext;
-        }
-        return mockState;
-      }),
-      setPhasePrUrl: mock(async (input: { phaseId: string; prUrl: string }) => {
-        mockState.phases[0].prUrl = input.prUrl;
-        return mockState;
-      }),
-      startActiveTaskAndWait: mock(async () => {
-        mockState.phases[0].tasks[0].status = "DONE";
-        return mockState;
-      }),
-      createTask: mock(async (input: any) => {
-        mockState.phases[0].tasks.push({
-          id: `${mockState.phases[0].tasks.length + 1}`,
-          title: input.title,
-          description: input.description,
-          status: input.status,
-          assignee: input.assignee,
-          dependencies: input.dependencies,
-        });
-        return mockState;
-      }),
-      recordRecoveryAttempt: mock(async () => mockState),
-      runInternalWork: mock(async () => ({
-        stdout: '{"verdict":"APPROVED","comments":[]}',
-        stderr: "",
-      })),
-    } as unknown as ControlCenterService;
-
-    const mockRunner: ProcessRunner = {
-      run: mock(async (input: any) => {
-        if (input.args.includes("--porcelain")) {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (
-          input.args.includes("branch") &&
-          input.args.includes("--show-current")
-        ) {
-          return {
-            exitCode: 0,
-            stdout: "phase-23-ci-mapping",
-            stderr: "",
-          };
-        }
-        if (
-          input.args.includes("--cached") &&
-          input.args.includes("--name-only")
-        ) {
-          return { exitCode: 0, stdout: "src/a.ts\n", stderr: "" };
-        }
-        if (input.args.includes("pr") && input.args.includes("create")) {
-          return {
-            exitCode: 0,
-            stdout: "https://github.com/org/repo/pull/2303\n",
-            stderr: "",
-          };
-        }
-        if (
-          input.args.includes("pr") &&
-          input.args.includes("view") &&
-          input.args.includes("statusCheckRollup")
-        ) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              statusCheckRollup: [
-                {
-                  name: "lint",
-                  status: "COMPLETED",
-                  conclusion: "FAILURE",
-                  detailsUrl: "https://ci.example/lint",
-                },
-                {
-                  name: "unit tests",
-                  status: "COMPLETED",
-                  conclusion: "FAILURE",
-                },
-                {
-                  name: "build",
-                  status: "COMPLETED",
-                  conclusion: "SUCCESS",
-                },
-              ],
-            }),
-            stderr: "",
-          };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }),
-    } as any;
-
-    const runner = new PhaseRunner(
-      mockControl,
-      {
-        ...mockConfig,
-        ciEnabled: true,
-        vcsProvider: "github" as const,
-        testerCommand: null,
-        testerArgs: null,
-      },
-      undefined,
-      undefined,
-      mockRunner,
-    );
-
-    await expect(runner.run()).rejects.toThrow(
-      "Execution loop stopped after CI checks failed. Targeted CI_FIX tasks are pending.",
-    );
-
-    const createdTitles = (
-      mockControl.createTask as ReturnType<typeof mock>
-    ).mock.calls.map((entry: any[]) => entry[0].title);
-    expect(createdTitles).toEqual(["CI_FIX: lint", "CI_FIX: unit tests"]);
-
-    const ciFailedCall = (
-      mockControl.setPhaseStatus as ReturnType<typeof mock>
-    ).mock.calls.find((entry: any[]) => entry[0].status === "CI_FAILED");
-    expect(ciFailedCall).toBeDefined();
-    expect(ciFailedCall?.[0].ciStatusContext).toContain(
-      "CI status for PR #2303: FAILURE",
-    );
-    expect(ciFailedCall?.[0].ciStatusContext).toContain(
-      "- lint [FAILURE] -> https://ci.example/lint",
-    );
-    expect(ciFailedCall?.[0].ciStatusContext).toContain(
-      "CI_FIX mapping: created=2, skipped_existing=0",
-    );
-  });
-
-  test("P23-004: reports deterministic CI transitions across rerun progression and converges to READY_FOR_REVIEW", async () => {
-    const phaseId = "43111111-1111-4111-8111-111111111111";
-    const taskId = "43222222-2222-4222-8222-222222222222";
-    const mockState = {
-      projectName: "test-project",
-      rootDir: "/tmp/project",
-      activePhaseIds: [phaseId],
-      phases: [
-        {
-          id: phaseId,
-          name: "Phase 23 CI Retry/Rerun",
-          branchName: "phase-23-ci-retry-rerun",
-          status: "PLANNING",
-          prUrl: undefined as string | undefined,
-          tasks: [
-            {
-              id: taskId,
-              title: "P23-004 implementation",
-              description: "Improve CI transition handling",
-              status: "TODO",
-              assignee: "UNASSIGNED",
-              dependencies: [],
-            },
-          ],
-        },
-      ],
-    };
-
-    const runtimeMessages: string[] = [];
-    let ciViewCallCount = 0;
-    const mockControl = {
-      reconcileInProgressTasks: mock(async () => 0),
-      getState: mock(async () => mockState),
-      setPhaseStatus: mock(async (input: any) => {
-        const phase = mockState.phases[0] as any;
-        phase.status = input.status;
-        if (typeof input.ciStatusContext === "string") {
-          phase.ciStatusContext = input.ciStatusContext;
-        }
-        return mockState;
-      }),
-      setPhasePrUrl: mock(async (input: { phaseId: string; prUrl: string }) => {
-        mockState.phases[0].prUrl = input.prUrl;
-        return mockState;
-      }),
-      startActiveTaskAndWait: mock(async () => {
-        mockState.phases[0].tasks[0].status = "DONE";
-        return mockState;
-      }),
-      createTask: mock(async () => mockState),
-      recordRecoveryAttempt: mock(async () => mockState),
-      runInternalWork: mock(async () => ({
-        stdout: '{"verdict":"APPROVED","comments":[]}',
-        stderr: "",
-      })),
-    } as unknown as ControlCenterService;
-
-    const mockRunner: ProcessRunner = {
-      run: mock(async (input: any) => {
-        if (input.args.includes("--porcelain")) {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (
-          input.args.includes("branch") &&
-          input.args.includes("--show-current")
-        ) {
-          return {
-            exitCode: 0,
-            stdout: "phase-23-ci-retry-rerun",
-            stderr: "",
-          };
-        }
-        if (
-          input.args.includes("--cached") &&
-          input.args.includes("--name-only")
-        ) {
-          return { exitCode: 0, stdout: "src/a.ts\n", stderr: "" };
-        }
-        if (input.args.includes("pr") && input.args.includes("create")) {
-          return {
-            exitCode: 0,
-            stdout: "https://github.com/org/repo/pull/2304\n",
-            stderr: "",
-          };
-        }
-        if (
-          input.args.includes("pr") &&
-          input.args.includes("view") &&
-          input.args.includes("statusCheckRollup")
-        ) {
-          ciViewCallCount += 1;
-          if (ciViewCallCount === 1) {
-            return {
-              exitCode: 0,
-              stdout: JSON.stringify({
-                statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
-              }),
-              stderr: "",
-            };
-          }
-          if (ciViewCallCount === 2) {
-            return {
-              exitCode: 0,
-              stdout: JSON.stringify({
-                statusCheckRollup: [
-                  {
-                    name: "build",
-                    status: "COMPLETED",
-                    conclusion: "FAILURE",
-                  },
-                ],
-              }),
-              stderr: "",
-            };
-          }
-          if (ciViewCallCount === 3) {
-            return {
-              exitCode: 0,
-              stdout: JSON.stringify({
-                statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
-              }),
-              stderr: "",
-            };
-          }
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              statusCheckRollup: [
-                {
-                  name: "build",
-                  status: "COMPLETED",
-                  conclusion: "SUCCESS",
-                },
-              ],
-            }),
-            stderr: "",
-          };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }),
-    } as any;
-
-    const runner = new PhaseRunner(
-      mockControl,
-      {
-        ...mockConfig,
-        ciEnabled: true,
-        vcsProvider: "github" as const,
-        testerCommand: null,
-        testerArgs: null,
-      },
-      undefined,
-      async (event) => {
-        if (event.type === "ci.activity") {
-          runtimeMessages.push(event.payload.summary);
-        }
-      },
-      mockRunner,
-    );
-
-    await runner.run();
-
-    expect(runtimeMessages).toContain(
-      "CI transition PR #2304: INIT -> PENDING (poll=1)",
-    );
-    expect(runtimeMessages).toContain(
-      "CI transition PR #2304: PENDING -> FAILURE (poll=2) | terminal-confirmation=1/2",
-    );
-    expect(runtimeMessages).toContain(
-      "CI transition PR #2304: FAILURE -> PENDING (poll=3) | rerun-detected",
-    );
-    expect(runtimeMessages).toContain(
-      "CI transition PR #2304: PENDING -> SUCCESS (poll=4) | terminal-confirmation=1/2",
-    );
-
-    const statusCalls = (mockControl.setPhaseStatus as ReturnType<typeof mock>)
-      .mock.calls;
-    const statuses = statusCalls.map((entry: any[]) => entry[0].status);
-    expect(statuses).toContain("AWAITING_CI");
-    expect(statuses).toContain("READY_FOR_REVIEW");
-    expect(statuses).not.toContain("CI_FAILED");
-    expect(mockControl.createTask).toHaveBeenCalledTimes(0);
   });
 
   test("P17-001: recovery loop breaks after failed postcondition re-check (no infinite retry)", async () => {
@@ -2756,8 +2404,8 @@ describe("PhaseRunner", () => {
       mockControl,
       {
         ...mockConfig,
-        ciEnabled: true,
         vcsProvider: "github" as const,
+        gates: [{ type: "pr_ci" }],
         activeAssignee: "CODEX_CLI",
         enabledAdapters: ["CODEX_CLI", "CLAUDE_CLI"],
         adapterCircuitBreakers: {
@@ -3030,7 +2678,6 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
     testerCommand: null,
     testerArgs: null,
     testerTimeoutMs: 1000,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -3042,8 +2689,6 @@ describe("PhaseRunner – P20-002 startup reconciliation", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -3375,7 +3020,6 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
     testerCommand: null,
     testerArgs: null,
     testerTimeoutMs: 1000,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -3387,8 +3031,6 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -3828,7 +3470,6 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
     testerCommand: null,
     testerArgs: null,
     testerTimeoutMs: 1000,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -3840,8 +3481,6 @@ describe("PhaseRunner – P20-001 task-pick ordering", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -4043,7 +3682,6 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
     testerCommand: "bun",
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -4055,8 +3693,6 @@ describe("PhaseRunner – P20-004 CI_FIX deduplication", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -4424,7 +4060,6 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
     testerCommand: null,
     testerArgs: null,
     testerTimeoutMs: 1000,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -4436,8 +4071,6 @@ describe("PhaseRunner – P26-010 branch base preconditions", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     projectRootDir: "/tmp/project",
     projectName: "test-project",

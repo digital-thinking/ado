@@ -169,11 +169,6 @@ export const ORCHESTRATOR_ACTIONS = {
    */
   TESTER_RUN: "orchestrator:tester:run",
 
-  /**
-   * Run the CI review / fix validation loop after a phase completes.
-   * Drives the Reviewer and Fixer worker archetypes.
-   */
-  CI_VALIDATION_RUN: "orchestrator:ci-validation:run",
   EXCEPTION_RECOVERY_RUN: "orchestrator:exception-recovery:run",
 
   // ── Privileged git / VCS ──────────────────────────────────────────────────
@@ -234,8 +229,6 @@ export const ORCHESTRATOR_ACTION_PROFILE_MAP: Readonly<
   // Tester may create fix tasks (needs task:create), so it requires execution
   // which already subsumes planning (includes task:create).
   [ORCHESTRATOR_ACTIONS.TESTER_RUN]: "execution",
-  // CI validation drives agent workflows; no external git ops required here.
-  [ORCHESTRATOR_ACTIONS.CI_VALIDATION_RUN]: "execution",
   [ORCHESTRATOR_ACTIONS.EXCEPTION_RECOVERY_RUN]: "execution",
 
   // privileged

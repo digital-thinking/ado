@@ -69,9 +69,7 @@ describe("type contracts", () => {
     expect(parsed.executionLoop.testerCommand).toBeNull();
     expect(parsed.executionLoop.testerArgs).toBeNull();
     expect(parsed.executionLoop.testerTimeoutMs).toBe(600000);
-    expect(parsed.executionLoop.ciEnabled).toBe(false);
     expect(parsed.executionLoop.ciBaseBranch).toBe("main");
-    expect(parsed.executionLoop.validationMaxRetries).toBe(3);
     expect(parsed.executionLoop.deliberation.reviewerAdapter).toBe("CODEX_CLI");
     expect(parsed.executionLoop.deliberation.maxRefinePasses).toBe(1);
     expect(parsed.executionLoop.pullRequest.defaultTemplatePath).toBeNull();
@@ -276,6 +274,7 @@ describe("type contracts", () => {
             defaultRace: 4,
             maxTaskRetries: 5,
             phaseTimeoutMs: 42_000,
+            ciBaseBranch: "master",
           },
         },
       ],
@@ -287,6 +286,7 @@ describe("type contracts", () => {
       defaultRace: 4,
       maxTaskRetries: 5,
       phaseTimeoutMs: 42_000,
+      ciBaseBranch: "master",
     });
   });
 
@@ -561,7 +561,7 @@ describe("type contracts", () => {
     expect(phase.failureKind).toBeUndefined();
   });
 
-  test("PhaseSchema allows omitting worktreePath for legacy single-tree phases", () => {
+  test("PhaseSchema allows omitting worktreePath for unmanaged phases", () => {
     const phase = PhaseSchema.parse({
       id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       name: "Phase Gamma",
@@ -572,7 +572,7 @@ describe("type contracts", () => {
     expect(phase.worktreePath).toBeUndefined();
   });
 
-  test("PhaseSchema allows null worktreePath for legacy single-tree phases", () => {
+  test("PhaseSchema allows null worktreePath for unmanaged phases", () => {
     const phase = PhaseSchema.parse({
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       name: "Phase Delta",

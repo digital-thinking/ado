@@ -159,18 +159,13 @@ describe("P26-001 – failure-kind lifecycle regression", () => {
 });
 
 // ---------------------------------------------------------------------------
-// P26-002 – CI_FIX guardrail schema defaults and bounds
+// P26-002 – CI_FIX depth guardrail schema defaults and bounds
 // ---------------------------------------------------------------------------
 
-describe("P26-002 – CI_FIX guardrail schema defaults and bounds", () => {
+describe("P26-002 – CI_FIX depth guardrail schema defaults and bounds", () => {
   test("phaseTimeoutMs defaults to 21600000", () => {
     const settings = ExecutionLoopSettingsSchema.parse({});
     expect(settings.phaseTimeoutMs).toBe(21_600_000);
-  });
-
-  test("ciFixMaxFanOut defaults to 10", () => {
-    const settings = ExecutionLoopSettingsSchema.parse({});
-    expect(settings.ciFixMaxFanOut).toBe(10);
   });
 
   test("ciFixMaxDepth defaults to 3", () => {
@@ -178,32 +173,13 @@ describe("P26-002 – CI_FIX guardrail schema defaults and bounds", () => {
     expect(settings.ciFixMaxDepth).toBe(3);
   });
 
-  test("ciFixMaxFanOut accepts values up to 50", () => {
-    const settings = ExecutionLoopSettingsSchema.parse({ ciFixMaxFanOut: 50 });
-    expect(settings.ciFixMaxFanOut).toBe(50);
-  });
-
   test("ciFixMaxDepth accepts values up to 10", () => {
     const settings = ExecutionLoopSettingsSchema.parse({ ciFixMaxDepth: 10 });
     expect(settings.ciFixMaxDepth).toBe(10);
   });
 
-  test("ciFixMaxFanOut rejects values above 50", () => {
-    const result = ExecutionLoopSettingsSchema.safeParse({
-      ciFixMaxFanOut: 51,
-    });
-    expect(result.success).toBe(false);
-  });
-
   test("ciFixMaxDepth rejects values above 10", () => {
     const result = ExecutionLoopSettingsSchema.safeParse({ ciFixMaxDepth: 11 });
-    expect(result.success).toBe(false);
-  });
-
-  test("ciFixMaxFanOut rejects zero (minimum is 1)", () => {
-    const result = ExecutionLoopSettingsSchema.safeParse({
-      ciFixMaxFanOut: 0,
-    });
     expect(result.success).toBe(false);
   });
 

@@ -12,7 +12,7 @@ import {
   formatRuntimeEventForCli,
   formatRuntimeEventForTelegram,
   shouldNotifyRuntimeEventForTelegram,
-  toLegacyAgentEvent,
+  toAgentStreamEvent,
 } from "./runtime-events";
 
 describe("runtime event contract", () => {
@@ -38,7 +38,7 @@ describe("runtime event contract", () => {
     expect(parsed.family).toBe("task-lifecycle");
   });
 
-  test("normalizes adapter output to legacy stream shape", () => {
+  test("normalizes adapter output to agent stream shape", () => {
     const event = createRuntimeEvent({
       family: "adapter-output",
       type: "adapter.output",
@@ -52,8 +52,8 @@ describe("runtime event contract", () => {
       },
     });
 
-    const legacy = toLegacyAgentEvent(event);
-    expect(legacy).toEqual({
+    const streamEvent = toAgentStreamEvent(event);
+    expect(streamEvent).toEqual({
       type: "output",
       agentId: "agent-1",
       line: "hello",
@@ -163,7 +163,7 @@ describe("runtime event contract", () => {
     );
   });
 
-  test("formats CI and PR lifecycle events for Telegram consumers", () => {
+  test("formats PR and gate lifecycle events for Telegram consumers", () => {
     const prEvent = createRuntimeEvent({
       family: "ci-pr-lifecycle",
       type: "pr.activity",
@@ -178,15 +178,17 @@ describe("runtime event contract", () => {
         phaseId: "phase-1",
       },
     });
-    const ciEvent = createRuntimeEvent({
-      family: "ci-pr-lifecycle",
-      type: "ci.activity",
+    const gateEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
       payload: {
-        stage: "failed",
-        summary: "CI checks failed for PR #42; created 1 CI_FIX task(s).",
-        prNumber: 42,
-        overall: "FAILURE",
-        createdFixTaskCount: 1,
+        stage: "fail",
+        gateName: "pr_ci",
+        gateIndex: 0,
+        totalGates: 1,
+        summary: 'Gate "pr_ci" failed (1/1): build failed',
+        diagnostics: "build failed",
+        retryable: true,
       },
       context: {
         source: "PHASE_RUNNER",
@@ -195,36 +197,35 @@ describe("runtime event contract", () => {
     });
 
     expect(formatRuntimeEventForTelegram(prEvent)).toContain("PR:");
-    expect(formatRuntimeEventForTelegram(ciEvent)).toContain("CI:");
+    expect(formatRuntimeEventForTelegram(gateEvent)).toContain("Gate:");
     expect(formatRuntimeEventForCli(prEvent)).toContain("Created PR #42");
-    expect(formatRuntimeEventForCli(ciEvent)).toContain("CI checks failed");
+    expect(formatRuntimeEventForCli(gateEvent)).toContain("build failed");
   });
 
   test("applies Telegram noise levels deterministically", () => {
-    const transitionEvent = createRuntimeEvent({
-      family: "ci-pr-lifecycle",
-      type: "ci.activity",
+    const gateStartEvent = createRuntimeEvent({
+      family: "gate-lifecycle",
+      type: "gate.activity",
       payload: {
-        stage: "poll-transition",
-        summary: "CI transition PR #42: PENDING -> SUCCESS (poll=3)",
-        prNumber: 42,
-        previousOverall: "PENDING",
-        overall: "SUCCESS",
-        pollCount: 3,
+        stage: "start",
+        gateName: "pr_ci",
+        gateIndex: 0,
+        totalGates: 1,
+        summary: 'Starting gate "pr_ci" (1/1).',
       },
       context: {
         source: "PHASE_RUNNER",
       },
     });
 
-    expect(shouldNotifyRuntimeEventForTelegram(transitionEvent, "all")).toBe(
+    expect(shouldNotifyRuntimeEventForTelegram(gateStartEvent, "all")).toBe(
       true,
     );
     expect(
-      shouldNotifyRuntimeEventForTelegram(transitionEvent, "important"),
+      shouldNotifyRuntimeEventForTelegram(gateStartEvent, "important"),
     ).toBe(false);
     expect(
-      shouldNotifyRuntimeEventForTelegram(transitionEvent, "critical"),
+      shouldNotifyRuntimeEventForTelegram(gateStartEvent, "critical"),
     ).toBe(false);
   });
 

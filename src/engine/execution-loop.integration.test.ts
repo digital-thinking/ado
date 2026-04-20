@@ -5,7 +5,6 @@ import type { Phase } from "../types";
 import { MockProcessRunner } from "../vcs/test-utils";
 import { GitHubProvider } from "../vcs";
 import { runCiIntegration } from "./ci-integration";
-import { runCiValidationLoop } from "./ci-validation-loop";
 import { runTesterWorkflow } from "./tester-workflow";
 
 const DEFAULT_PULL_REQUEST_SETTINGS = {
@@ -32,7 +31,7 @@ const TEST_PHASE: Phase = {
 };
 
 describe("execution loop integration", () => {
-  test("runs tester, creates PR, and completes review validation", async () => {
+  test("runs tester and creates PR", async () => {
     const runner = new MockProcessRunner([
       { stdout: "tests passed\n" },
       { stdout: "" },
@@ -98,21 +97,7 @@ describe("execution loop integration", () => {
     expect(ciResult.prUrl).toBe("https://github.com/org/repo/pull/555");
     expect(setPrCalls).toHaveLength(1);
 
-    const validationResult = await runCiValidationLoop({
-      projectName: "IxADO",
-      rootDir: "C:/repo",
-      phase: TEST_PHASE,
-      assignee: "CODEX_CLI",
-      maxRetries: 2,
-      readGitDiff: async () => "diff --git a/src/a.ts b/src/a.ts",
-      runInternalWork: async () => ({
-        stdout: '{"verdict":"APPROVED","comments":[]}',
-        stderr: "",
-      }),
-    });
-
-    expect(validationResult.status).toBe("APPROVED");
-    expect(validationResult.fixAttempts).toBe(0);
+    expect(runner.calls).toHaveLength(7);
   });
 
   test("denies CI integration in fail-closed mode when role resolution fails", async () => {
