@@ -1,19 +1,15 @@
 import { z } from "zod";
 
-// 1. Supported CLI Adapters
-export const CLIAdapterIdSchema = z.enum([
-  "MOCK_CLI",
-  "CLAUDE_CLI",
-  "GEMINI_CLI",
-  "CODEX_CLI",
-]);
-export type CLIAdapterId = z.infer<typeof CLIAdapterIdSchema>;
-export const CLI_ADAPTER_IDS: CLIAdapterId[] = [
-  "CODEX_CLI",
-  "CLAUDE_CLI",
-  "GEMINI_CLI",
-  "MOCK_CLI",
-];
+import {
+  CLIAdapterIdSchema,
+  CLI_ADAPTER_IDS,
+  type CLIAdapterId,
+} from "./adapters";
+import { ExecutionTraceSchema, type ExecutionTrace } from "./execution-trace";
+export { ExecutionTraceSchema };
+export type { ExecutionTrace };
+export { CLIAdapterIdSchema, CLI_ADAPTER_IDS, type CLIAdapterId };
+
 export const DEFAULT_PROVIDER_PRIORITY: CLIAdapterId[] = [
   "CLAUDE_CLI",
   "GEMINI_CLI",
@@ -884,6 +880,7 @@ export const PhaseSchema = z.object({
   ciStatusContext: z.string().optional(), // Stores terminal failure diagnostics
   failureKind: PhaseFailureKindSchema.optional(), // Why the phase entered CI_FAILED
   recoveryAttempts: z.array(RecoveryAttemptRecordSchema).optional(),
+  executionTrace: ExecutionTraceSchema.optional(),
 });
 export type Phase = z.infer<typeof PhaseSchema>;
 

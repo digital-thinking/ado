@@ -546,6 +546,7 @@ function buildCliPhaseRunnerConfig(input: {
   mode: "AUTO" | "MANUAL";
   countdownSeconds: number;
   activeAssignee: CLIAdapterId;
+  initialTrace?: PhaseRunnerConfig["initialTrace"];
 }): PhaseRunnerConfig {
   const projectExecutionSettings = resolveProjectExecutionSettings(
     input.settings,
@@ -594,6 +595,7 @@ function buildCliPhaseRunnerConfig(input: {
     projectName: input.projectName,
     policy: input.policy,
     role: "admin",
+    initialTrace: input.initialTrace,
   };
 }
 
@@ -1961,6 +1963,9 @@ async function runPhaseRunCommand({
     lockState,
     parsedRunArgs.phaseReference,
   );
+  const targetPhase = targetPhaseId
+    ? lockState.phases.find((p) => p.id === targetPhaseId)
+    : undefined;
   const activeAssignee = projectExecutionSettings.defaultAssignee;
 
   const runner = new PhaseRunner(
@@ -1974,6 +1979,7 @@ async function runPhaseRunCommand({
       mode,
       countdownSeconds,
       activeAssignee,
+      initialTrace: targetPhase?.executionTrace,
     }),
     new PhaseLoopControl(),
     async (event) => {

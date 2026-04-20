@@ -24,6 +24,7 @@ import {
 import type { StateEngine } from "../state";
 import {
   CLIAdapterIdSchema,
+  ExecutionTraceSchema,
   ExceptionMetadataSchema,
   ExceptionRecoveryResultSchema,
   PhaseFailureKindSchema,
@@ -34,6 +35,7 @@ import {
   TaskSchema,
   WorkerAssigneeSchema,
   type CLIAdapterId,
+  type ExecutionTrace,
   type ExceptionMetadata,
   type ExceptionRecoveryResult,
   type Phase,
@@ -946,6 +948,33 @@ export class ControlCenterService {
       ciStatusContext,
       failureKind,
       worktreePath,
+    });
+
+    const nextState = await engine.writeProjectState({
+      ...state,
+      phases: nextPhases,
+    });
+    this.onStateChange?.(nextState.projectName, nextState);
+    return nextState;
+  }
+
+  async updatePhaseTrace(
+    projectName: string | undefined,
+    phaseId: string,
+    trace: ExecutionTrace,
+  ): Promise<ProjectState> {
+    const engine = await this.getEngine(projectName);
+    const state = await engine.readProjectState();
+    const phaseIndex = state.phases.findIndex((phase) => phase.id === phaseId);
+    if (phaseIndex < 0) {
+      throw new Error(`Phase not found: ${phaseId}`);
+    }
+
+    const phase = state.phases[phaseIndex];
+    const nextPhases = [...state.phases];
+    nextPhases[phaseIndex] = PhaseSchema.parse({
+      ...phase,
+      executionTrace: trace,
     });
 
     const nextState = await engine.writeProjectState({

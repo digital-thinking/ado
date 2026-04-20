@@ -349,6 +349,76 @@ describe("P36 QA CLI regressions", () => {
     expect(showResult.stdout).toContain("Race judge CLI: CLAUDE_CLI");
   });
 
+  test("execution trace is persisted to state.json after task execution", async () => {
+    const sandbox = await TestSandbox.create("ixado-p36-trace-persistence-");
+    sandboxes.push(sandbox);
+
+    await initGitRepo(sandbox.projectDir);
+    const projectName = basename(sandbox.projectDir);
+    const phaseId = randomUUID();
+    const taskId = randomUUID();
+    const now = new Date().toISOString();
+    const worktreePath = join(sandbox.projectDir, ".ixado", "worktree-phase");
+    await mkdir(worktreePath, { recursive: true });
+
+    await sandbox.writeProjectState({
+      projectName,
+      rootDir: sandbox.projectDir,
+      createdAt: now,
+      updatedAt: now,
+      activePhaseIds: [phaseId],
+      phases: [
+        {
+          id: phaseId,
+          name: "Phase 36 Trace",
+          branchName: "phase-36-trace",
+          status: "CODING",
+          worktreePath,
+          tasks: [
+            {
+              id: taskId,
+              title: "Traceable task",
+              description: "Ensure trace is persisted.",
+              status: "TODO",
+              assignee: "UNASSIGNED",
+              dependencies: [],
+            },
+          ],
+        },
+      ],
+    } as any);
+
+    expect(
+      runIxadoWithPath(["init"], sandbox, sandbox.projectDir).exitCode,
+    ).toBe(0);
+    await bindSandboxProjectInGlobalConfig(sandbox, projectName);
+
+    const binDir = join(sandbox.projectDir, ".test-bin");
+    await mkdir(binDir, { recursive: true });
+    const codexPath = join(binDir, "codex");
+    await writeFile(codexPath, "#!/usr/bin/env bash\necho 'ok'\n", "utf8");
+    await chmod(codexPath, 0o755);
+
+    const result = runIxadoWithPath(
+      ["phase", "run", "auto", "0"],
+      sandbox,
+      binDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const state = await sandbox.readProjectState();
+    const phase = state.phases[0];
+    expect(phase?.executionTrace).toBeDefined();
+    expect(phase?.executionTrace?.nodes.length).toBeGreaterThan(0);
+
+    const taskRunNode = phase?.executionTrace?.nodes.find(
+      (n: any) => n.type === "task_run",
+    );
+    expect(taskRunNode).toBeDefined();
+    expect(taskRunNode?.status).toBe("passed");
+  });
+
   test("task start uses the phase runner for raced tasks", async () => {
     const sandbox = await TestSandbox.create("ixado-p36-cli-race-start-");
     sandboxes.push(sandbox);
