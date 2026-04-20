@@ -9,7 +9,7 @@ import {
 } from "../../agent-runtime-diagnostics";
 import {
   createRuntimeEvent,
-  toLegacyAgentEvent,
+  toAgentStreamEvent,
   type RuntimeEvent,
 } from "../../types/runtime-events";
 import {
@@ -281,16 +281,16 @@ export async function handleAgentsApi(
           );
         };
         const sendRuntimeEvent = (event: RuntimeEvent) => {
-          const legacy = toLegacyAgentEvent(event);
-          if (legacy?.type === "output") {
+          const streamEvent = toAgentStreamEvent(event);
+          if (streamEvent?.type === "output") {
             // Suppress low-signal file-interaction chatter so users see only
             // reasoning / thinking progress and terminal outcome context.
-            if (isFileInteractionChatter(legacy.line)) {
+            if (isFileInteractionChatter(streamEvent.line)) {
               return;
             }
-            const displayLine = formatOutputLineForAgentView(legacy.line);
+            const displayLine = formatOutputLineForAgentView(streamEvent.line);
             send({
-              ...legacy,
+              ...streamEvent,
               runtimeEvent: event,
               context: contextLabel,
               formattedLine: contextLabel
@@ -299,13 +299,13 @@ export async function handleAgentsApi(
             });
             return;
           }
-          if (legacy?.type === "status") {
+          if (streamEvent?.type === "status") {
             const nextSummary =
-              legacy.status === "FAILED"
+              streamEvent.status === "FAILED"
                 ? summarizeFailure(agent.outputTail.slice(-10).join("\n"))
                 : undefined;
             send({
-              ...legacy,
+              ...streamEvent,
               runtimeEvent: event,
               context: contextLabel,
               failureSummary: nextSummary,

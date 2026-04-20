@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  ExecutionLoopSettingsSchema,
-  GateConfigSchema,
-  type GateConfig,
-} from "../types";
+import { GateConfigSchema, type GateConfig } from "../types";
 import {
   createRuntimeEvent,
   formatRuntimeEventForCli,
@@ -91,60 +87,6 @@ describe("P34-013 regression: gate factory", () => {
     expect(gates[1].name).toContain("coverage");
     expect(gates[2].name).toContain("ai_eval");
     expect(gates[3].name).toContain("pr_ci");
-  });
-});
-
-describe("P34-013 regression: legacy config migration", () => {
-  test("ciEnabled: true migrates to vcsProvider: github", () => {
-    const result = ExecutionLoopSettingsSchema.parse({
-      ciEnabled: true,
-    });
-    expect(result.vcsProvider).toBe("github");
-  });
-
-  test("ciEnabled: false keeps vcsProvider: null", () => {
-    const result = ExecutionLoopSettingsSchema.parse({
-      ciEnabled: false,
-    });
-    expect(result.vcsProvider).toBe("null");
-  });
-
-  test("vcsProvider: github with empty gates auto-adds pr_ci gate", () => {
-    const result = ExecutionLoopSettingsSchema.parse({
-      vcsProvider: "github",
-    });
-    expect(result.gates).toEqual([{ type: "pr_ci" }]);
-  });
-
-  test("vcsProvider: github with explicit gates does not auto-add pr_ci", () => {
-    const result = ExecutionLoopSettingsSchema.parse({
-      vcsProvider: "github",
-      gates: [{ type: "command", command: "npm test" }],
-    });
-    expect(result.gates).toEqual([{ type: "command", command: "npm test" }]);
-  });
-
-  test("ciEnabled: true migrates to github and adds pr_ci gate in single pass", () => {
-    const result = ExecutionLoopSettingsSchema.parse({
-      ciEnabled: true,
-      gates: [],
-    });
-    expect(result.vcsProvider).toBe("github");
-    expect(result.gates).toEqual([{ type: "pr_ci" }]);
-  });
-
-  test("ciEnabled: true without explicit gates also adds pr_ci", () => {
-    const result = ExecutionLoopSettingsSchema.parse({ ciEnabled: true });
-    expect(result.vcsProvider).toBe("github");
-    expect(result.gates).toEqual([{ type: "pr_ci" }]);
-  });
-
-  test("vcsProvider: local does not trigger auto-migration", () => {
-    const result = ExecutionLoopSettingsSchema.parse({
-      vcsProvider: "local",
-    });
-    expect(result.vcsProvider).toBe("local");
-    expect(result.gates).toEqual([]);
   });
 });
 

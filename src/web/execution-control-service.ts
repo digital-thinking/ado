@@ -248,6 +248,9 @@ export class ExecutionControlService {
         phaseTimeoutMs:
           project?.executionSettings?.phaseTimeoutMs ??
           settings.executionLoop.phaseTimeoutMs,
+        ciBaseBranch:
+          project?.executionSettings?.ciBaseBranch ??
+          settings.executionLoop.ciBaseBranch,
       };
 
       const enabledAdapters = getAvailableAgents(settings);
@@ -282,13 +285,10 @@ export class ExecutionControlService {
         judgeAdapter: settings.executionLoop.judgeAdapter,
         raceJudgePrompt: settings.executionLoop.raceJudgePrompt,
         phaseTimeoutMs: projectExec.phaseTimeoutMs,
-        ciEnabled: settings.executionLoop.ciEnabled,
         vcsProvider: settings.executionLoop.vcsProvider,
         gates: settings.executionLoop.gates,
-        ciBaseBranch: settings.executionLoop.ciBaseBranch,
+        ciBaseBranch: projectExec.ciBaseBranch,
         ciPullRequest: settings.executionLoop.pullRequest,
-        validationMaxRetries: settings.executionLoop.validationMaxRetries,
-        ciFixMaxFanOut: settings.executionLoop.ciFixMaxFanOut,
         ciFixMaxDepth: settings.executionLoop.ciFixMaxDepth,
         deliberation: {
           reviewerAdapter: settings.executionLoop.deliberation.reviewerAdapter,

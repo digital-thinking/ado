@@ -12,7 +12,6 @@ describe("PhaseRunner CI_FIX guardrails", () => {
     testerCommand: "npm",
     testerArgs: ["test"],
     testerTimeoutMs: 1000,
-    ciEnabled: true,
     vcsProvider: "github" as const,
     gates: [],
     ciBaseBranch: "main",
@@ -24,8 +23,6 @@ describe("PhaseRunner CI_FIX guardrails", () => {
       createAsDraft: false,
       markReadyOnApproval: false,
     },
-    validationMaxRetries: 1,
-    ciFixMaxFanOut: 2, // Low fan-out cap for testing
     ciFixMaxDepth: 2, // Low depth cap for testing
     projectRootDir: "/tmp/project",
     projectName: "test-project",
@@ -148,7 +145,7 @@ describe("PhaseRunner CI_FIX guardrails", () => {
 
     const runner = new PhaseRunner(
       mockControl as any,
-      { ...baseConfig, ciEnabled: false, vcsProvider: "null" as const },
+      { ...baseConfig, vcsProvider: "null" as const },
       undefined,
       undefined,
       mockRunner as any,
@@ -161,111 +158,5 @@ describe("PhaseRunner CI_FIX guardrails", () => {
       expect(error.message).toContain("CI_FIX cascade depth cap exceeded (2)");
       expect(error.message).toContain("Manual intervention is required");
     }
-  });
-
-  test("runCiValidationStep: fails fast when CI_FIX fan-out count cap is exceeded", async () => {
-    const phaseId = "11111111-1111-4111-8111-111111111111";
-    const task1Id = "22222222-2222-4222-8222-222222222222";
-
-    const tasks: Task[] = [
-      {
-        id: task1Id,
-        title: "Initial Task",
-        description: "",
-        status: "DONE",
-        assignee: "MOCK_CLI",
-        resolvedAssignee: "MOCK_CLI",
-        dependencies: [],
-      },
-    ];
-
-    const phase: Phase = {
-      id: phaseId,
-      name: "Phase 1",
-      branchName: "feat/phase-1",
-      status: "CODING",
-      tasks,
-    };
-
-    const mockState = {
-      projectName: "test-project",
-      rootDir: "/tmp/project",
-      activePhaseIds: [phaseId],
-      phases: [
-        {
-          ...phase,
-          prUrl: undefined as string | undefined,
-          tasks: [{ ...tasks[0], status: "DONE" }],
-        },
-      ],
-    };
-
-    const mockControl = {
-      getState: mock(async () => mockState),
-      reconcileInProgressTasks: mock(async () => 0),
-      setPhaseStatus: mock(async (input: any) => {
-        mockState.phases[0].status = input.status;
-      }),
-      startActiveTaskAndWait: mock(async () => mockState),
-      setPhasePrUrl: mock(async (input: any) => {
-        mockState.phases[0].prUrl = input.prUrl;
-      }),
-      createTask: mock(async () => {}),
-    };
-
-    const mockRunner = {
-      run: mock(async (options: any) => {
-        if (options.command === "git") {
-          if (options.args[0] === "status") return { stdout: "", stderr: "" };
-          if (
-            options.args[0] === "branch" &&
-            options.args[1] === "--show-current"
-          )
-            return { stdout: "feat/phase-1", stderr: "" };
-          if (options.args[0] === "diff" && options.args[1] === "--cached")
-            return { stdout: "some changes", stderr: "" };
-          if (options.args[0] === "diff") return { stdout: "", stderr: "" };
-          if (options.args[0] === "commit") return { stdout: "", stderr: "" };
-          if (options.args[0] === "push") return { stdout: "", stderr: "" };
-          return { stdout: "", stderr: "" };
-        }
-        if (
-          options.command === "gh" &&
-          options.args[0] === "pr" &&
-          options.args[1] === "create"
-        ) {
-          return { stdout: "https://github.com/org/repo/pull/1", stderr: "" };
-        }
-        return { stdout: "", stderr: "" };
-      }),
-    };
-
-    const runner = new PhaseRunner(
-      mockControl as any,
-      baseConfig,
-      undefined,
-      undefined,
-      mockRunner as any,
-    );
-
-    const github = (runner as any).github;
-    github.pollCiStatus = mock(async () => ({
-      overall: "FAILURE",
-      checks: [
-        { name: "Check 1", state: "FAILURE" },
-        { name: "Check 2", state: "FAILURE" },
-        { name: "Check 3", state: "FAILURE" },
-      ],
-    }));
-
-    try {
-      await runner.run();
-      expect.unreachable("Should have thrown fan-out cap error");
-    } catch (error: any) {
-      expect(error.message).toContain("CI_FIX fan-out count cap exceeded (2)");
-      expect(error.message).toContain("Detected 3 new failing CI checks");
-    }
-
-    expect(mockState.phases[0].status).toBe("CI_FAILED");
   });
 });

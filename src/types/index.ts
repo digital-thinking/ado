@@ -218,52 +218,35 @@ const ProviderPrioritySchema = z
     });
   });
 
-export const ExecutionLoopSettingsSchema = z
-  .object({
-    autoMode: z.boolean().default(false),
-    countdownSeconds: z.number().int().min(0).max(3_600).default(10),
-    maxTaskRetries: z.number().int().min(0).max(20).default(3),
-    defaultRace: z.number().int().min(1).default(1),
-    providerPriority: ProviderPrioritySchema.default(DEFAULT_PROVIDER_PRIORITY),
-    judgeAdapter: CLIAdapterIdSchema.default("CODEX_CLI"),
-    raceJudgePrompt: z.string().min(1).nullable().default(null),
-    phaseTimeoutMs: z.number().int().positive().default(21_600_000),
-    testerCommand: z.string().min(1).nullable().default(null),
-    testerArgs: z.array(z.string()).min(1).nullable().default(null),
-    testerTimeoutMs: z.number().int().positive().default(600_000),
-    /** @deprecated Use vcsProvider instead. Kept for backward compatibility. */
-    ciEnabled: z.boolean().default(false),
-    vcsProvider: VcsProviderTypeSchema.default("null"),
-    ciBaseBranch: z.string().min(1).default("main"),
-    validationMaxRetries: z.number().int().min(0).max(20).default(3),
-    ciFixMaxFanOut: z.number().int().min(1).max(50).default(10),
-    ciFixMaxDepth: z.number().int().min(1).max(10).default(3),
-    deliberation: DeliberationSettingsSchema.default({
-      reviewerAdapter: "CODEX_CLI",
-      maxRefinePasses: 1,
-    }),
-    pullRequest: PullRequestAutomationSettingsSchema.default({
-      defaultTemplatePath: null,
-      templateMappings: [],
-      labels: [],
-      assignees: [],
-      createAsDraft: false,
-      markReadyOnApproval: false,
-    }),
-    gates: z.array(GateConfigSchema).default([]),
-  })
-  .transform((val) => {
-    let result = val;
-    // Migration: ciEnabled: true without explicit vcsProvider → github
-    if (result.ciEnabled && result.vcsProvider === "null") {
-      result = { ...result, vcsProvider: "github" as VcsProviderType };
-    }
-    // Migration: vcsProvider: github + empty gates → auto-add pr_ci gate
-    if (result.vcsProvider === "github" && result.gates.length === 0) {
-      result = { ...result, gates: [{ type: "pr_ci" as const }] };
-    }
-    return result;
-  });
+export const ExecutionLoopSettingsSchema = z.object({
+  autoMode: z.boolean().default(false),
+  countdownSeconds: z.number().int().min(0).max(3_600).default(10),
+  maxTaskRetries: z.number().int().min(0).max(20).default(3),
+  defaultRace: z.number().int().min(1).default(1),
+  providerPriority: ProviderPrioritySchema.default(DEFAULT_PROVIDER_PRIORITY),
+  judgeAdapter: CLIAdapterIdSchema.default("CODEX_CLI"),
+  raceJudgePrompt: z.string().min(1).nullable().default(null),
+  phaseTimeoutMs: z.number().int().positive().default(21_600_000),
+  testerCommand: z.string().min(1).nullable().default(null),
+  testerArgs: z.array(z.string()).min(1).nullable().default(null),
+  testerTimeoutMs: z.number().int().positive().default(600_000),
+  vcsProvider: VcsProviderTypeSchema.default("null"),
+  ciBaseBranch: z.string().min(1).default("main"),
+  ciFixMaxDepth: z.number().int().min(1).max(10).default(3),
+  deliberation: DeliberationSettingsSchema.default({
+    reviewerAdapter: "CODEX_CLI",
+    maxRefinePasses: 1,
+  }),
+  pullRequest: PullRequestAutomationSettingsSchema.default({
+    defaultTemplatePath: null,
+    templateMappings: [],
+    labels: [],
+    assignees: [],
+    createAsDraft: false,
+    markReadyOnApproval: false,
+  }),
+  gates: z.array(GateConfigSchema).default([]),
+});
 export type ExecutionLoopSettings = z.output<
   typeof ExecutionLoopSettingsSchema
 >;
@@ -330,6 +313,7 @@ export const ProjectExecutionSettingsSchema = z.object({
   defaultRace: z.number().int().min(1).optional(),
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
+  ciBaseBranch: z.string().min(1).optional(),
 });
 export type ProjectExecutionSettings = z.infer<
   typeof ProjectExecutionSettingsSchema
@@ -394,11 +378,8 @@ export const CliSettingsSchema = z
       testerCommand: null,
       testerArgs: null,
       testerTimeoutMs: 600_000,
-      ciEnabled: false,
       vcsProvider: "null",
       ciBaseBranch: "main",
-      validationMaxRetries: 3,
-      ciFixMaxFanOut: 10,
       ciFixMaxDepth: 3,
       deliberation: {
         reviewerAdapter: "CODEX_CLI",
@@ -578,11 +559,8 @@ const ExecutionLoopSettingsOverrideSchema = z.object({
   testerCommand: z.string().min(1).nullable().optional(),
   testerArgs: z.array(z.string()).min(1).nullable().optional(),
   testerTimeoutMs: z.number().int().positive().optional(),
-  ciEnabled: z.boolean().optional(),
   vcsProvider: VcsProviderTypeSchema.optional(),
   ciBaseBranch: z.string().min(1).optional(),
-  validationMaxRetries: z.number().int().min(0).max(20).optional(),
-  ciFixMaxFanOut: z.number().int().min(1).max(50).optional(),
   ciFixMaxDepth: z.number().int().min(1).max(10).optional(),
   deliberation: z
     .object({

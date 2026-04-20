@@ -65,12 +65,9 @@ const DEFAULT_LOOP_SETTINGS = {
   testerCommand: null,
   testerArgs: null,
   testerTimeoutMs: 600000,
-  ciEnabled: false,
   vcsProvider: "null" as const,
   gates: [],
   ciBaseBranch: "main",
-  validationMaxRetries: 3,
-  ciFixMaxFanOut: 10,
   ciFixMaxDepth: 3,
   deliberation: {
     reviewerAdapter: "CODEX_CLI" as const,
@@ -305,6 +302,7 @@ describe("multi-project management", () => {
               defaultAssignee: "GEMINI_CLI",
               maxTaskRetries: 4,
               phaseTimeoutMs: 42_000,
+              ciBaseBranch: "master",
             },
           },
         ],
@@ -318,6 +316,7 @@ describe("multi-project management", () => {
       defaultAssignee: "GEMINI_CLI",
       maxTaskRetries: 4,
       phaseTimeoutMs: 42_000,
+      ciBaseBranch: "master",
     });
   });
 });

@@ -69,12 +69,9 @@ const DEFAULT_LOOP_SETTINGS = {
   testerCommand: null,
   testerArgs: null,
   testerTimeoutMs: 600000,
-  ciEnabled: false,
   vcsProvider: "null" as const,
   gates: [],
   ciBaseBranch: "main",
-  validationMaxRetries: 3,
-  ciFixMaxFanOut: 10,
   ciFixMaxDepth: 3,
   deliberation: {
     reviewerAdapter: "CODEX_CLI" as const,

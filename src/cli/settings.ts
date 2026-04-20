@@ -41,12 +41,9 @@ export const DEFAULT_CLI_SETTINGS: CliSettings = {
     testerCommand: null,
     testerArgs: null,
     testerTimeoutMs: 600_000,
-    ciEnabled: false,
     vcsProvider: "null" as const,
     ciBaseBranch: "main",
     gates: [] as any[],
-    validationMaxRetries: 3,
-    ciFixMaxFanOut: 10,
     ciFixMaxDepth: 3,
     deliberation: {
       reviewerAdapter: "CODEX_CLI",

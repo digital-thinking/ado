@@ -169,6 +169,7 @@ function resolveProjectExecutionSettings(
   defaultRace: number;
   maxTaskRetries: number;
   phaseTimeoutMs: number;
+  ciBaseBranch: string;
 } {
   const project = settings.projects.find((p) => p.name === projectName);
   return {
@@ -186,6 +187,9 @@ function resolveProjectExecutionSettings(
     phaseTimeoutMs:
       project?.executionSettings?.phaseTimeoutMs ??
       settings.executionLoop.phaseTimeoutMs,
+    ciBaseBranch:
+      project?.executionSettings?.ciBaseBranch ??
+      settings.executionLoop.ciBaseBranch,
   };
 }
 
@@ -575,13 +579,10 @@ function buildCliPhaseRunnerConfig(input: {
     judgeAdapter: input.settings.executionLoop.judgeAdapter,
     raceJudgePrompt: input.settings.executionLoop.raceJudgePrompt,
     phaseTimeoutMs: projectExecutionSettings.phaseTimeoutMs,
-    ciEnabled: input.settings.executionLoop.ciEnabled,
     vcsProvider: input.settings.executionLoop.vcsProvider,
     gates: input.settings.executionLoop.gates,
-    ciBaseBranch: input.settings.executionLoop.ciBaseBranch,
+    ciBaseBranch: projectExecutionSettings.ciBaseBranch,
     ciPullRequest: input.settings.executionLoop.pullRequest,
-    validationMaxRetries: input.settings.executionLoop.validationMaxRetries,
-    ciFixMaxFanOut: input.settings.executionLoop.ciFixMaxFanOut,
     ciFixMaxDepth: input.settings.executionLoop.ciFixMaxDepth,
     deliberation: {
       reviewerAdapter:

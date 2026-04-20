@@ -13,11 +13,6 @@ export type StateEngineInitInput = {
   rootDir: string;
 };
 
-type LegacyProjectStatePayload = {
-  activePhaseId?: unknown;
-  activePhaseIds?: unknown;
-} & Record<string, unknown>;
-
 const MAX_WRITE_CONFLICT_RETRIES = 3;
 const RETRYABLE_WRITE_ERROR_CODES = new Set([
   "EBUSY",
@@ -173,19 +168,6 @@ export class StateEngine {
       throw new Error(
         `State file contains invalid JSON: ${this.stateFilePath}`,
       );
-    }
-
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const normalized = { ...(parsed as LegacyProjectStatePayload) };
-      const legacyActivePhaseId =
-        typeof normalized.activePhaseId === "string"
-          ? normalized.activePhaseId.trim()
-          : "";
-      if (!Array.isArray(normalized.activePhaseIds) && legacyActivePhaseId) {
-        normalized.activePhaseIds = [legacyActivePhaseId];
-      }
-
-      return ProjectStateSchema.parse(normalized);
     }
 
     return ProjectStateSchema.parse(parsed);

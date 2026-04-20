@@ -180,15 +180,6 @@ export const RecoveryActivityEventSchema = RuntimeEventBaseSchema.extend({
   }),
 });
 
-export const CiOverallStatusSchema = z.enum([
-  "PENDING",
-  "SUCCESS",
-  "FAILURE",
-  "CANCELLED",
-  "UNKNOWN",
-]);
-export type CiOverallStatus = z.infer<typeof CiOverallStatusSchema>;
-
 export const PrActivityEventSchema = RuntimeEventBaseSchema.extend({
   family: z.literal("ci-pr-lifecycle"),
   type: z.literal("pr.activity"),
@@ -200,29 +191,6 @@ export const PrActivityEventSchema = RuntimeEventBaseSchema.extend({
     baseBranch: z.string().min(1).optional(),
     headBranch: z.string().min(1).optional(),
     draft: z.boolean().optional(),
-  }),
-});
-
-export const CiActivityEventSchema = RuntimeEventBaseSchema.extend({
-  family: z.literal("ci-pr-lifecycle"),
-  type: z.literal("ci.activity"),
-  payload: z.object({
-    stage: z.enum([
-      "poll-transition",
-      "failed",
-      "succeeded",
-      "validation-max-retries",
-    ]),
-    summary: z.string().min(1),
-    prNumber: z.number().int().positive(),
-    previousOverall: CiOverallStatusSchema.optional(),
-    overall: CiOverallStatusSchema.optional(),
-    pollCount: z.number().int().positive().optional(),
-    rerun: z.boolean().optional(),
-    terminal: z.boolean().optional(),
-    terminalObservationCount: z.number().int().min(0).optional(),
-    requiredTerminalObservations: z.number().int().positive().optional(),
-    createdFixTaskCount: z.number().int().min(0).optional(),
   }),
 });
 
@@ -308,7 +276,6 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   TesterActivityEventSchema,
   RecoveryActivityEventSchema,
   PrActivityEventSchema,
-  CiActivityEventSchema,
   GateActivityEventSchema,
   RaceStartEventSchema,
   RaceBranchEventSchema,
@@ -355,13 +322,13 @@ export function createRuntimeEvent<T extends RuntimeEvent["type"]>(input: {
   }) as Extract<RuntimeEvent, { type: T }>;
 }
 
-export type LegacyAgentEvent =
+export type AgentStreamEvent =
   | { type: "output"; agentId: string; line: string }
   | { type: "status"; agentId: string; status: RuntimeAgentStatus };
 
-export function toLegacyAgentEvent(
+export function toAgentStreamEvent(
   event: RuntimeEvent,
-): LegacyAgentEvent | null {
+): AgentStreamEvent | null {
   if (event.type === "adapter.output" && event.agentId) {
     return {
       type: "output",
@@ -410,8 +377,6 @@ export function formatRuntimeEventForTelegram(event: RuntimeEvent): string {
       return `Recovery: ${event.payload.summary}`;
     case "pr.activity":
       return `PR: ${event.payload.summary}`;
-    case "ci.activity":
-      return `CI: ${event.payload.summary}`;
     case "gate.activity":
       return `Gate: ${event.payload.summary}`;
     case "race:start":
@@ -440,8 +405,6 @@ export function formatRuntimeEventForCli(event: RuntimeEvent): string {
     case "task:rate_limit_retry":
     case "phase:timeout":
     case "pr.activity":
-    case "ci.activity":
-      return event.payload.summary;
     case "tester.activity":
     case "recovery.activity":
       return event.payload.summary;
@@ -492,12 +455,6 @@ export function shouldNotifyRuntimeEventForTelegram(
     ) {
       return false;
     }
-    if (
-      event.type === "ci.activity" &&
-      event.payload.stage === "poll-transition"
-    ) {
-      return false;
-    }
     if (event.type === "gate.activity" && event.payload.stage === "start") {
       return false;
     }
@@ -537,12 +494,6 @@ export function shouldNotifyRuntimeEventForTelegram(
       );
     case "pr.activity":
       return true;
-    case "ci.activity":
-      return (
-        event.payload.stage === "failed" ||
-        event.payload.stage === "succeeded" ||
-        event.payload.stage === "validation-max-retries"
-      );
     case "gate.activity":
       return event.payload.stage === "fail";
     case "race:start":
@@ -633,16 +584,6 @@ export function createRuntimeEventNotificationKey(event: RuntimeEvent): string {
         event.payload.stage,
         event.payload.prNumber ?? "",
         event.payload.prUrl ?? "",
-      ].join("|");
-    case "ci.activity":
-      return [
-        event.type,
-        event.phaseId ?? "",
-        event.payload.stage,
-        event.payload.prNumber,
-        event.payload.pollCount ?? "",
-        event.payload.overall ?? "",
-        event.payload.summary,
       ].join("|");
     case "terminal.outcome":
       return [

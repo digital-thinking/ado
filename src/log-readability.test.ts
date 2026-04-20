@@ -198,7 +198,7 @@ describe("P26-015: isFileInteractionChatter", () => {
   test("preserves 'Writing' verb when followed by reasoning (not a path)", () => {
     expect(
       isFileInteractionChatter(
-        "Writing a migration plan based on the current schema",
+        "Writing an implementation plan based on the current schema",
       ),
     ).toBe(false);
   });
