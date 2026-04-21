@@ -1,3 +1,6 @@
+import { readdir } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { type Gate, type GateContext, type GateResult } from "./gate";
 import type { VcsProvider } from "../vcs/vcs-provider";
 import { CiPollingError, type CiPollTransition } from "../vcs/github-manager";
@@ -34,6 +37,16 @@ export class PrCiGate implements Gate {
         gate: this.name,
         passed: false,
         diagnostics: "PR CI gate requires a PR number in context.",
+        retryable: false,
+      };
+    }
+
+    if (!(await hasWorkflowFiles(context.cwd))) {
+      return {
+        gate: this.name,
+        passed: true,
+        diagnostics:
+          "No .github/workflows CI definitions are present on this branch.",
         retryable: false,
       };
     }
@@ -79,5 +92,22 @@ export class PrCiGate implements Gate {
         retryable: error instanceof CiPollingError ? error.retryable : true,
       };
     }
+  }
+}
+
+async function hasWorkflowFiles(cwd: string): Promise<boolean> {
+  try {
+    const entries = await readdir(resolve(cwd, ".github", "workflows"), {
+      withFileTypes: true,
+    });
+    return entries.some(
+      (entry) =>
+        entry.isFile() && /\.(ya?ml)$/i.test(entry.name.trim().toLowerCase()),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }

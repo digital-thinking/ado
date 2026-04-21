@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+
 import { describe, expect, mock, test } from "bun:test";
 
 import { PhaseRunner, type PhaseRunnerConfig } from "./phase-runner";
@@ -54,11 +58,18 @@ function toTelegramMessages(
 
 describe("P30-006 integration coverage", () => {
   test("deliberation execution hands off refined prompt and surfaces PR/Telegram summaries", async () => {
+    const repoDir = await mkdtemp(resolve(tmpdir(), "p30-006-"));
+    await mkdir(resolve(repoDir, ".github", "workflows"), { recursive: true });
+    await writeFile(
+      resolve(repoDir, ".github", "workflows", "ci.yml"),
+      "name: CI\non: [push]\n",
+      "utf8",
+    );
     const phaseId = "81111111-1111-4111-8111-111111111111";
     const taskId = "82222222-2222-4222-8222-222222222222";
     const state = {
       projectName: "test-project",
-      rootDir: "/tmp/project",
+      rootDir: repoDir,
       activePhaseIds: [phaseId],
       phases: [
         {
@@ -235,6 +246,7 @@ describe("P30-006 integration coverage", () => {
       control,
       {
         ...createBaseConfig(),
+        projectRootDir: repoDir,
         deliberation: {
           reviewerAdapter: "CLAUDE_CLI",
           maxRefinePasses: 2,
@@ -247,7 +259,11 @@ describe("P30-006 integration coverage", () => {
       runner,
     );
 
-    await phaseRunner.run();
+    try {
+      await phaseRunner.run();
+    } finally {
+      await rm(repoDir, { recursive: true, force: true });
+    }
 
     expect(ciPollCalls).toBeGreaterThanOrEqual(2);
     expect(startInputs).toHaveLength(1);

@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+
 import { describe, expect, test, mock } from "bun:test";
 import {
   PhaseRunner,
@@ -670,11 +674,18 @@ describe("PhaseRunner", () => {
   });
 
   test("creates draft PR and marks it ready after validation approval when configured", async () => {
+    const repoDir = await mkdtemp(resolve(tmpdir(), "phase-runner-pr-ci-"));
+    await mkdir(resolve(repoDir, ".github", "workflows"), { recursive: true });
+    await writeFile(
+      resolve(repoDir, ".github", "workflows", "ci.yml"),
+      "name: CI\non: [push]\n",
+      "utf8",
+    );
     const phaseId = "31111111-1111-4111-8111-111111111111";
     const taskId = "32222222-2222-4222-8222-222222222222";
     const mockState = {
       projectName: "test-project",
-      rootDir: "/tmp/project",
+      rootDir: repoDir,
       activePhaseIds: [phaseId],
       phases: [
         {
@@ -773,6 +784,7 @@ describe("PhaseRunner", () => {
       mockControl,
       {
         ...mockConfig,
+        projectRootDir: repoDir,
         vcsProvider: "github" as const,
         gates: [{ type: "pr_ci" }],
         testerCommand: null,
@@ -792,8 +804,11 @@ describe("PhaseRunner", () => {
       },
       mockRunner,
     );
-
-    await runner.run();
+    try {
+      await runner.run();
+    } finally {
+      await rm(repoDir, { recursive: true, force: true });
+    }
 
     const ghCalls = (mockRunner.run as ReturnType<typeof mock>).mock.calls
       .map((entry: any[]) => entry[0])
@@ -2970,9 +2985,17 @@ describe("resolvePhaseExecutionGate", () => {
     expect(gate).toBe("RESUMABLE");
   });
 
-  test("returns CLOSED for terminal status with no actionable task", () => {
+  test("returns RESUMABLE for awaiting CI with no actionable task", () => {
     const gate = resolvePhaseExecutionGate({
       status: "AWAITING_CI",
+      tasks: [{ status: "DONE" }, { status: "FAILED" }],
+    } as any);
+    expect(gate).toBe("RESUMABLE");
+  });
+
+  test("returns CLOSED for other terminal statuses with no actionable task", () => {
+    const gate = resolvePhaseExecutionGate({
+      status: "READY_FOR_REVIEW",
       tasks: [{ status: "DONE" }, { status: "FAILED" }],
     } as any);
     expect(gate).toBe("CLOSED");
@@ -3043,8 +3066,6 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
   test.each([
     ["DONE", "AUTO"],
     ["DONE", "MANUAL"],
-    ["AWAITING_CI", "AUTO"],
-    ["AWAITING_CI", "MANUAL"],
     ["READY_FOR_REVIEW", "AUTO"],
     ["READY_FOR_REVIEW", "MANUAL"],
   ] as const)(
@@ -3159,6 +3180,74 @@ describe("PhaseRunner – P20-003 preflight consistency", () => {
         phaseId,
         status: "BRANCHING",
       });
+    },
+  );
+
+  test.each(["AUTO", "MANUAL"] as const)(
+    "phase in AWAITING_CI without actionable tasks resumes finalization in %s mode",
+    async (mode) => {
+      const state = {
+        projectName: "test-project",
+        rootDir: "/tmp/project",
+        activePhaseIds: [phaseId],
+        phases: [
+          {
+            id: phaseId,
+            name: "Phase Awaiting CI",
+            branchName: "feat/awaiting-ci",
+            status: "AWAITING_CI",
+            prUrl: "https://github.com/org/repo/pull/42",
+            tasks: [
+              {
+                id: taskId,
+                title: "Task 1",
+                status: "DONE",
+                assignee: "MOCK_CLI",
+                dependencies: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      const control = {
+        ...makeMockControl(state),
+        setPhasePrUrl: mock(async () => state),
+      } as unknown as ControlCenterService;
+      let called = false;
+      const runner: ProcessRunner = {
+        run: mock(async (input: any) => {
+          called = true;
+          if (input.args.includes("--porcelain")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (input.args.includes("--show-current")) {
+            return {
+              exitCode: 0,
+              stdout: "feat/awaiting-ci\n",
+              stderr: "",
+            };
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }),
+      } as any;
+      const pr = new PhaseRunner(
+        control,
+        {
+          ...baseConfig,
+          mode,
+          vcsProvider: "null" as const,
+          projectRootDir: "/tmp/project",
+        },
+        undefined,
+        undefined,
+        runner,
+      );
+
+      await pr.run();
+
+      expect(state.phases[0]?.status).toBe("AWAITING_CI");
+      expect(called).toBe(true);
     },
   );
 

@@ -646,6 +646,52 @@ describe("AgentSupervisor", () => {
     ).toBe(true);
   });
 
+  test("classifies Codex usage-limit output as rate-limited and preserves diagnostic", async () => {
+    const child = createFakeChild();
+    child.kill = ((signal?: NodeJS.Signals | number) => {
+      child.killSignals.push(signal);
+      queueMicrotask(() => {
+        child.emit("close", null, signal === "SIGKILL" ? "SIGKILL" : "SIGTERM");
+      });
+      return true;
+    }) as ChildProcess["kill"];
+
+    const codexLimitMessage =
+      "ERROR: You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at Apr 28th, 2026 12:21 AM.";
+    const supervisor = new AgentSupervisor({
+      spawnFn: () => {
+        queueMicrotask(() => {
+          child.stderr.write(`${codexLimitMessage}\n`);
+        });
+        return child;
+      },
+      terminationGraceMs: 5,
+    });
+
+    let error: unknown;
+    try {
+      await supervisor.runToCompletion({
+        name: "Codex usage-limited worker",
+        command: "codex",
+        args: ["exec", "-"],
+        cwd: "/tmp",
+        adapterId: "CODEX_CLI",
+        approvedAdapterSpawn: true,
+      });
+    } catch (candidate) {
+      error = candidate;
+    }
+
+    expect(error).toMatchObject({
+      category: "AGENT_FAILURE",
+      adapterFailureKind: "rate_limited",
+    });
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Command hit a rate limit");
+    expect((error as Error).message).toContain(codexLimitMessage);
+    expect(child.killSignals).toEqual([undefined]);
+  });
+
   test("appends structured execution-timeout diagnostic with adapter hint", async () => {
     const child = createFakeChild();
     child.kill = () => {
