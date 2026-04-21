@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+
 import { describe, expect, mock, test } from "bun:test";
 
 import { PhaseRunner, type PhaseRunnerConfig } from "./phase-runner";
@@ -54,11 +58,18 @@ function toTelegramMessages(
 
 describe("P23-006 integration coverage", () => {
   test("PR automation flow emits expected GH arguments, lifecycle payloads, and Telegram-critical messages", async () => {
+    const repoDir = await mkdtemp(resolve(tmpdir(), "p23-006-"));
+    await mkdir(resolve(repoDir, ".github", "workflows"), { recursive: true });
+    await writeFile(
+      resolve(repoDir, ".github", "workflows", "ci.yml"),
+      "name: CI\non: [push]\n",
+      "utf8",
+    );
     const phaseId = "51111111-1111-4111-8111-111111111111";
     const taskId = "52222222-2222-4222-8222-222222222222";
     const state = {
       projectName: "test-project",
-      rootDir: "/tmp/project",
+      rootDir: repoDir,
       activePhaseIds: [phaseId],
       phases: [
         {
@@ -176,6 +187,7 @@ describe("P23-006 integration coverage", () => {
       control,
       {
         ...createBaseConfig(),
+        projectRootDir: repoDir,
         ciPullRequest: {
           defaultTemplatePath: ".github/pull_request_template.md",
           templateMappings: [
@@ -196,8 +208,11 @@ describe("P23-006 integration coverage", () => {
       },
       runner,
     );
-
-    await phaseRunner.run();
+    try {
+      await phaseRunner.run();
+    } finally {
+      await rm(repoDir, { recursive: true, force: true });
+    }
 
     expect(ciViewCalls).toBeGreaterThanOrEqual(2);
 

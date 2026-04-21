@@ -189,6 +189,10 @@ export type PhaseExecutionGate = "OPEN" | "RESUMABLE" | "CLOSED";
 export function resolvePhaseExecutionGate(
   phase: Pick<Phase, "status" | "tasks">,
 ): PhaseExecutionGate {
+  if (phase.status === "AWAITING_CI") {
+    return "RESUMABLE";
+  }
+
   const isTerminal = TERMINAL_PHASE_STATUSES.some(
     (status) => status === phase.status,
   );

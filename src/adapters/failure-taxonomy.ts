@@ -73,8 +73,11 @@ export function classifyAdapterFailure(error: unknown): AdapterFailureKind {
   if (
     lower.includes("rate limit") ||
     lower.includes("rate-limit") ||
+    lower.includes("usage limit") ||
+    lower.includes("hit your usage limit") ||
     lower.includes("out of extra usage") ||
     lower.includes("usage resets") ||
+    lower.includes("upgrade to plus") ||
     lower.includes("exhausted your capacity") ||
     lower.includes("quota will reset") ||
     lower.includes("too many requests") ||

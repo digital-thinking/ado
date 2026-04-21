@@ -167,6 +167,17 @@ function tailPush(lines: string[], value: string): string[] {
   return chunks;
 }
 
+function formatAgentFailureMessage(summary: string, output: string): string {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return summary;
+  }
+
+  const excerpt =
+    trimmed.length <= 2_000 ? trimmed : `${trimmed.slice(0, 2_000)}...`;
+  return `${summary}\nOutput:\n${excerpt}`;
+}
+
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1079,9 +1090,12 @@ export class AgentSupervisor {
                 .join("\n\n");
               reject(
                 new AgentFailureError(
-                  idleTimedOut
-                    ? `Command became idle for ${effectiveIdleTimeoutMs}ms: ${record.command}`
-                    : `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
+                  formatAgentFailureMessage(
+                    idleTimedOut
+                      ? `Command became idle for ${effectiveIdleTimeoutMs}ms: ${record.command}`
+                      : `Command timed out after ${input.timeoutMs}ms: ${record.command}`,
+                    combinedOutput,
+                  ),
                   idleTimedOut
                     ? classifyAdapterFailure(combinedOutput)
                     : "timeout",
@@ -1100,7 +1114,10 @@ export class AgentSupervisor {
                 .join("\n\n");
               reject(
                 new AgentFailureError(
-                  `Command hit a rate limit: ${record.command}`,
+                  formatAgentFailureMessage(
+                    `Command hit a rate limit: ${record.command}`,
+                    combinedOutput,
+                  ),
                   classifyAdapterFailure(combinedOutput),
                 ),
               );
@@ -1117,7 +1134,10 @@ export class AgentSupervisor {
                 .join("\n\n");
               reject(
                 new AgentFailureError(
-                  `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
+                  formatAgentFailureMessage(
+                    `Command failed with exit code ${exitCode ?? -1}: ${record.command} ${record.args.join(" ")}`.trim(),
+                    combinedOutput,
+                  ),
                   classifyAdapterFailure(combinedOutput),
                 ),
               );

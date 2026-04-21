@@ -72,6 +72,11 @@ describe("adapter failure taxonomy", () => {
           "Attempt 1 failed: You have exhausted your capacity on this model. Your quota will reset after 0s.",
         stderr: "",
       },
+      {
+        stdout: "",
+        stderr:
+          "ERROR: You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at Apr 28th, 2026 12:21 AM.",
+      },
     ];
 
     for (const [index, sample] of samples.entries()) {
