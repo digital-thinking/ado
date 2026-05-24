@@ -73,6 +73,7 @@ export function classifyAdapterFailure(error: unknown): AdapterFailureKind {
   if (
     lower.includes("rate limited") ||
     lower.includes("rate-limited") ||
+    lower.includes("rate-limit") ||
     /\brate.?limits?\s+(?:reached|exceeded|hit|error)\b/.test(lower) ||
     /\brate.?limit\s+reached\b/.test(lower) ||
     lower.includes("usage limit") ||
