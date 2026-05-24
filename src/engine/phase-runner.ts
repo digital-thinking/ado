@@ -525,7 +525,7 @@ export class PhaseRunner {
         );
       }
 
-      const state = await this.control.getState();
+      const state = await this.control.getState(this.config.projectName);
       const phase = this.resolveActivePhase(state);
       activePhaseId = phase.id;
       this.traceRecorder = new ExecutionTraceRecorder(
@@ -665,7 +665,7 @@ export class PhaseRunner {
       return;
     }
 
-    const state = await this.control.getState();
+    const state = await this.control.getState(this.config.projectName);
     const phase = state.phases.find(
       (candidate: any) => candidate.id === phaseId,
     );
@@ -951,7 +951,7 @@ Recovery: ${recoveryMessage}`,
         return undefined;
       }
 
-      const state = await this.control.getState();
+      const state = await this.control.getState(this.config.projectName);
       const currentPhase = this.resolveActivePhase(state);
       const nowMs = this.nowMs();
       const nextTaskIndex = pickNextTask(currentPhase.tasks, nowMs);
@@ -1057,7 +1057,7 @@ Recovery: ${recoveryMessage}`,
       );
       await this.assertPhaseNotTimedOut();
 
-      const updatedState = await this.control.getState();
+      const updatedState = await this.control.getState(this.config.projectName);
       const updatedPhase = this.resolveActivePhase(updatedState);
       const resultTask = updatedPhase.tasks[nextTaskNumber - 1];
 
@@ -1824,7 +1824,7 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
       });
     }
 
-    return this.control.getState();
+    return this.control.getState(this.config.projectName);
   }
 
   private async runRaceBranch(input: {
@@ -2804,7 +2804,9 @@ Recovery: ${recoveryMessage}${deadLetterHint ? `\n${deadLetterHint}` : ""}`,
         // this failure (either by exact title match or by depending on the
         // same triggering task). Repeated tester failures for the same
         // underlying issue must not generate duplicate CI_FIX tasks.
-        const latestState = await this.control.getState();
+        const latestState = await this.control.getState(
+          this.config.projectName,
+        );
         const latestPhase = latestState.phases.find(
           (p: any) => p.id === input.phaseId,
         );

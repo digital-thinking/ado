@@ -17,6 +17,7 @@ import {
   formatAdapterStartupDiagnostic,
 } from "../adapters";
 import { createTelegramRuntime } from "../bot";
+import { resolveTesterConfig } from "../engine/detect-tester";
 import { ExecutionRunLock } from "../engine/execution-run-lock";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { buildRaceWorktreeId } from "../engine/race-orchestrator";
@@ -170,6 +171,9 @@ function resolveProjectExecutionSettings(
   maxTaskRetries: number;
   phaseTimeoutMs: number;
   ciBaseBranch: string;
+  testerCommand: string | null | undefined;
+  testerArgs: string[] | null | undefined;
+  testerTimeoutMs: number | undefined;
 } {
   const project = settings.projects.find((p) => p.name === projectName);
   return {
@@ -190,6 +194,9 @@ function resolveProjectExecutionSettings(
     ciBaseBranch:
       project?.executionSettings?.ciBaseBranch ??
       settings.executionLoop.ciBaseBranch,
+    testerCommand: project?.executionSettings?.testerCommand,
+    testerArgs: project?.executionSettings?.testerArgs,
+    testerTimeoutMs: project?.executionSettings?.testerTimeoutMs,
   };
 }
 
@@ -571,9 +578,15 @@ function buildCliPhaseRunnerConfig(input: {
       MOCK_CLI: input.settings.agents.MOCK_CLI.circuitBreaker,
     },
     maxRecoveryAttempts: input.settings.exceptionRecovery.maxAttempts,
-    testerCommand: input.settings.executionLoop.testerCommand,
-    testerArgs: input.settings.executionLoop.testerArgs,
-    testerTimeoutMs: input.settings.executionLoop.testerTimeoutMs,
+    ...resolveTesterConfig({
+      projectTesterCommand: projectExecutionSettings.testerCommand,
+      projectTesterArgs: projectExecutionSettings.testerArgs,
+      projectTesterTimeoutMs: projectExecutionSettings.testerTimeoutMs,
+      globalTesterCommand: input.settings.executionLoop.testerCommand,
+      globalTesterArgs: input.settings.executionLoop.testerArgs,
+      globalTesterTimeoutMs: input.settings.executionLoop.testerTimeoutMs,
+      projectRootDir: input.projectRootDir,
+    }),
     defaultRace: projectExecutionSettings.defaultRace,
     maxTaskRetries: projectExecutionSettings.maxTaskRetries,
     judgeAdapter: input.settings.executionLoop.judgeAdapter,
