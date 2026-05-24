@@ -1,3 +1,4 @@
+import { resolveTesterConfig } from "../engine/detect-tester";
 import { ExecutionRunLock } from "../engine/execution-run-lock";
 import { PhaseLoopControl } from "../engine/phase-loop-control";
 import { PhaseRunner, type PhaseRunnerConfig } from "../engine/phase-runner";
@@ -277,9 +278,15 @@ export class ExecutionControlService {
           MOCK_CLI: settings.agents.MOCK_CLI.circuitBreaker,
         },
         maxRecoveryAttempts: settings.exceptionRecovery.maxAttempts,
-        testerCommand: settings.executionLoop.testerCommand,
-        testerArgs: settings.executionLoop.testerArgs,
-        testerTimeoutMs: settings.executionLoop.testerTimeoutMs,
+        ...resolveTesterConfig({
+          projectTesterCommand: project?.executionSettings?.testerCommand,
+          projectTesterArgs: project?.executionSettings?.testerArgs,
+          projectTesterTimeoutMs: project?.executionSettings?.testerTimeoutMs,
+          globalTesterCommand: settings.executionLoop.testerCommand,
+          globalTesterArgs: settings.executionLoop.testerArgs,
+          globalTesterTimeoutMs: settings.executionLoop.testerTimeoutMs,
+          projectRootDir,
+        }),
         defaultRace: projectExec.defaultRace,
         maxTaskRetries: projectExec.maxTaskRetries,
         judgeAdapter: settings.executionLoop.judgeAdapter,

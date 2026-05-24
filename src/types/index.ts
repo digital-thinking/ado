@@ -314,6 +314,9 @@ export const ProjectExecutionSettingsSchema = z.object({
   maxTaskRetries: z.number().int().min(0).max(20).optional(),
   phaseTimeoutMs: z.number().int().positive().optional(),
   ciBaseBranch: z.string().min(1).optional(),
+  testerCommand: z.string().min(1).nullable().optional(),
+  testerArgs: z.array(z.string()).nullable().optional(),
+  testerTimeoutMs: z.number().int().positive().optional(),
 });
 export type ProjectExecutionSettings = z.infer<
   typeof ProjectExecutionSettingsSchema

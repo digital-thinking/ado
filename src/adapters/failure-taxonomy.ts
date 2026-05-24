@@ -71,8 +71,11 @@ export function classifyAdapterFailure(error: unknown): AdapterFailureKind {
   const lower = message.toLowerCase();
 
   if (
-    lower.includes("rate limit") ||
+    lower.includes("rate limited") ||
+    lower.includes("rate-limited") ||
     lower.includes("rate-limit") ||
+    /\brate.?limits?\s+(?:reached|exceeded|hit|error)\b/.test(lower) ||
+    /\brate.?limit\s+reached\b/.test(lower) ||
     lower.includes("usage limit") ||
     lower.includes("hit your usage limit") ||
     lower.includes("out of extra usage") ||
