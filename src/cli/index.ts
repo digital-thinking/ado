@@ -756,6 +756,17 @@ async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
     console.info(
       `Project '${existingProject.name}' is already registered at ${currentDir}.`,
     );
+    const stateFilePath = resolveStateFilePathForProject(currentDir);
+    const stateEngine = new StateEngine(stateFilePath);
+    try {
+      await access(stateFilePath, fsConstants.F_OK);
+    } catch {
+      await stateEngine.initialize({
+        projectName: existingProject.name,
+        rootDir: currentDir,
+      });
+      console.info(`Created missing state file at ${stateFilePath}.`);
+    }
     console.info(
       `Next:    Run 'ixado switch ${existingProject.name}' to activate it, or 'ixado list' to see all projects.`,
     );
@@ -768,9 +779,15 @@ async function runInitCommand(_ctx: CommandActionContext): Promise<void> {
   });
 
   await saveCliSettings(globalSettingsFilePath, settings);
+
+  const stateFilePath = resolveStateFilePathForProject(currentDir);
+  const stateEngine = new StateEngine(stateFilePath);
+  await stateEngine.initialize({ projectName, rootDir: currentDir });
+
   console.info(
     `Registered project '${projectName}' at ${currentDir} in global config.`,
   );
+  console.info(`State file created at ${stateFilePath}.`);
   console.info(
     `Next:    Run 'ixado switch ${projectName}' to set it active, then 'ixado phase create <name> <branch>'.`,
   );
