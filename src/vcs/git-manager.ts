@@ -155,9 +155,11 @@ export class GitManager {
     );
 
     if (branchExists) {
+      // --force allows checking out a branch already checked out in another worktree
+      // (e.g. when the main worktree is on the same branch as the phase)
       await this.runner.run({
         command: "git",
-        args: ["worktree", "add", input.path, input.branchName],
+        args: ["worktree", "add", "--force", input.path, input.branchName],
         cwd: input.cwd,
       });
     } else {
